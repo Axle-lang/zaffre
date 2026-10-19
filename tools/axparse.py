@@ -96,9 +96,18 @@ def tokenize(src):
             i = j + 2
         elif c == '"' or c == "`":
             j = i + 1
-            interp = []
+            pieces = []      # ("s", text) and ("e", source, line), in order
+            cur = []
             while j < n and src[j] != c:
                 if src[j] == "\\":
+                    esc = src[j + 1] if j + 1 < n else ""
+                    table = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "`": "`", "$": "$", "'": "'"}
+                    if esc == "u" and j + 2 < n and src[j + 2] == "{":
+                        k = src.index("}", j)
+                        cur.append(chr(int(src[j + 3:k], 16)))
+                        j = k + 1
+                        continue
+                    cur.append(table.get(esc, esc))
                     j += 2
                     continue
                 if src[j] == "$" and j + 1 < n and src[j + 1] == "{":
@@ -109,17 +118,23 @@ def tokenize(src):
                         elif src[k] == "}":
                             depth -= 1
                         k += 1
-                    interp.append((src[j + 2:k - 1], line))
+                    if cur:
+                        pieces.append(("s", "".join(cur)))
+                        cur = []
+                    pieces.append(("e", src[j + 2:k - 1], line))
                     j = k
                     continue
                 if src[j] == "\n":
                     if c == '"':
                         raise ParseError("newline in string literal", line)
                     line += 1
+                cur.append(src[j])
                 j += 1
             if j >= n:
                 raise ParseError("unterminated string", line)
-            toks.append(Tok("str", interp, line, i))
+            if cur or not pieces:
+                pieces.append(("s", "".join(cur)))
+            toks.append(Tok("str", pieces, line, i))
             i = j + 1
         elif c == "'":
             # a char literal: 'a' or '\n'
@@ -1034,11 +1049,14 @@ class Parser:
         if t.t == "str":
             self.next()
             parts = []
-            for src, ln in t.v:
-                sub = Parser(src)
-                for tk in sub.toks:
-                    tk.line = ln
-                parts.append(sub.expr())
+            for piece in t.v:
+                if piece[0] == "s":
+                    parts.append(piece[1])
+                else:
+                    sub = Parser(piece[1])
+                    for tk in sub.toks:
+                        tk.line = piece[2]
+                    parts.append(sub.expr())
             return Node("str", line, parts=parts)
         if t.t == "op":
             if t.v == "(":
@@ -1219,25 +1237,40 @@ class Parser:
         self.expect("}")
         return Node("match", line, subject=subject, arms=arms)
 
+    def pat_bound(self):
+        """A range bound: an optionally negated integer, a character, or a name."""
+        line = self.tok.line
+        neg = False
+        if self.at("-"):
+            self.next()
+            neg = True
+        t = self.next()
+        if t.t == "int":
+            v = int(str(t.v).replace("_", ""), 0) if not str(t.v).lower().startswith(("0b", "0o", "0x")) else int(str(t.v).replace("_", ""), 0)
+            return Node("int", line, value=-v if neg else v)
+        if t.t == "id":
+            return Node("name", line, name=t.v)
+        raise ParseError("bad range bound", line)
+
     def pattern(self):
         t = self.tok
         line = t.line
         if t.t == "op" and t.v in ("..", "..="):
-            self.next()
-            if self.at("-"):
-                self.next()
-            self.next()
-            return Node("pat_range", line)
+            incl = self.next().v == "..="
+            hi = self.pat_bound()
+            return Node("pat_range", line, lo=None, hi=hi, incl=incl)
         if t.t == "op" and t.v == "-":
+            lo = self.pat_bound()
+            return self.range_tail(lo, line)
+        if t.t == "int":
+            lo = self.pat_bound()
+            return self.range_tail(lo, line)
+        if t.t == "float":
             self.next()
-            n = self.next()
-            return self.range_tail(Node("int", line, value="-" + str(n.v)), line)
-        if t.t in ("int", "float", "str"):
-            if t.t == "str":
-                self.next()
-                return Node("pat_lit", line)
+            return Node("pat_lit", line, lit="float", value=float(str(t.v).replace("_", "")))
+        if t.t == "str":
             self.next()
-            return self.range_tail(Node("int", line, value=t.v), line)
+            return Node("pat_lit", line, lit="str", value=t.v)
         if t.t == "op" and t.v == "(":
             self.next()
             elems = []
@@ -1250,7 +1283,7 @@ class Parser:
         if t.t == "id":
             if t.v in ("true", "false", "null"):
                 self.next()
-                return Node("pat_lit", line)
+                return Node("pat_lit", line, lit="kw", value=t.v)
             if t.v == "_":
                 self.next()
                 return Node("pat_wild", line)
@@ -1258,11 +1291,7 @@ class Parser:
             while self.accept("::"):
                 name += "::" + self.ident()
             if (self.at("..=") or self.at("..")) and "::" not in name:
-                self.next()
-                if self.at("-"):
-                    self.next()
-                self.next()
-                return Node("pat_range", line)
+                return self.range_tail(Node("name", line, name=name), line)
             if self.at("("):
                 self.next()
                 subs = []
@@ -1288,15 +1317,10 @@ class Parser:
 
     def range_tail(self, lo, line):
         if self.at("..") or self.at("..="):
-            self.next()
-            t = self.tok
-            neg = ""
-            if self.at("-"):
-                self.next()
-                neg = "-"
-            hi = self.next()
-            return Node("pat_range", line)
-        return Node("pat_lit", line)
+            incl = self.next().v == "..="
+            hi = self.pat_bound()
+            return Node("pat_range", line, lo=lo, hi=hi, incl=incl)
+        return Node("pat_lit", line, lit="int", value=lo.value) if lo.kind == "int" else Node("pat_name", line, name=lo.name)
 
 
 def parse(src):

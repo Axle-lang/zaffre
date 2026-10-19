@@ -576,7 +576,8 @@ class Checker:
 
     def e_str(self, e, sc):
         for p in e.parts:
-            self.expr(p, sc)
+            if isinstance(p, Node):
+                self.expr(p, sc)
         return T("string")
 
     def e_lit(self, e, sc):
