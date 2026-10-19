@@ -1,0 +1,203 @@
+// fonts — the faces a program sets text in, and one place to ask them.
+//
+// A UI sets nearly everything in one family at two weights, and code in a monospace face. `Fonts`
+// holds those four and answers every question about text by *face kind* — a value, `FaceKind::Bold`
+// — instead of handing a `Font` out. That is deliberate: a method that returns a field reads, to
+// the compiler, as a transfer of ownership, and every caller would owe a release. Asking the
+// `Fonts` to measure, elide or draw keeps the faces where they are.
+//
+// The defaults are the embedded Instrument Sans Regular and Bold. A monospace face is optional
+// (`withMono` reads a file); a program that asks for one it does not have gets the sans, so
+// nothing draws nothing.
+
+use crate::gfx::tint::Tint;
+use crate::gfx::canvas::Canvas;
+use crate::text::font::Font;
+use crate::text::typeset::{Typeset, Lines};
+use crate::text::data::font_sans_regular::SansRegular;
+use crate::text::data::font_sans_bold::SansBold;
+
+/** Which face to set text in. */
+pub enum FaceKind : i32 {
+    /** The regular weight of the interface face. */
+    Sans = 0,
+
+    /** The bold weight of the interface face. */
+    Bold = 1,
+
+    /** The monospace face, regular weight. */
+    Mono = 2,
+
+    /** The monospace face, bold. */
+    MonoBold = 3,
+}
+
+/** The faces of a program. */
+pub class Fonts {
+    sans : Font;
+    bold : Font;
+    mono : Font;
+    monoBold : Font;
+
+    hasMono : bool = false;
+
+    /** The embedded sans, regular and bold; no monospace face yet (the two slots hold empty fonts). */
+    constructor() {
+        self.sans = Font::fromWords(SansRegular::words(), SansRegular::bytes());
+        self.bold = Font::fromWords(SansBold::words(), SansBold::bytes());
+        self.mono = new Font(0, 0);
+        self.monoBold = new Font(0, 0);
+    }
+
+    /**
+     * Use the TrueType files at `regular` and `bold` for `FaceKind::Mono` and `FaceKind::MonoBold`.
+     * Answers whether both loaded; when they did not, the sans stands in.
+     */
+    pub fn withMono(mut self, regular : string, bold : string) : bool {
+        let r : Font = Font::fromFile(regular);
+        let b : Font = Font::fromFile(bold);
+        if (!r.isValid() || !b.isValid()) {
+            return false;
+        }
+        self.mono = r;
+        self.monoBold = b;
+        self.hasMono = true;
+        return true;
+    }
+
+    /** The face actually used for `kind`: a monospace request falls back to the sans. */
+    pub fn resolve(self, kind : FaceKind) : FaceKind {
+        if (self.hasMono) {
+            return kind;
+        }
+        if (kind == FaceKind::MonoBold) {
+            return FaceKind::Bold;
+        }
+        if (kind == FaceKind::Mono) {
+            return FaceKind::Sans;
+        }
+        return kind;
+    }
+
+    /** The kind a style's flags ask for. */
+    pub static fn kindOf(bold : bool, mono : bool) : FaceKind {
+        if (mono) {
+            if (bold) {
+                return FaceKind::MonoBold;
+            }
+            return FaceKind::Mono;
+        }
+        if (bold) {
+            return FaceKind::Bold;
+        }
+        return FaceKind::Sans;
+    }
+
+    // ─── Metrics ─────────────────────────────────────────────────
+
+    /** From the baseline up to the top of a line of `kind` at `px`. */
+    pub fn ascent(self, kind : FaceKind, px : f64) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => self.sans.ascent(px),
+            FaceKind::Bold => self.bold.ascent(px),
+            FaceKind::Mono => self.mono.ascent(px),
+            FaceKind::MonoBold => self.monoBold.ascent(px),
+        };
+    }
+
+    /** From the baseline down to the bottom of a line. */
+    pub fn descent(self, kind : FaceKind, px : f64) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => self.sans.descent(px),
+            FaceKind::Bold => self.bold.descent(px),
+            FaceKind::Mono => self.mono.descent(px),
+            FaceKind::MonoBold => self.monoBold.descent(px),
+        };
+    }
+
+    /** The distance between baselines of `kind` at `px`. */
+    pub fn lineHeight(self, kind : FaceKind, px : f64) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => self.sans.lineHeight(px),
+            FaceKind::Bold => self.bold.lineHeight(px),
+            FaceKind::Mono => self.mono.lineHeight(px),
+            FaceKind::MonoBold => self.monoBold.lineHeight(px),
+        };
+    }
+
+    // ─── Runs ────────────────────────────────────────────────────
+
+    /** The width of `s`. */
+    pub fn width(self, kind : FaceKind, s : string, px : f64) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => Typeset::width(self.sans, s, px),
+            FaceKind::Bold => Typeset::width(self.bold, s, px),
+            FaceKind::Mono => Typeset::width(self.mono, s, px),
+            FaceKind::MonoBold => Typeset::width(self.monoBold, s, px),
+        };
+    }
+
+    /** The width of bytes [`start`, `stop`) of `s`. */
+    pub fn span(self, kind : FaceKind, s : string, px : f64, start : i32, stop : i32) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => Typeset::span(self.sans, s, px, start, stop),
+            FaceKind::Bold => Typeset::span(self.bold, s, px, start, stop),
+            FaceKind::Mono => Typeset::span(self.mono, s, px, start, stop),
+            FaceKind::MonoBold => Typeset::span(self.monoBold, s, px, start, stop),
+        };
+    }
+
+    /** Draw `s` with the pen at (`x`, `baseline`); answers the pen after it. */
+    pub fn draw(self, c : Canvas, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => Typeset::draw(self.sans, c, s, x, baseline, px, t),
+            FaceKind::Bold => Typeset::draw(self.bold, c, s, x, baseline, px, t),
+            FaceKind::Mono => Typeset::draw(self.mono, c, s, x, baseline, px, t),
+            FaceKind::MonoBold => Typeset::draw(self.monoBold, c, s, x, baseline, px, t),
+        };
+    }
+
+    /** Draw bytes [`start`, `stop`) of `s`. */
+    pub fn drawSpan(self, c : Canvas, kind : FaceKind, s : string, start : i32, stop : i32, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => Typeset::drawSpan(self.sans, c, s, start, stop, x, baseline, px, t),
+            FaceKind::Bold => Typeset::drawSpan(self.bold, c, s, start, stop, x, baseline, px, t),
+            FaceKind::Mono => Typeset::drawSpan(self.mono, c, s, start, stop, x, baseline, px, t),
+            FaceKind::MonoBold => Typeset::drawSpan(self.monoBold, c, s, start, stop, x, baseline, px, t),
+        };
+    }
+
+    /** Draw `s` cut to `maxW` pixels with an ellipsis. */
+    pub fn drawElided(self, c : Canvas, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, maxW : f64, t : Tint) : f64 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => Typeset::drawElided(self.sans, c, s, x, baseline, px, maxW, t),
+            FaceKind::Bold => Typeset::drawElided(self.bold, c, s, x, baseline, px, maxW, t),
+            FaceKind::Mono => Typeset::drawElided(self.mono, c, s, x, baseline, px, maxW, t),
+            FaceKind::MonoBold => Typeset::drawElided(self.monoBold, c, s, x, baseline, px, maxW, t),
+        };
+    }
+
+    /** Break `s` into lines no wider than `maxW`. */
+    pub fn wrap(self, kind : FaceKind, s : string, px : f64, maxW : f64, lines : Lines) : void {
+        let face : FaceKind = self.resolve(kind);
+        if (face == FaceKind::Sans) {
+            Typeset::wrap(self.sans, s, px, maxW, lines);
+        } else if (face == FaceKind::Bold) {
+            Typeset::wrap(self.bold, s, px, maxW, lines);
+        } else if (face == FaceKind::Mono) {
+            Typeset::wrap(self.mono, s, px, maxW, lines);
+        } else {
+            Typeset::wrap(self.monoBold, s, px, maxW, lines);
+        }
+    }
+
+    /** The byte offset of the caret position nearest `x` pixels along `s`. */
+    pub fn indexAt(self, kind : FaceKind, s : string, px : f64, x : f64) : i32 {
+        return match self.resolve(kind) {
+            FaceKind::Sans => Typeset::indexAt(self.sans, s, px, x),
+            FaceKind::Bold => Typeset::indexAt(self.bold, s, px, x),
+            FaceKind::Mono => Typeset::indexAt(self.mono, s, px, x),
+            FaceKind::MonoBold => Typeset::indexAt(self.monoBold, s, px, x),
+        };
+    }
+}

@@ -1,0 +1,63 @@
+// ease — how a value gets from where it is to where it is going.
+//
+// A hover is not a state, it is a journey of a tenth of a second: the fill that fades up under the
+// pointer and back when it leaves is what makes an interface feel made. Every animated property in
+// Zaffre is a number that *approaches* a target — the target changes the instant the pointer moves,
+// the number catches up over the next frames — rather than a timeline that has to be started,
+// restarted and cancelled. Retargeting mid-way is then free and never jumps.
+//
+// `approach` is the critically damped step: the fraction of the remaining distance covered in a
+// frame is `rate * dt / (1 + rate * dt)`, which is stable at any frame time (a long frame after a
+// pause lands on the target instead of overshooting it) and needs no `exp`.
+
+use crate::gfx::mathx::Mathx;
+
+/** A value that moves toward a target. */
+pub struct Eased {
+    /** Where it is. */
+    pub value : f64 = 0.0;
+
+    /** Where it is going. */
+    pub target : f64 = 0.0;
+
+    /** A value at rest at `v`. */
+    pub static fn at(v : f64) : Eased {
+        return Eased { value: v, target: v };
+    }
+
+    /** The same value, heading for `t`. */
+    pub fn toward(self, t : f64) : Eased {
+        return Eased { value: self.value, target: t };
+    }
+
+    /** Whether it has arrived (within a thousandth of the way). */
+    pub fn settled(self) : bool {
+        return (self.target - self.value).abs() < 0.001;
+    }
+
+    /** The value after `dt` seconds at `rate` per second; lands exactly on the target once close. */
+    pub fn step(self, dt : f64, rate : f64) : Eased {
+        if (self.settled()) {
+            return Eased { value: self.target, target: self.target };
+        }
+        let k : f64 = rate * dt / (1.0 + rate * dt);
+        return Eased { value: self.value + (self.target - self.value) * k, target: self.target };
+    }
+
+    /** The value as an alpha 0..255 for blending. */
+    pub fn alpha(self) : i32 {
+        return Mathx::clampI(Mathx::roundI(self.value * 255.0), 0, 255);
+    }
+}
+
+/** Standard rates, in 1/seconds: how snappily a property follows its target. */
+pub class Rate {
+    /** Hover and press feedback: settles in about a tenth of a second. */
+    pub static HOVER : f64 = 24.0;
+
+    /** Toggles and sliders' thumbs: a little slower, so the move is seen. */
+    pub static MOVE : f64 = 16.0;
+
+    /** Panels opening and closing. */
+    pub static OPEN : f64 = 12.0;
+}

@@ -1,0 +1,97 @@
+// variants — the closed sets a widget is asked for by name.
+//
+// A button is not "a button with these twelve colours", it is a *primary* button, a *ghost* one,
+// a *danger* one, at a size. The theme turns the name into the colours (see `theme`), which is
+// what lets one change of palette restyle every button in the program, and what lets a program
+// ask for the thing it means. An `enum` rather than a string so a typo is a compile error, and so
+// a `match` over it is checked for the case somebody adds next year.
+
+/** How loudly a button asks to be pressed. */
+pub enum ButtonKind : i32 {
+    /** The one action the page is for: accent fill. */
+    Primary = 0,
+
+    /** An ordinary action: raised surface, hairline. */
+    Secondary = 1,
+
+    /** A quiet action: no fill until hovered. */
+    Ghost = 2,
+
+    /** A destructive action: red. */
+    Danger = 3,
+
+    /** Text that acts: accent colour, underlined on hover. */
+    Link = 4,
+}
+
+/** How large a control is. */
+pub enum ControlSize : i32 {
+    /** Dense: 28 px controls, 12 px text. */
+    Sm = 0,
+
+    /** The default: 36 px controls, 14 px text. */
+    Md = 1,
+
+    /** Roomy: 44 px controls, 16 px text. */
+    Lg = 2,
+}
+
+/** What a badge, alert or toast is saying. */
+pub enum Tone : i32 {
+    /** Nothing in particular. */
+    Neutral = 0,
+
+    /** Something to look at: the accent colour. */
+    Accent = 1,
+
+    /** Good news. */
+    Ok = 2,
+
+    /** Caution. */
+    Warn = 3,
+
+    /** Trouble. */
+    Danger = 4,
+}
+
+/** The roles text plays; the theme sets each in its own size, weight and colour. */
+pub enum TextRole : i32 {
+    /** Running text and control labels. */
+    Body = 0,
+
+    /** Secondary text. */
+    Dim = 1,
+
+    /** Tertiary text: hints, units. */
+    Faint = 2,
+
+    /** Small print under a control. */
+    Caption = 3,
+
+    /** A form field's label. */
+    Label = 4,
+
+    /** A third-level heading. */
+    H3 = 5,
+
+    /** A second-level heading. */
+    H2 = 6,
+
+    /** A first-level heading. */
+    H1 = 7,
+
+    /** Code and figures. */
+    Mono = 8,
+}
+
+/** How much a surface stands out from the page. */
+pub enum Elevation : i32 {
+    /** On the page: a hairline, no shadow. */
+    Flat = 0,
+
+    /** A card: a hairline and a soft shadow. */
+    Raised = 1,
+
+    /** A popup, a dialog: a stronger fill and a deep shadow. */
+    Overlay = 2,
+}

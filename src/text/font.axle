@@ -14,7 +14,8 @@
 // rounded, and each glyph is drawn at the quarter pixel nearest its pen. That is most of why the
 // text looks set rather than typed.
 //
-// A `Font` is `Closeable`: it holds a block of memory.
+// A `Font` holds blocks of memory the compiler cannot see, so it releases them in its own `drop()`;
+// it is not `Closeable`, which keeps it free to be held and handed around like any other object.
 
 use smalt::{Mem, SlotIndex, AssetFile};
 use crate::gfx::mathx::Mathx;
@@ -43,7 +44,7 @@ const FONT_FILE_MAX : i64 = 16777216;
 const FONT_SUBPIXELS : i32 = 4;
 
 /** A TrueType face and its glyph cache. */
-pub class Font : Closeable {
+pub class Font {
     block : i64;
     bytes : i32;
     ttf : Ttf;
@@ -63,13 +64,16 @@ pub class Font : Closeable {
 
     /**
      * A font over the `bytes` bytes at `block`, a block from `Mem::take` that the font now owns
-     * and releases at `close`.
+     * and releases when it is destroyed.
      */
     constructor(block : i64, bytes : i32) {
         self.block = block;
         self.bytes = bytes;
         self.ttf = new Ttf(block, bytes);
-        self.arena = Mem::take(FONT_CACHE_BYTES);
+        self.arena = 0;
+        if (bytes > 0) {
+            self.arena = Mem::take(FONT_CACHE_BYTES);
+        }
         for (i of 0..FONT_DIRECT) {
             self.direct[i as i64] = -1;
         }
@@ -256,7 +260,7 @@ pub class Font : Closeable {
     }
 
     /** Release the font's memory. */
-    pub fn close(self) : void {
+    drop() {
         Mem::release(self.block);
         Mem::release(self.arena);
         self.index.close();

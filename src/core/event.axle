@@ -1,0 +1,125 @@
+// event — what happens to an interface, in the library's own words.
+//
+// The shell turns smalt's window events into these, so everything below it — every widget — is
+// written against `UiEvent` and nothing names an operating system or a window. A program that
+// owns its own window (a game painting a menu over its frame) feeds the same events in itself.
+//
+// One flat record with a `kind`, like smalt's own `Event`: a payload-bearing enum may not carry a
+// struct, and the fields that matter are few. Which fields mean something depends on the kind.
+
+/** What kind of thing happened. */
+pub enum EventKind : i32 {
+    /** Nothing: what an empty queue answers. */
+    None = 0,
+
+    /** The pointer moved: `x`, `y`. */
+    PointerMove = 1,
+
+    /** A button went down: `x`, `y`, `button`. */
+    PointerDown = 2,
+
+    /** A button came up: `x`, `y`, `button`. */
+    PointerUp = 3,
+
+    /** The wheel turned: `x`, `y`, `wheel`. */
+    Wheel = 4,
+
+    /** A key went down: `key`, `mods`, `repeat`. */
+    KeyDown = 5,
+
+    /** A key came up: `key`, `mods`. */
+    KeyUp = 6,
+
+    /** Text was typed: `cp` is the Unicode codepoint. */
+    Text = 7,
+
+    /** The pointer left the window. */
+    PointerLeave = 8,
+
+    /** The window lost the keyboard focus. */
+    WindowBlur = 9,
+}
+
+/** The keys a widget reacts to. Anything else arrives as `Key::Other`. */
+pub enum Key : i32 {
+    /** Not a key the library knows. */
+    Other = 0,
+    Enter = 1,
+    Escape = 2,
+    Space = 3,
+    Tab = 4,
+    Backspace = 5,
+    Delete = 6,
+    Left = 7,
+    Right = 8,
+    Up = 9,
+    Down = 10,
+    Home = 11,
+    End = 12,
+    PageUp = 13,
+    PageDown = 14,
+    A = 15,
+    C = 16,
+    V = 17,
+    X = 18,
+    Y = 19,
+    Z = 20,
+}
+
+/** Modifier bits of `UiEvent::mods`. */
+pub class Mod {
+    /** A shift key is down. */
+    pub static SHIFT : i32 = 1;
+
+    /** A control key is down (command, on a platform that uses it for the same shortcuts). */
+    pub static CTRL : i32 = 2;
+
+    /** An alt key is down. */
+    pub static ALT : i32 = 4;
+}
+
+/** One thing that happened. */
+pub struct UiEvent {
+    /** What happened; the fields below mean something for some kinds only. */
+    pub kind : EventKind = EventKind::None;
+
+    /** Pointer x in logical pixels. */
+    pub x : f64 = 0.0;
+
+    /** Pointer y in logical pixels. */
+    pub y : f64 = 0.0;
+
+    /** Which button: 0 left, 1 right, 2 middle. */
+    pub button : i32 = 0;
+
+    /** Wheel notches; positive scrolls content up (the wheel turned away from the user). */
+    pub wheel : f64 = 0.0;
+
+    /** The key, for the key kinds. */
+    pub key : Key = Key::Other;
+
+    /** Which modifiers were down: a combination of the `Mod` bits. */
+    pub mods : i32 = 0;
+
+    /** Whether a `KeyDown` is the keyboard's auto-repeat. */
+    pub repeat : bool = false;
+
+    /** The codepoint, for `Text`. */
+    pub cp : i32 = 0;
+
+    /** Whether the shift key was down. */
+    pub fn shift(self) : bool {
+        return (self.mods & Mod::SHIFT) != 0;
+    }
+
+    /** Whether a control key was down. */
+    pub fn ctrl(self) : bool {
+        return (self.mods & Mod::CTRL) != 0;
+    }
+
+    /** Whether the event is a pointer event with a position. */
+    pub fn isPointer(self) : bool {
+        return self.kind == EventKind::PointerMove || self.kind == EventKind::PointerDown
+            || self.kind == EventKind::PointerUp || self.kind == EventKind::Wheel;
+    }
+}

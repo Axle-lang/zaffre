@@ -1,0 +1,313 @@
+// styles — what each widget looks like, as plain data.
+//
+// A widget's look is a record, not code: radii, paddings, fills for every state, the text it is
+// lettered in. The theme builds these records from its tokens (`theme`); the widget reads one and
+// draws it. Because they are records with public fields, restyling one button is a struct literal
+// that starts from the theme's and changes what it means to:
+//
+//     let style = ButtonStyle { radius: 4.0, ..theme.button(ButtonKind::Primary, ControlSize::Md) };
+//
+// and a whole look is a theme whose recipes were edited. Nothing here draws.
+
+use crate::gfx::tint::Tint;
+use crate::style::fill::Fill;
+
+/** How a run of text is set. */
+pub struct TextStyle {
+    /** Size in pixels. */
+    pub px : f64;
+
+    /** Whether the bold face is used. */
+    pub bold : bool;
+
+    /** Whether the monospace face is used. */
+    pub mono : bool;
+
+    /** The colour. */
+    pub color : Tint;
+}
+
+/** A button in every state. */
+pub struct ButtonStyle {
+    /** Corner radius. */
+    pub radius : f64;
+
+    /** Height of the button. */
+    pub height : f64;
+
+    /** Space between the edge and the label (or icon). */
+    pub padX : f64;
+
+    /** Space between an icon and the label. */
+    pub gap : f64;
+
+    /** Label size. */
+    pub px : f64;
+
+    /** Whether the label is bold. */
+    pub bold : bool;
+
+    /** Fill at rest. */
+    pub fill : Fill;
+
+    /** Fill under the pointer. */
+    pub fillHover : Fill;
+
+    /** Fill while pressed. */
+    pub fillPress : Fill;
+
+    /** Fill when disabled. */
+    pub fillOff : Fill;
+
+    /** Outline at rest. */
+    pub border : Tint;
+
+    /** Outline under the pointer. */
+    pub borderHover : Tint;
+
+    /** Outline width. */
+    pub borderW : f64;
+
+    /** Label colour. */
+    pub text : Tint;
+
+    /** Label colour when disabled. */
+    pub textOff : Tint;
+
+    /** Shadow colour (opacity included); clear for none. */
+    pub shadow : Tint;
+
+    /** Shadow blur. */
+    pub shadowBlur : f64;
+
+    /** Shadow offset down. */
+    pub shadowDy : f64;
+
+    /** Whether the label is underlined under the pointer (a link). */
+    pub underline : bool;
+}
+
+/** A single-line text field. */
+pub struct FieldStyle {
+    /** Corner radius. */
+    pub radius : f64;
+
+    /** Height. */
+    pub height : f64;
+
+    /** Space between the edge and the text. */
+    pub padX : f64;
+
+    /** Text size. */
+    pub px : f64;
+
+    /** Fill at rest. */
+    pub fill : Fill;
+
+    /** Fill while focused. */
+    pub fillFocus : Fill;
+
+    /** Fill when disabled. */
+    pub fillOff : Fill;
+
+    /** Outline at rest. */
+    pub border : Tint;
+
+    /** Outline under the pointer. */
+    pub borderHover : Tint;
+
+    /** Outline while focused. */
+    pub borderFocus : Tint;
+
+    /** The focus halo around the field. */
+    pub ring : Tint;
+
+    /** Text colour. */
+    pub text : Tint;
+
+    /** Placeholder colour. */
+    pub placeholder : Tint;
+
+    /** Caret colour. */
+    pub caret : Tint;
+
+    /** Selection wash. */
+    pub selection : Tint;
+}
+
+/** A checkbox, a radio button or a switch. */
+pub struct ToggleStyle {
+    /** Side of a checkbox / diameter of a radio mark. */
+    pub mark : f64;
+
+    /** Corner radius of a checkbox. */
+    pub radius : f64;
+
+    /** Width of a switch's track. */
+    pub trackW : f64;
+
+    /** Height of a switch's track. */
+    pub trackH : f64;
+
+    /** Gap between the mark and its label. */
+    pub gap : f64;
+
+    /** Label size. */
+    pub px : f64;
+
+    /** Mark fill when off. */
+    pub off : Fill;
+
+    /** Mark fill when on. */
+    pub on : Fill;
+
+    /** Mark outline when off. */
+    pub borderOff : Tint;
+
+    /** Mark outline when on. */
+    pub borderOn : Tint;
+
+    /** The tick, the radio dot. */
+    pub glyph : Tint;
+
+    /** A switch's knob. */
+    pub knob : Tint;
+
+    /** Label colour. */
+    pub text : Tint;
+
+    /** Label colour when disabled. */
+    pub textOff : Tint;
+
+    /** Focus halo. */
+    pub ring : Tint;
+}
+
+/** A slider. */
+pub struct SliderStyle {
+    /** Track thickness. */
+    pub trackH : f64;
+
+    /** Thumb diameter. */
+    pub thumb : f64;
+
+    /** The track. */
+    pub track : Tint;
+
+    /** The filled part of the track. */
+    pub fill : Fill;
+
+    /** The thumb. */
+    pub knob : Tint;
+
+    /** The thumb's outline. */
+    pub knobBorder : Tint;
+
+    /** Focus halo. */
+    pub ring : Tint;
+
+    /** Label size. */
+    pub px : f64;
+
+    /** Label colour. */
+    pub text : Tint;
+}
+
+/** A surface: a card, a panel, a popup. */
+pub struct PanelStyle {
+    /** Corner radius. */
+    pub radius : f64;
+
+    /** Fill. */
+    pub fill : Fill;
+
+    /** Outline; clear for none. */
+    pub border : Tint;
+
+    /** Outline width. */
+    pub borderW : f64;
+
+    /** Shadow colour; clear for none. */
+    pub shadow : Tint;
+
+    /** Shadow blur. */
+    pub shadowBlur : f64;
+
+    /** Shadow offset down. */
+    pub shadowDy : f64;
+
+    /** A second, tighter shadow under the first (the contact shadow); clear for none. */
+    pub shadow2 : Tint;
+
+    /** The tight shadow's blur. */
+    pub shadow2Blur : f64;
+
+    /** The tight shadow's offset down. */
+    pub shadow2Dy : f64;
+}
+
+/** A badge or chip: a small pill of text. */
+pub struct BadgeStyle {
+    /** Fill. */
+    pub fill : Tint;
+
+    /** Outline. */
+    pub border : Tint;
+
+    /** Text colour. */
+    pub text : Tint;
+
+    /** Height. */
+    pub height : f64;
+
+    /** Space between the edge and the text. */
+    pub padX : f64;
+
+    /** Text size. */
+    pub px : f64;
+}
+
+/** A progress bar or a spinner. */
+pub struct ProgressStyle {
+    /** The bar's thickness. */
+    pub height : f64;
+
+    /** The empty track. */
+    pub track : Tint;
+
+    /** The bar. */
+    pub fill : Fill;
+
+    /** A spinner's diameter. */
+    pub spinner : f64;
+}
+
+/** The items of a menu, a list, a tab strip: rows that highlight. */
+pub struct ItemStyle {
+    /** Row height. */
+    pub height : f64;
+
+    /** Corner radius of a row's highlight. */
+    pub radius : f64;
+
+    /** Space between the row's edge and its content. */
+    pub padX : f64;
+
+    /** Text size. */
+    pub px : f64;
+
+    /** Highlight under the pointer. */
+    pub hover : Tint;
+
+    /** Highlight of the selected row. */
+    pub selected : Tint;
+
+    /** Text colour. */
+    pub text : Tint;
+
+    /** Text colour of the selected row. */
+    pub textSelected : Tint;
+
+    /** Text colour when disabled. */
+    pub textOff : Tint;
+}

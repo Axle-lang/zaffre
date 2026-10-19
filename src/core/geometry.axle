@@ -1,0 +1,308 @@
+// geometry — the shapes layout is done in: sizes, boxes, insets and limits.
+//
+// Layout in Zaffre is *constraints down, sizes up*: a parent hands each child the `Limits` it may
+// occupy, the child answers with the `Size` it wants within them, and the parent then places it in
+// a `Bounds`. A child never positions itself, so a widget can be used anywhere without knowing
+// where, and a parent never asks "what are your margins".
+//
+// Everything is a real number of logical pixels. Where a layout leaves a fractional edge the
+// painter anti-aliases it, so a box at x = 10.5 is a box at 10.5, not at 10 or 11.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::RRect;
+
+/** A number large enough to stand for "no limit" without being an infinity, which divides badly. */
+pub const UNBOUNDED : f64 = 1000000000.0;
+
+/** A width and a height. */
+pub struct Size {
+    /** Width. */
+    pub w : f64 = 0.0;
+
+    /** Height. */
+    pub h : f64 = 0.0;
+
+    /** A size. */
+    pub static fn make(w : f64, h : f64) : Size {
+        return Size { w: w, h: h };
+    }
+
+    /** The empty size. */
+    pub static fn zero() : Size {
+        return Size { };
+    }
+}
+
+/** Space on each side of a box. */
+pub struct Insets {
+    /** Above. */
+    pub top : f64 = 0.0;
+
+    /** To the right. */
+    pub right : f64 = 0.0;
+
+    /** Below. */
+    pub bottom : f64 = 0.0;
+
+    /** To the left. */
+    pub left : f64 = 0.0;
+
+    /** The same `v` on every side. */
+    pub static fn all(v : f64) : Insets {
+        return Insets { top: v, right: v, bottom: v, left: v };
+    }
+
+    /** `x` left and right, `y` above and below. */
+    pub static fn xy(x : f64, y : f64) : Insets {
+        return Insets { top: y, right: x, bottom: y, left: x };
+    }
+
+    /** No space. */
+    pub static fn none() : Insets {
+        return Insets { };
+    }
+
+    /** Left plus right. */
+    pub fn horizontal(self) : f64 {
+        return self.left + self.right;
+    }
+
+    /** Top plus bottom. */
+    pub fn vertical(self) : f64 {
+        return self.top + self.bottom;
+    }
+}
+
+/** A box on the screen: its top-left corner and its size. */
+pub struct Bounds {
+    /** Left edge. */
+    pub x : f64 = 0.0;
+
+    /** Top edge. */
+    pub y : f64 = 0.0;
+
+    /** Width. */
+    pub w : f64 = 0.0;
+
+    /** Height. */
+    pub h : f64 = 0.0;
+
+    /** A box. */
+    pub static fn make(x : f64, y : f64, w : f64, h : f64) : Bounds {
+        return Bounds { x: x, y: y, w: w, h: h };
+    }
+
+    /** The empty box at the origin. */
+    pub static fn zero() : Bounds {
+        return Bounds { };
+    }
+
+    /** The right edge. */
+    pub fn right(self) : f64 {
+        return self.x + self.w;
+    }
+
+    /** The bottom edge. */
+    pub fn bottom(self) : f64 {
+        return self.y + self.h;
+    }
+
+    /** The horizontal centre. */
+    pub fn midX(self) : f64 {
+        return self.x + self.w * 0.5;
+    }
+
+    /** The vertical centre. */
+    pub fn midY(self) : f64 {
+        return self.y + self.h * 0.5;
+    }
+
+    /** Whether (`px`, `py`) is inside. */
+    pub fn contains(self, px : f64, py : f64) : bool {
+        return px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h;
+    }
+
+    /** Whether it has no area. */
+    pub fn isEmpty(self) : bool {
+        return self.w <= 0.0 || self.h <= 0.0;
+    }
+
+    /** The box shrunk by `d` on each side (grown where an inset is negative). */
+    pub fn inset(self, d : Insets) : Bounds {
+        return Bounds {
+            x: self.x + d.left,
+            y: self.y + d.top,
+            w: Mathx::fmax(0.0, self.w - d.horizontal()),
+            h: Mathx::fmax(0.0, self.h - d.vertical()),
+        };
+    }
+
+    /** The box grown by `d` on every side. */
+    pub fn grown(self, d : f64) : Bounds {
+        return Bounds { x: self.x - d, y: self.y - d, w: self.w + 2.0 * d, h: self.h + 2.0 * d };
+    }
+
+    /** The box moved by (`dx`, `dy`). */
+    pub fn moved(self, dx : f64, dy : f64) : Bounds {
+        return Bounds { x: self.x + dx, y: self.y + dy, w: self.w, h: self.h };
+    }
+
+    /** The part of this box that is also in `o`. */
+    pub fn intersect(self, o : Bounds) : Bounds {
+        let x0 : f64 = Mathx::fmax(self.x, o.x);
+        let y0 : f64 = Mathx::fmax(self.y, o.y);
+        let x1 : f64 = Mathx::fmin(self.right(), o.right());
+        let y1 : f64 = Mathx::fmin(self.bottom(), o.bottom());
+        return Bounds { x: x0, y: y0, w: Mathx::fmax(0.0, x1 - x0), h: Mathx::fmax(0.0, y1 - y0) };
+    }
+
+    /** Whether the two boxes share any area. */
+    pub fn overlaps(self, o : Bounds) : bool {
+        return !self.intersect(o).isEmpty();
+    }
+
+    /** This box as a rounded rectangle of radius `r` for the painter. */
+    pub fn round(self, r : f64) : RRect {
+        return RRect::uniform(self.x, self.y, self.w, self.h, r);
+    }
+}
+
+/** The room a parent offers a child: a range of widths and a range of heights. */
+pub struct Limits {
+    /** Narrowest the child may be. */
+    pub minW : f64 = 0.0;
+
+    /** Widest the child may be. */
+    pub maxW : f64 = UNBOUNDED;
+
+    /** Shortest the child may be. */
+    pub minH : f64 = 0.0;
+
+    /** Tallest the child may be. */
+    pub maxH : f64 = UNBOUNDED;
+
+    /** Anything up to `w` by `h`. */
+    pub static fn loose(w : f64, h : f64) : Limits {
+        return Limits { minW: 0.0, maxW: w, minH: 0.0, maxH: h };
+    }
+
+    /** Exactly `w` by `h`. */
+    pub static fn tight(w : f64, h : f64) : Limits {
+        return Limits { minW: w, maxW: w, minH: h, maxH: h };
+    }
+
+    /** Any size at all. */
+    pub static fn unbounded() : Limits {
+        return Limits { };
+    }
+
+    /** Whether the width has a real limit. */
+    pub fn boundedW(self) : bool {
+        return self.maxW < UNBOUNDED * 0.5;
+    }
+
+    /** Whether the height has a real limit. */
+    pub fn boundedH(self) : bool {
+        return self.maxH < UNBOUNDED * 0.5;
+    }
+
+    /** `s` held inside the limits. */
+    pub fn constrain(self, s : Size) : Size {
+        return Size {
+            w: Mathx::clampF(s.w, self.minW, self.maxW),
+            h: Mathx::clampF(s.h, self.minH, self.maxH),
+        };
+    }
+
+    /** The limits left once `d` has been taken from every side. */
+    pub fn deflate(self, d : Insets) : Limits {
+        let dw : f64 = d.horizontal();
+        let dh : f64 = d.vertical();
+        let mut maxW : f64 = self.maxW;
+        let mut maxH : f64 = self.maxH;
+        if (self.boundedW()) {
+            maxW = Mathx::fmax(0.0, self.maxW - dw);
+        }
+        if (self.boundedH()) {
+            maxH = Mathx::fmax(0.0, self.maxH - dh);
+        }
+        return Limits {
+            minW: Mathx::fmax(0.0, self.minW - dw),
+            maxW: maxW,
+            minH: Mathx::fmax(0.0, self.minH - dh),
+            maxH: maxH,
+        };
+    }
+
+    /** The same limits with the minimums dropped: the child may be as small as it likes. */
+    pub fn loosened(self) : Limits {
+        return Limits { minW: 0.0, maxW: self.maxW, minH: 0.0, maxH: self.maxH };
+    }
+}
+
+/** How a widget asks to be sized along one axis. */
+pub enum Length {
+    /** As large as its content wants. */
+    Auto,
+
+    /** Exactly this many pixels. */
+    Px(f64),
+
+    /** As much as the parent offers. */
+    Fill,
+
+    /** This fraction (0..1) of what the parent offers. */
+    Percent(f64),
+
+    /** The pixels along one axis this length resolves to, given what is `avail` and what the content `natural`ly wants. */
+    pub fn resolve(self, avail : f64, natural : f64) : f64 {
+        return match self {
+            Length::Auto => natural,
+            Length::Px(v) => v,
+            Length::Fill => avail,
+            Length::Percent(f) => avail * f,
+        };
+    }
+}
+
+/** How children sit across the axis a container lays them along. */
+pub enum Align : i32 {
+    /** At the start edge. */
+    Start = 0,
+
+    /** Centred. */
+    Center = 1,
+
+    /** At the end edge. */
+    End = 2,
+
+    /** Stretched to fill the cross axis. */
+    Stretch = 3,
+}
+
+/** How children share the space along a container's main axis. */
+pub enum Justify : i32 {
+    /** Packed at the start. */
+    Start = 0,
+
+    /** Packed in the middle. */
+    Center = 1,
+
+    /** Packed at the end. */
+    End = 2,
+
+    /** Spread, the first at the start and the last at the end. */
+    Between = 3,
+
+    /** Spread with half a gap at each end. */
+    Around = 4,
+}
+
+/** The axis a container lays its children along. */
+pub enum Axis : i32 {
+    /** Left to right. */
+    Horizontal = 0,
+
+    /** Top to bottom. */
+    Vertical = 1,
+}

@@ -1,0 +1,43 @@
+// model — a value a widget and a program both look at.
+//
+// A switch shows a flag and changes it; a slider shows a number and changes it; a text field shows
+// a string and changes it. The flag, the number and the string belong to the *program*, so the
+// widget does not hold them — it holds a handle to a `Model<T>` and reads it whenever it draws,
+// writes it when the user acts. The program reads the same model when it needs the value, or
+// writes it to move the widget. There is nothing to synchronise because there is one value.
+//
+//     let dark : Shared<Model<bool>> = new shared Model<bool>(true);
+//     let panel = new Switch("Dark mode", dark);      // the switch shows it, and sets it
+//     …
+//     if (dark.get()) { … }                           // the program reads it
+//
+// A model is shared because two parties hold it and neither owns the other. `version` goes up on
+// every write, so something that wants to know *whether* it changed (to save, to repaint) compares
+// two numbers instead of two values.
+
+/** A value of type `T` shared between widgets and the program that made them. */
+pub class Model<T> {
+    value : T;
+    version : i64 = 0;
+
+    /** A model holding `value`. */
+    constructor(value : T) {
+        self.value = value;
+    }
+
+    /** The current value. */
+    pub fn get(self) : T {
+        return self.value;
+    }
+
+    /** Replace the value. */
+    pub fn set(mut self, value : T) : void {
+        self.value = value;
+        self.version = self.version + 1;
+    }
+
+    /** How many times the value has been written. */
+    pub fn changes(self) : i64 {
+        return self.version;
+    }
+}

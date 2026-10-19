@@ -1,0 +1,107 @@
+// painter — what a widget may ask of a surface, and the CPU surface that answers.
+//
+// A widget draws by calling a `Painter`: fill this rounded box, outline that one, cast a shadow,
+// run a line, set this text. It never touches a pixel. That is the whole of the seam between the
+// interface and the thing that puts it on a screen — `CpuPainter` below does it into a smalt
+// `Frame` with the anti-aliased primitives of `gfx`, and a GPU painter would answer the same
+// calls by batching quads for a shader. A widget cannot tell, and a theme cannot either.
+//
+// The CPU painter is the reference. It is deterministic, so a frame can be written to a file and
+// compared with one drawn earlier; whatever another painter draws is judged against it.
+//
+// Coordinates are logical pixels as reals; the painter decides how a fractional edge lands.
+
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::gfx::canvas::Canvas;
+use crate::text::fonts::{Fonts, FaceKind};
+
+/** The drawing calls a widget makes. */
+pub trait Painter {
+    /** Fill a rounded rectangle with a brush. */
+    fn fillRound(mut self, rr : RRect, brush : Brush) : void;
+
+    /** Draw a line `width` wide just inside the outline of a rounded rectangle. */
+    fn strokeRound(mut self, rr : RRect, width : f64, brush : Brush) : void;
+
+    /** Cast the soft shadow of a rounded rectangle. */
+    fn shadow(mut self, rr : RRect, dx : f64, dy : f64, blur : f64, spread : f64, t : Tint) : void;
+
+    /** Draw a straight line with round ends. */
+    fn line(mut self, x0 : f64, y0 : f64, x1 : f64, y1 : f64, width : f64, t : Tint) : void;
+
+    /** Set `s` with the pen at (`x`, `baseline`); answers the pen after it. */
+    fn text(mut self, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, t : Tint) : f64;
+
+    /** Set `s` cut to `maxW` pixels with an ellipsis. */
+    fn textElided(mut self, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, maxW : f64, t : Tint) : f64;
+
+    /** Set bytes [`start`, `stop`) of `s`. */
+    fn textSpan(mut self, kind : FaceKind, s : string, start : i32, stop : i32, x : f64, baseline : f64, px : f64, t : Tint) : f64;
+
+    /** Confine drawing to the intersection of the current clip and a box, until the matching `popClip`. */
+    fn pushClip(mut self, x : f64, y : f64, w : f64, h : f64) : void;
+
+    /** Put back the clip the matching `pushClip` replaced. */
+    fn popClip(mut self) : void;
+
+    /** Multiply the alpha of everything drawn next by `o` / 255; answers the opacity it replaced. */
+    fn setOpacity(mut self, o : i32) : i32;
+}
+
+/** A painter that draws into a smalt `Frame`. */
+pub class CpuPainter : Painter {
+    canvas : Canvas;
+    fonts : Shared<Fonts>;
+
+    /** A painter over `canvas` (which it takes), setting text in `fonts`. */
+    constructor(own canvas : Canvas, fonts : Shared<Fonts>) {
+        self.canvas = canvas;
+        self.fonts = fonts;
+    }
+
+    pub fn fillRound(mut self, rr : RRect, brush : Brush) : void {
+        self.canvas.shape(rr, 0.0, brush);
+    }
+
+    pub fn strokeRound(mut self, rr : RRect, width : f64, brush : Brush) : void {
+        self.canvas.shape(rr, width, brush);
+    }
+
+    pub fn shadow(mut self, rr : RRect, dx : f64, dy : f64, blur : f64, spread : f64, t : Tint) : void {
+        self.canvas.shadow(rr, dx, dy, blur, spread, t);
+    }
+
+    pub fn line(mut self, x0 : f64, y0 : f64, x1 : f64, y1 : f64, width : f64, t : Tint) : void {
+        self.canvas.capsule(x0, y0, x1, y1, width, t);
+    }
+
+    pub fn text(mut self, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        return self.fonts.draw(self.canvas, kind, s, x, baseline, px, t);
+    }
+
+    pub fn textElided(mut self, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, maxW : f64, t : Tint) : f64 {
+        return self.fonts.drawElided(self.canvas, kind, s, x, baseline, px, maxW, t);
+    }
+
+    pub fn textSpan(mut self, kind : FaceKind, s : string, start : i32, stop : i32, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        return self.fonts.drawSpan(self.canvas, kind, s, start, stop, x, baseline, px, t);
+    }
+
+    pub fn pushClip(mut self, x : f64, y : f64, w : f64, h : f64) : void {
+        // Round outward so a fractional box never clips away the half pixel it touches.
+        let x0 : i32 = x.floorToInt() as i32;
+        let y0 : i32 = y.floorToInt() as i32;
+        let x1 : i32 = (x + w).ceilToInt() as i32;
+        let y1 : i32 = (y + h).ceilToInt() as i32;
+        self.canvas.pushClip(x0, y0, x1 - x0, y1 - y0);
+    }
+
+    pub fn popClip(mut self) : void {
+        self.canvas.popClip();
+    }
+
+    pub fn setOpacity(mut self, o : i32) : i32 {
+        return self.canvas.setOpacity(o);
+    }
+}

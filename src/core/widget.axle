@@ -1,0 +1,222 @@
+// widget — the contract every piece of an interface keeps, and the base most of them share.
+//
+// A `Widget` is something that can say how big it wants to be (`measure`), accept the box it was
+// given (`arrange`), draw itself (`paint`), answer an event (`event`) and animate (`tick`). The
+// contract is a `trait`, so a container holds its children as `dyn Widget` and calls them without
+// knowing what they are, and a program's own widget is a class that opts in exactly as the built-in
+// ones do — the library has no private way into the tree.
+//
+// Three of the methods have a default body, so the simplest widget implements only the first four:
+// one that does not react (a label) inherits `event` returning false, one that does not move
+// inherits `tick` returning false, one that takes no share of spare room inherits `flex` of 0.
+//
+// `Control` is the base class for widgets that are *interactive*: it keeps the box, tracks hover
+// and press, owns the focus token, and holds the three eased numbers (hover, press, focus) that
+// make a state change a short fade instead of a jump. A class takes it with `class Button :
+// Control, Widget`.
+
+use crate::style::ease::{Eased, Rate};
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::paint::painter::Painter;
+
+/** Something that can be laid out, drawn, and sent events. */
+pub trait Widget {
+    /** The size this widget wants within `limits`. */
+    fn measure(mut self, ctx : Context, limits : Limits) : Size;
+
+    /** Accept the box the parent decided on; containers place their children in it. */
+    fn arrange(mut self, ctx : Context, area : Bounds) : void;
+
+    /** Draw into the box `arrange` was given. */
+    fn paint(mut self, ctx : Context, p : Painter) : void;
+
+    /** The box `arrange` was given (empty before the first layout). */
+    fn bounds(self) : Bounds;
+
+    /** Handle an event; true when it was used up and should go no further. Default: ignore it. */
+    fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        return false;
+    }
+
+    /** Advance animations by `dt` seconds; true while there is more to animate. Default: nothing moves. */
+    fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return false;
+    }
+
+    /** The share of spare room this widget takes in a row or column (0: none, 1: an equal share). */
+    fn flex(self) : f64 {
+        return 0.0;
+    }
+}
+
+/** What a pointer event did to a `Control`. */
+pub enum Gesture : i32 {
+    /** Nothing it cares about. */
+    None = 0,
+
+    /** The pointer came over it. */
+    Enter = 1,
+
+    /** The pointer left it. */
+    Leave = 2,
+
+    /** A button went down on it. */
+    Press = 3,
+
+    /** A button came up after going down on it, away from it. */
+    Release = 4,
+
+    /** A button went down and came up on it: a click. */
+    Click = 5,
+
+    /** The pointer moved while it was held down. */
+    Drag = 6,
+}
+
+/** The box every widget keeps: where it was arranged to. */
+pub class Base {
+    /** The box this widget was arranged into. */
+    pub area : Bounds = Bounds::zero();
+
+    /** The box `arrange` was given (empty before the first layout). */
+    pub fn bounds(self) : Bounds {
+        return self.area;
+    }
+
+    /** Take the box. Widgets with children place them as well. */
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+    }
+}
+
+/** The state and animation shared by interactive widgets. */
+pub class Control : Base {
+
+    /** Whether it reacts to input; a disabled widget draws dimmed. */
+    pub enabled : bool = true;
+
+    /** Whether the pointer is over it. */
+    pub hovered : bool = false;
+
+    /** Whether a button went down on it and has not come up. */
+    pub pressed : bool = false;
+
+    /** Whether it can take the keyboard. */
+    pub focusable : bool = true;
+
+    /** Its focus token (0 until the first layout). */
+    pub token : i64 = 0;
+
+    /** 0..1: how far into the hover state it is. */
+    pub hoverT : Eased = Eased::at(0.0);
+
+    /** 0..1: how far into the pressed state it is. */
+    pub pressT : Eased = Eased::at(0.0);
+
+    /** 0..1: how far into the focused state it is. */
+    pub focusT : Eased = Eased::at(0.0);
+
+    /** Take the box, and announce the focus token. */
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.focusable) {
+            if (self.token == 0) {
+                self.token = ctx.mint();
+            }
+            ctx.announce(self.token);
+        }
+    }
+
+    /** Whether it holds the keyboard. */
+    pub fn isFocused(self, ctx : Context) : bool {
+        return self.focusable && ctx.hasFocus(self.token);
+    }
+
+    /** Whether the focus ring should be drawn: focused, and reached by keyboard. */
+    pub fn ringShown(self, ctx : Context) : bool {
+        return self.isFocused(ctx) && ctx.focusVisible;
+    }
+
+    /**
+     * Track the pointer: hover, press and release against the box, answering what happened.
+     *
+     * Moves and releases are delivered to every widget, not only the one under the pointer, which is
+     * what lets a drag that leaves the box still end where it began. A press is taken only by the
+     * topmost widget under the pointer, and only while no overlay covers it.
+     */
+    pub fn pointer(mut self, ctx : Context, e : UiEvent) : Gesture {
+        let inside : bool = self.area.contains(e.x, e.y);
+        if (e.kind == EventKind::PointerMove) {
+            let over : bool = inside && !ctx.blocked && self.enabled;
+            if (over != self.hovered) {
+                self.hovered = over;
+                ctx.invalidate();
+                if (over) {
+                    return Gesture::Enter;
+                }
+                return Gesture::Leave;
+            }
+            if (self.pressed) {
+                return Gesture::Drag;
+            }
+            return Gesture::None;
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            if (self.hovered) {
+                self.hovered = false;
+                ctx.invalidate();
+                return Gesture::Leave;
+            }
+            return Gesture::None;
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0) {
+            if (inside && !ctx.blocked && self.enabled) {
+                self.pressed = true;
+                if (self.focusable) {
+                    ctx.setFocus(self.token, false);
+                }
+                ctx.invalidate();
+                return Gesture::Press;
+            }
+            return Gesture::None;
+        }
+        if (e.kind == EventKind::PointerUp && e.button == 0 && self.pressed) {
+            self.pressed = false;
+            ctx.invalidate();
+            if (inside && self.enabled) {
+                return Gesture::Click;
+            }
+            return Gesture::Release;
+        }
+        return Gesture::None;
+    }
+
+    /** Ask the pointer to be a hand while it is over this widget. */
+    pub fn wantHand(self, ctx : Context) : void {
+        if (self.hovered && self.enabled) {
+            ctx.wantCursor(Cursor::Hand);
+        }
+    }
+
+    /** Move the three eased numbers toward the state the widget is in; true while any is still moving. */
+    pub fn animate(mut self, ctx : Context, dt : f64) : bool {
+        let mut hv : f64 = 0.0;
+        if (self.hovered && self.enabled) {
+            hv = 1.0;
+        }
+        let mut pr : f64 = 0.0;
+        if (self.pressed) {
+            pr = 1.0;
+        }
+        let mut fc : f64 = 0.0;
+        if (self.ringShown(ctx)) {
+            fc = 1.0;
+        }
+        self.hoverT = self.hoverT.toward(hv).step(dt, Rate::HOVER);
+        self.pressT = self.pressT.toward(pr).step(dt, Rate::HOVER * 1.5);
+        self.focusT = self.focusT.toward(fc).step(dt, Rate::HOVER);
+        return !self.hoverT.settled() || !self.pressT.settled() || !self.focusT.settled();
+    }
+}
