@@ -25,3 +25,6 @@ __pycache__/
 
 # Scratch output of the reference tools.
 /tools/.build/
+
+# C twin build output.
+tools/c_ref/build/

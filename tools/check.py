@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""check.py — the checks a compiler would make first, made without one.
+
+    python3 tools/check.py              # check src/ and examples/
+    python3 tools/check.py --selftest   # plant each fault; fail if one is accepted
+
+The Axle compiler was not on the machine this library was written on, so the dull
+failures it reports first are caught here, from the text alone:
+
+  imports     every `use crate::a::b::{X}` names a module that exists and declares X;
+              every `use smalt::{X}` names a public declaration in vendor/smalt
+  layers      a module imports from its own layer or below (doc/ARCHITECTURE.md)
+  members     `Type::name(` names a member the type declares (zaffre's or smalt's);
+              `.name(` names a method that is declared somewhere (a typo is not)
+  mutability  a `let` binding that is reassigned must be `let mut`
+  syntax      no postfix `?`; none of the reserved words the language's own
+              documentation records as unusable (`free`, `of`) used as a name
+  constants   a `const` / `static` initialiser is a literal (E0720)
+  seam        no `extern "C"`, no `unsafe` outside the files allowed it: nothing in
+              this library names an operating system or touches raw memory but smalt
+
+It is not a type checker and says so: a wrong argument type, a missing `own`, an
+ownership error all still need `axle check`.
+"""
+import os
+import re
+import shutil
+import sys
+import tempfile
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# Bottom to top. A module's layer is the first path component under src/.
+LAYERS = ["gfx", "text", "style", "tree", "layout", "draw", "input", "ui", "widgets", "shell"]
+
+# Files allowed `unsafe`: none today. Raw memory is smalt's `Mem`; a hot loop that needs a typed
+# pointer asks for it in smalt rather than here.
+UNSAFE_OK = set()
+
+# Methods the language and smalt's primitives provide that no `fn` in a source file declares.
+BUILTIN_METHODS = {
+    "min", "max", "abs", "sqrt", "sin", "cos", "pow", "round", "floorToInt", "ceilToInt",
+    "truncToInt", "byteAt", "join", "await", "length", "push", "pop",
+}
+
+DECL = re.compile(
+    r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:extern\s+\"C\"\s+)?(?:static\s+)?"
+    r"(class|struct|trait|enum|exception|fn|const)\s+(\w+)", re.M)
+FN = re.compile(r"\bfn\s+(\w+)\s*\(")
+
+
+def strip_comments(text):
+    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
+    return re.sub(r"//[^\n]*", "", text)
+
+
+def strip_strings(text):
+    return re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', text)
+
+
+def code_of(path):
+    return strip_strings(strip_comments(open(path, encoding="utf-8").read()))
+
+
+def files_under(base):
+    for dirpath, _, names in os.walk(base):
+        for n in sorted(names):
+            if n.endswith(".axle"):
+                yield os.path.join(dirpath, n)
+
+
+def matching_brace(text, i):
+    depth = 0
+    for j in range(i, len(text)):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+    return len(text)
+
+
+def members_of(text):
+    """{type name: set of member names} for every class / struct / enum / trait in `text`."""
+    out = {}
+    for m in re.finditer(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:abstract\s+)?(class|struct|trait|enum)\s+(\w+)[^{;]*\{",
+                         text, re.M):
+        end = matching_brace(text, m.end() - 1)
+        body = text[m.end():end]
+        names = set(FN.findall(body))
+        names |= set(re.findall(r"\bconstructor\b", body)) and {"new"} or set()
+        # fields, statics and enum variants: `name :` and `Name =` / `Name,` at depth 0 of the body
+        names |= set(re.findall(r"(?:^|\n)\s*(?:pub(?:\([a-z]+\))?\s+)?(?:static\s+)?(\w+)\s*:", body))
+        names |= set(re.findall(r"(?:^|\n)\s*(\w+)\s*(?:=|,|\()", body))
+        out.setdefault(m.group(2), set()).update(names)
+    return out
+
+
+class Index:
+    def __init__(self, root):
+        self.root = root
+        self.src = os.path.join(root, "src")
+        self.modules = {}      # logical module path (tuple) -> file
+        self.decls = {}        # file -> {name}
+        self.types = {}        # type name -> members
+        self.methods = set(BUILTIN_METHODS)
+        for f in files_under(self.src):
+            rel = os.path.relpath(f, self.src)[:-5].split(os.sep)
+            self.modules[tuple(rel)] = f
+            text = code_of(f)
+            self.decls[f] = {m.group(2) for m in DECL.finditer(text)}
+            for k, v in members_of(text).items():
+                self.types.setdefault(k, set()).update(v)
+            self.methods |= set(FN.findall(text))
+
+
+def smalt_index():
+    root = os.path.join(ROOT, "vendor", "smalt")
+    if not os.path.isdir(os.path.join(root, "src")):
+        return None, None
+    names = set()
+    types = {}
+    methods = set()
+    for f in files_under(os.path.join(root, "src")):
+        text = code_of(f)
+        for m in re.finditer(
+                r"^\s*pub(?:\([a-z]+\))?\s+(?:extern\s+\"C\"\s+)?(?:static\s+)?(class|struct|trait|enum|exception|fn|const)\s+(\w+)",
+                text, re.M):
+            if "(" not in text[m.start():m.end()].split("pub", 1)[1].split(m.group(1))[0]:
+                names.add(m.group(2))
+        for k, v in members_of(text).items():
+            types.setdefault(k, set()).update(v)
+        methods |= set(FN.findall(text))
+    return (names, types), methods
+
+
+def layer_of(parts):
+    return LAYERS.index(parts[0]) if parts and parts[0] in LAYERS else None
+
+
+def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
+    text = code_of(path)
+    rel = os.path.relpath(path, rel_root)
+    in_src = path.startswith(idx.src + os.sep)
+    mod = tuple(os.path.relpath(path, idx.src)[:-5].split(os.sep)) if in_src else None
+
+    def err(msg):
+        errors.append("%s: %s" % (rel, msg))
+
+    # --- imports -----------------------------------------------------------------
+    for m in re.finditer(r"^\s*use\s+(crate|smalt)::([\w:]+)(?:::\{([^}]*)\}|::(\w+))?;", text, re.M):
+        root_name, pathstr, group, single = m.group(1), m.group(2), m.group(3), m.group(4)
+        names = []
+        if group:
+            names = [n.strip() for n in group.split(",") if n.strip()]
+        elif single:
+            names = [single]
+        if root_name == "smalt":
+            if smalt is None:
+                continue
+            pub, _ = smalt
+            for n in ([pathstr] if not names else names):
+                base = n.split(" as ")[0].strip()
+                if base not in pub:
+                    err("`use smalt::…` names `%s`, which vendor/smalt does not declare pub" % base)
+            continue
+        parts = tuple(pathstr.split("::"))
+        # `use crate::a::b::X;` (single) puts X in the path; the module is the longest existing prefix.
+        full = parts + tuple(names[:1]) if single and False else parts
+        target = None
+        for cut in range(len(parts), 0, -1):
+            if parts[:cut] in idx.modules:
+                target = parts[:cut]
+                break
+        if target is None:
+            err("`use crate::%s` names no module" % pathstr)
+            continue
+        f = idx.modules[target]
+        wanted = names if names else ([parts[-1]] if len(parts) > len(target) else [])
+        for n in wanted:
+            base = n.split(" as ")[0].strip()
+            if base not in idx.decls[f]:
+                err("`%s` is not declared in crate::%s" % (base, "::".join(target)))
+        if mod is not None:
+            a, b = layer_of(mod), layer_of(target)
+            if a is not None and b is not None and b > a:
+                err("layer violation: %s (%s) imports %s (%s)" % ("::".join(mod), LAYERS[a], "::".join(target), LAYERS[b]))
+
+    # --- member calls ------------------------------------------------------------
+    alltypes = dict(idx.types)
+    if smalt:
+        for k, v in smalt[1].items():
+            alltypes.setdefault(k, set()).update(v)
+    for m in re.finditer(r"\b([A-Z]\w*)::(\w+)\s*\(", text):
+        t, name = m.group(1), m.group(2)
+        if t in alltypes and name not in alltypes[t]:
+            err("`%s::%s(` — %s declares no such member" % (t, name, t))
+    known = idx.methods | (smalt_methods or set())
+    for m in re.finditer(r"\.([a-z]\w*)\s*\(", text):
+        if m.group(1) not in known:
+            err("`.%s(` — no method of that name is declared anywhere" % m.group(1))
+
+    # --- syntax ------------------------------------------------------------------
+    for i, line in enumerate(text.split("\n"), 1):
+        if re.search(r"\)\s*\?\s*(;|\.|\)|,)", line):
+            err("line %d: a postfix `?` — the compiler refuses it" % i)
+        if re.search(r"\b(?:let(?:\s+mut)?|fn)\s+(free|of)\b", line) or re.search(r"\b(free|of)\s*:\s*[A-Za-z]", line):
+            err("line %d: `free` / `of` are reserved" % i)
+    for m in re.finditer(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:static\s+)?const\s+\w+\s*:\s*[\w<>\[\]]+\s*=\s*([^;]+);", text, re.M):
+        if not re.fullmatch(r"\s*-?\s*(0x[0-9A-Fa-f_]+|\d[\d_]*(\.\d+)?|true|false|\"[^\"]*\")\s*", m.group(1)):
+            err("constant initialiser `%s` is not a literal (E0720)" % m.group(1).strip())
+    for m in re.finditer(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?static\s+(?!fn)\w+\s*:\s*[\w<>\[\]]+\s*=\s*([^;]+);", text, re.M):
+        if not re.fullmatch(r"\s*-?\s*(0x[0-9A-Fa-f_]+|\d[\d_]*(\.\d+)?|true|false|\"[^\"]*\")\s*", m.group(1)):
+            err("static initialiser `%s` is not a literal (E0720)" % m.group(1).strip())
+
+    # --- mutability --------------------------------------------------------------
+    for m in re.finditer(r"\bfn\s+\w+\s*\(", text):
+        # find the body
+        p = text.find("{", m.end())
+        semi = text.find(";", m.end())
+        if p < 0 or (0 <= semi < p and "{" not in text[m.end():semi]):
+            continue
+        # parameters may contain braces never; the first `{` after the signature opens the body
+        body = text[p:matching_brace(text, p) + 1]
+        plain = set(re.findall(r"\blet\s+(?!mut\b)(\w+)", body))
+        for name in plain:
+            if re.search(r"(?<![\w.])%s\s*(?:=(?!=)|\+=|-=|\*=|/=|%%=|\|=|&=|\^=|<<=|>>=)" % re.escape(name), body):
+                # a second `let name` that is `let mut name` shadows; accept if one exists
+                if re.search(r"\blet\s+mut\s+%s\b" % re.escape(name), body):
+                    continue
+                # `let name = …` itself matches `name =`; require a use after the declaration
+                decl = re.search(r"\blet\s+%s\b[^;]*;" % re.escape(name), body)
+                after = body[decl.end():] if decl else body
+                if re.search(r"(?<![\w.])%s\s*(?:=(?!=)|\+=|-=|\*=|/=|%%=|\|=|&=|\^=|<<=|>>=)" % re.escape(name), after):
+                    err("`%s` is reassigned but declared `let`, not `let mut`" % name)
+
+    # --- seam --------------------------------------------------------------------
+    if re.search(r'extern\s+"C"', text):
+        err('`extern "C"` — nothing in this library names an operating system')
+    if "unsafe" in text and rel.replace(os.sep, "/") not in UNSAFE_OK:
+        err("`unsafe` outside the files allowed it")
+
+
+def run(root):
+    global ROOT
+    idx = Index(root)
+    smalt, smalt_methods = smalt_index()
+    errors = []
+    for base in ("src", "examples"):
+        d = os.path.join(root, base)
+        if os.path.isdir(d):
+            for f in files_under(d):
+                check_file(f, idx, smalt, smalt_methods, errors, root)
+    return errors
+
+
+def selftest():
+    faults = [
+        ("a bad import", "use crate::gfx::nothing::{X};\n"),
+        ("a name not declared", "use crate::gfx::tint::{Nonesuch};\n"),
+        ("a layer violation", "use crate::ui::ui::{Ui};\n"),
+        ("a postfix ?", "fn f() : void { let x = g()?; }\n"),
+        ("a reassigned let", "fn f() : void { let x : i32 = 1; x = 2; }\n"),
+        ("a reserved name", "fn f() : void { let free = 1; }\n"),
+        ("a non-literal const", "const A : i32 = B + 1;\n"),
+        ("extern C", 'extern "C" from "c" { fn puts(s : ptr) : i32; }\n'),
+        ("an unknown member", "fn f() : void { Tint::nonesuch(1); }\n"),
+    ]
+    bad = 0
+    for name, body in faults:
+        scratch = tempfile.mkdtemp()
+        try:
+            shutil.copytree(os.path.join(ROOT, "src"), os.path.join(scratch, "src"))
+            os.makedirs(os.path.join(scratch, "vendor"), exist_ok=True)
+            vend = os.path.join(ROOT, "vendor", "smalt")
+            if os.path.isdir(vend):
+                os.symlink(vend, os.path.join(scratch, "vendor", "smalt"))
+            with open(os.path.join(scratch, "src", "gfx", "planted.axle"), "w") as fh:
+                fh.write(body)
+            if not run(scratch):
+                sys.stderr.write("selftest: %s was accepted\n" % name)
+                bad += 1
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+    # the untouched tree must pass
+    errs = run(ROOT)
+    if errs:
+        sys.stderr.write("selftest: the untouched tree fails:\n  " + "\n  ".join(errs[:10]) + "\n")
+        bad += 1
+    if bad == 0:
+        print("selftest: all %d planted faults rejected" % len(faults))
+    return bad
+
+
+def main():
+    if "--selftest" in sys.argv:
+        sys.exit(1 if selftest() else 0)
+    root = ROOT
+    if "--root" in sys.argv:
+        # Calibration: run the same checks over another tree (vendor/smalt compiles, so what is
+        # reported there that is not about its OS imports or `unsafe` is a false positive here).
+        root = os.path.abspath(sys.argv[sys.argv.index("--root") + 1])
+    errors = run(root)
+    for e in errors:
+        sys.stderr.write(e + "\n")
+    if errors:
+        sys.stderr.write("check: %d problem(s)\n" % len(errors))
+        sys.exit(1)
+    print("check: ok")
+
+
+if __name__ == "__main__":
+    main()
