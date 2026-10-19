@@ -83,6 +83,7 @@ class Emitter:
     def emit(self):
         w = self.w = []
         w.append("from axpy.rt import *")
+        w.append("from axpy.rt import _rt_dispatch, _rt_lit")
         w.append("from axpy import rt as _rt")
         w.append("")
         for n, c in self.consts.items():
@@ -126,8 +127,8 @@ class Emitter:
                 traits.append(mangle(n))
             elif n in RUNTIME_NAMES:
                 bases.append(n)
-        if not bases:
-            bases = [default] if default else []
+        if not bases and default and (default != "object" or not traits):
+            bases = [default]
         return bases + traits
 
     def emit_decl(self, d):
@@ -1033,7 +1034,9 @@ class FnCtx:
         if c.kind == "name":
             n = c.name
             if n == "malloc":
-                raise EmitError("malloc without a type")
+                if not getattr(c, "targs", None):
+                    raise EmitError("line %d: malloc without a type" % e.line)
+                return "malloc(%s, lambda: %s)" % (self.val(args[0]), self.em.zero_of(c.targs[0]))
             if n == "sizeof" or n == "offsetof":
                 return "0"
             py = self.lookup(n)

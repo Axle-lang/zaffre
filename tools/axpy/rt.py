@@ -113,6 +113,13 @@ class Struct:
     __slots__ = ()
     _fields = ()
 
+    @classmethod
+    def _zero(cls):
+        c = object.__new__(cls)
+        for f in cls._fields:
+            setattr(c, f, cls._zero_of[f]())
+        return c
+
     def copy(self):
         c = object.__new__(type(self))
         for f in self._fields:
@@ -508,3 +515,29 @@ def pixels_rgb(base, w, h):
 
 def println(*a):
     print(*[x if isinstance(x, str) else to_string(x) for x in a])
+
+
+# ─── Struct literals and constructor selection ───────────────────────────────────────
+
+def _rt_lit(cls, base=None, **kw):
+    """`Name { a: 1, ..base }`: explicit fields, then the copied base, then declared defaults, then zero."""
+    c = object.__new__(cls)
+    for f in cls._fields:
+        if f in kw:
+            setattr(c, f, cp(kw[f]))
+        elif base is not None:
+            setattr(c, f, cp(getattr(base, f)))
+        elif f in cls._defaults:
+            setattr(c, f, cls._defaults[f]())
+        else:
+            setattr(c, f, cls._zero_of[f]())
+    return c
+
+
+def _rt_dispatch(cls, self, args):
+    """Pick the constructor by arity, then by the first one whose parameter types suit the arguments."""
+    for arity, checks, name in cls._ctors:
+        if arity == len(args) and all(ck(a) for ck, a in zip(checks, args)):
+            getattr(cls, name)(self, *args)
+            return
+    raise TypeError("%s: no constructor for %d args: %r" % (cls.__name__, len(args), args))

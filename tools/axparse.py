@@ -1116,16 +1116,17 @@ class Parser:
                 return self.lambda_()
             self.next()
             name = v
+            targs = []
             if self.at("<") and self.generic_call_ahead():
                 self.next()
                 while True:
-                    self.type_()
+                    targs.append(self.type_())
                     if not self.accept(","):
                         break
                 self.expect_gt()
             if self.at("{") and not self.no_struct and self.struct_literal_ahead(name):
                 return self.struct_lit(name, line)
-            return Node("name", line, name=name)
+            return Node("name", line, name=name, targs=targs)
         self.fail("unexpected %r" % (t.v,))
 
     def struct_literal_ahead(self, name):
