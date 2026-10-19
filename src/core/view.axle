@@ -18,6 +18,7 @@
 
 use smalt::Frame;
 use crate::gfx::canvas::Canvas;
+use crate::gfx::mathx::Mathx;
 use crate::gfx::shapes::{RRect, Brush};
 use crate::gfx::tint::Tint;
 use crate::style::theme::Theme;
@@ -40,6 +41,7 @@ pub class View {
     used : i32 = 0;
     animating : bool = true;
     lastTime : f64 = 0.0;
+    wakeAt : f64 = 1000000000.0;
     dark : Shared<Model<bool>>;
 
     /** An interface drawn with `theme` and `fonts`, whose root widget is `root`. */
@@ -84,7 +86,7 @@ pub class View {
         if (self.animating || self.ctx.dirty) {
             return 0.0;
         }
-        return self.ctx.wake;
+        return Mathx::fmax(0.0, self.wakeAt - self.ctx.now);
     }
 
     /** The pointer shape the widget under the pointer asked for. */
@@ -209,6 +211,11 @@ pub class View {
         }
         self.lastTime = now;
         self.ctx.now = now;
+        // A timed wake that has come due is a reason to draw: a caret blinks, a tooltip appears.
+        if (now + 0.001 >= self.wakeAt) {
+            self.wakeAt = 1000000000.0;
+            self.ctx.invalidate();
+        }
         if (self.dark.get() != self.ctx.theme.isDark) {
             self.ctx.theme.setDark(self.dark.get());
             self.ctx.invalidate();
@@ -224,6 +231,10 @@ pub class View {
         }
         self.adopt();
         self.animating = moving;
+        if (self.ctx.wake < 1000000.0) {
+            // Keep the earliest request: updates that come sooner must not push a pending wake back.
+            self.wakeAt = Mathx::fmin(self.wakeAt, now + self.ctx.wake);
+        }
     }
 
     // ─── Drawing ─────────────────────────────────────────────────

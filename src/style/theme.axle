@@ -163,9 +163,9 @@ pub class Theme {
     /** The colour a rest colour becomes under the pointer: a few per cent toward the foreground. */
     pub fn hoverOf(self, t : Tint) : Tint {
         if (self.isDark) {
-            return Theme::lighten(t, 14);
+            return Theme::lighten(t, 26);
         }
-        return Theme::darken(t, 10);
+        return Theme::darken(t, 14);
     }
 
     /** The colour a rest colour becomes when pressed. */
@@ -244,7 +244,7 @@ pub class Theme {
             fillPress: Fill::flat(self.pressOf(p.raised)),
             fillOff: Fill::flat(p.raised.faded(120)),
             border: p.lineStrong,
-            borderHover: p.textFaint,
+            borderHover: p.accent,
             borderW: self.metrics.hairline,
             text: p.text,
             textOff: p.textFaint,
@@ -254,21 +254,21 @@ pub class Theme {
             underline: false,
         };
         if (k == 0) {
-            // Primary: the accent, lit from above.
-            let rest : Fill = Fill::vertical(p.accentTop, p.accentBottom);
-            let hover : Fill = Fill::vertical(Theme::lighten(p.accentTop, 30), Theme::lighten(p.accentBottom, 26));
-            let press : Fill = Fill::vertical(Theme::darken(p.accentTop, 40), Theme::darken(p.accentBottom, 40));
+            // Primary: the accent, nearly flat, with a hairline of light on top and a small shadow.
+            let rest : Fill = Fill::vertical(Theme::lighten(p.accent, 10), p.accent);
+            let hover : Fill = Fill::vertical(Theme::lighten(p.accent, 44), Theme::lighten(p.accent, 28));
+            let press : Fill = Fill::vertical(Theme::darken(p.accent, 36), Theme::darken(p.accent, 28));
             b = ButtonStyle {
                 fill: rest,
                 fillHover: hover,
                 fillPress: press,
                 fillOff: Fill::flat(p.raised.faded(120)),
-                border: Tint::hexA(0xFFFFFF, 46),
-                borderHover: Tint::hexA(0xFFFFFF, 70),
+                border: Tint::hexA(0xFFFFFF, 22),
+                borderHover: Tint::hexA(0xFFFFFF, 50),
                 text: p.onAccent,
-                shadow: p.accentBottom.withAlpha(110),
-                shadowBlur: 12.0,
-                shadowDy: 4.0,
+                shadow: p.shadow.withAlpha(self.isDark ? 90 : 38),
+                shadowBlur: 4.0,
+                shadowDy: 1.0,
                 ..b
             };
         } else if (k == 1) {
@@ -290,16 +290,15 @@ pub class Theme {
                 ..b
             };
         } else if (k == 3) {
+            // Danger: a quiet tint of the danger colour that fills in under the pointer.
             b = ButtonStyle {
-                fill: Fill::vertical(Theme::lighten(p.danger, 22), p.danger),
-                fillHover: Fill::vertical(Theme::lighten(p.danger, 50), Theme::lighten(p.danger, 24)),
-                fillPress: Fill::vertical(Theme::darken(p.danger, 30), Theme::darken(p.danger, 40)),
-                border: Tint::hexA(0xFFFFFF, 40),
-                borderHover: Tint::hexA(0xFFFFFF, 60),
-                text: p.onAccent,
-                shadow: p.danger.withAlpha(90),
-                shadowBlur: 10.0,
-                shadowDy: 3.0,
+                fill: Fill::flat(p.danger.withAlpha(26)),
+                fillHover: Fill::flat(p.danger.withAlpha(58)),
+                fillPress: Fill::flat(p.danger.withAlpha(84)),
+                fillOff: Fill::flat(p.danger.withAlpha(12)),
+                border: p.danger.withAlpha(90),
+                borderHover: p.danger.withAlpha(190),
+                text: p.danger,
                 ..b
             };
         } else {

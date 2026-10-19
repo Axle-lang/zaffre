@@ -201,5 +201,53 @@ v2.input(ev(z.EventKind.Wheel, sbx.x + 20, sbx.y + 20, wheel=1000.0)); settle(v2
 check("scroll stops at the end", abs(scroll.position() - (scroll.contentH - sbx.h)) < 0.5, (scroll.position(), scroll.contentH - sbx.h))
 check("alert wraps to the width offered", alert.bounds().h > 60.0, alert.bounds().h)
 v2.render(rt.Surface(480, 600).frame())
+
+# ── hover, and a caret that blinks ───────────────────────────────────────────────
+import numpy as np
+fails2 = []
+hb = z.Button(_rt_lit(z.ButtonProps, None, label="Hover me", kind=z.ButtonKind.Primary))
+hd = z.Button(_rt_lit(z.ButtonProps, None, label="Danger", kind=z.ButtonKind.Danger))
+hm = z.Model("")
+hf = z.TextField(_rt_lit(z.FieldProps, None, placeholder="Type"), hm)
+hp = z.Column(_rt_lit(z.FlexProps, None, gap=16.0, padding=z.Insets.all(20.0)), [hb, hd, hf])
+hv = z.View(z.Theme.dark(), fonts, hp)
+hv.resize(300.0, 220.0); settle(hv); hv.layout()
+
+
+def shot(v):
+    s = rt.Surface(300, 220); v.render(s.frame()); return s.pixels_rgb().astype(int)
+
+
+def region(img, b):
+    return img[int(b.y):int(b.y + b.h), int(b.x):int(b.x + b.w)]
+
+
+for name, w in (("primary", hb), ("danger", hd)):
+    rest = region(shot(hv), w.bounds())
+    b = w.bounds()
+    hv.input(ev(z.EventKind.PointerMove, b.x + b.w / 2, b.y + b.h / 2)); settle(hv, 30)
+    hot = region(shot(hv), w.bounds())
+    diff = np.abs(rest - hot).mean()
+    check("%s button looks different under the pointer" % name, diff > 3.0, round(float(diff), 2))
+    hv.input(ev(z.EventKind.PointerMove, 290.0, 210.0)); settle(hv, 30)
+
+# the caret: focused, idle, the loop must be told to draw again when the blink comes due
+click(hv, hf); settle(hv, 40)
+hv.render(rt.Surface(300, 220).frame())
+check("a focused field asks to be woken", 0.0 < hv.waitSeconds() <= 0.51, hv.waitSeconds())
+frames = []
+t = _clock[0]
+for k in range(6):
+    t += 0.26
+    hv.update(t)
+    if hv.needsFrame():
+        frames.append(round(t, 2)); hv.render(rt.Surface(300, 220).frame())
+check("the blink repaints about twice a second", 2 <= len(frames) <= 4, frames); print("frames", frames)
+a = shot(hv)
+fb = hf.bounds()
+seen = set()
+for k in range(8):
+    t += 0.5; hv.update(t); seen.add(region(shot(hv), fb).tobytes())
+check("the caret is drawn in one phase and not the other", len(seen) == 2, len(seen))
 print("FAIL %d" % len(fails) if fails else "all ok")
 sys.exit(1 if fails else 0)
