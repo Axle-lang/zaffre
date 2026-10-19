@@ -1,0 +1,15 @@
+[package]
+name = "zaffre"
+version = "0.1.0"
+kind = "lib"
+
+# Zaffre draws through smalt and nothing else: every window, event, pixel and
+# file below this library is smalt's. The dependency is a submodule, so a
+# clone has to bring it:  git clone --recursive …
+[dependencies]
+smalt = { path = "vendor/smalt" }
+
+# The targets the library promises to serve — the ones smalt serves. Zaffre has
+# no port directory of its own: nothing in it names an operating system, and
+# `tools/check.py` holds that sentence.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
