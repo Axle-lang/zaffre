@@ -68,8 +68,8 @@ pub class Flex : Base, Widget {
     constructor(axis : Axis, props : FlexProps, own children : dyn Widget[]) {
         self.axis = axis;
         self.props = props;
-        self.kids = children;
         self.count = children.length as i32;
+        self.kids = children;
         self.sizes = malloc<Size>(self.count as i64);
         for (i of 0..self.count) {
             self.sizes[i as i64] = Size::zero();

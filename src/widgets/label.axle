@@ -30,8 +30,11 @@ pub struct LabelProps {
     /** Whether `color` replaces the role's colour. */
     pub tinted : bool = false;
 
-    /** The colour, when `tinted`. */
-    pub color : Tint = Tint { rgb: 0, a: 255 };
+    /** The colour as `0xRRGGBB`, when `tinted`. */
+    pub color : i32 = 0;
+
+    /** The opacity of `color`, 0 to 255. */
+    pub opacity : i32 = 255;
 
     /** Break lines at spaces to fit the width offered. */
     pub wrap : bool = false;
@@ -127,7 +130,7 @@ pub class Label : Base, Widget {
         let kind : FaceKind = Fonts::kindOf(st.bold, st.mono);
         let mut ink : Tint = st.color;
         if (self.props.tinted) {
-            ink = self.props.color;
+            ink = Tint::hexA(self.props.color, self.props.opacity);
         }
         let a : Bounds = self.area;
         let line : f64 = ctx.lineHeight(kind, st.px);

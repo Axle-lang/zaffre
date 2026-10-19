@@ -37,16 +37,16 @@ pub struct SegmentedProps {
 }
 
 /** The handler a control without one runs. */
-fn ignoreChoice(v : i32) : void {
+fn ignoreSegment(v : i32) : void {
 }
 
 /** A single choice among a few labelled options. */
-pub class Segmented : Control {
+pub class Segmented : Control, Widget {
     options : string[];
     count : i32;
     props : SegmentedProps;
     model : Shared<Model<i32>>;
-    onChange : (i32) => void = ignoreChoice;
+    onChange : (i32) => void = ignoreSegment;
     thumb : Eased;
     hot : i32 = -1;
 
@@ -60,7 +60,7 @@ pub class Segmented : Control {
     }
 
     /** A control set as `props` say, over `options`. */
-    constructor(props : SegmentedProps, options : string[], model : Shared<Model<i32>>) {
+    constructor(own props : SegmentedProps, options : string[], model : Shared<Model<i32>>) {
         self.options = options;
         self.count = options.length as i32;
         self.props = props;
@@ -69,7 +69,7 @@ pub class Segmented : Control {
     }
 
     /** A control that also tells `onChange` when the user picks an option. */
-    constructor(props : SegmentedProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+    constructor(own props : SegmentedProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
         self.options = options;
         self.count = options.length as i32;
         self.props = props;

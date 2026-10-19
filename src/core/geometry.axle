@@ -173,13 +173,13 @@ pub struct Limits {
     pub minW : f64 = 0.0;
 
     /** Widest the child may be. */
-    pub maxW : f64 = UNBOUNDED;
+    pub maxW : f64 = 1000000000.0; // UNBOUNDED: a default has to be a literal
 
     /** Shortest the child may be. */
     pub minH : f64 = 0.0;
 
     /** Tallest the child may be. */
-    pub maxH : f64 = UNBOUNDED;
+    pub maxH : f64 = 1000000000.0; // UNBOUNDED
 
     /** Anything up to `w` by `h`. */
     pub static fn loose(w : f64, h : f64) : Limits {

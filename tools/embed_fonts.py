@@ -59,7 +59,7 @@ def render(src, mod, cls, what):
     out.append("")
     out.append("    /** The whole file's words: every chunk, in order. */")
     out.append("    pub(crate) static fn words() : i32[] {")
-    out.append("        let out : i32[] = malloc<i32>(%s::count() as i64);" % cls)
+    out.append("        let mut out : i32[] = malloc<i32>(%s::count() as i64);" % cls)
     out.append("        let mut at : i64 = 0;")
     out.append("        for (c of 0..%s::chunks()) {" % cls)
     out.append("            let part : i32[] = %s::chunk(c);" % cls)

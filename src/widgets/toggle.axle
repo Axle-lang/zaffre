@@ -57,7 +57,7 @@ pub class Toggle : Control {
     pub(derived) valueT : Eased;
 
     /** A toggle set as `props` say, whose mark starts `on`. */
-    constructor(props : ToggleProps, on : bool) {
+    constructor(own props : ToggleProps, on : bool) {
         self.props = props;
         self.valueT = Eased::at(0.0);
         if (on) {
@@ -156,14 +156,14 @@ pub class Checkbox : Toggle, Widget {
     }
 
     /** A checkbox set as `props` say showing `model`. */
-    constructor(props : ToggleProps, model : Shared<Model<bool>>) {
+    constructor(own props : ToggleProps, model : Shared<Model<bool>>) {
         super(props, model.get());
         self.model = model;
         self.onChange = ignoreFlag;
     }
 
     /** A checkbox set as `props` say showing `model`, calling `onChange` with the new value when the user flips it. */
-    constructor(props : ToggleProps, model : Shared<Model<bool>>, onChange : (bool) => void) {
+    constructor(own props : ToggleProps, model : Shared<Model<bool>>, onChange : (bool) => void) {
         super(props, model.get());
         self.model = model;
         self.onChange = onChange;
@@ -227,14 +227,14 @@ pub class Switch : Toggle, Widget {
     }
 
     /** A switch set as `props` say showing `model`. */
-    constructor(props : ToggleProps, model : Shared<Model<bool>>) {
+    constructor(own props : ToggleProps, model : Shared<Model<bool>>) {
         super(props, model.get());
         self.model = model;
         self.onChange = ignoreFlag;
     }
 
     /** A switch set as `props` say showing `model`, calling `onChange` with the new value when the user flips it. */
-    constructor(props : ToggleProps, model : Shared<Model<bool>>, onChange : (bool) => void) {
+    constructor(own props : ToggleProps, model : Shared<Model<bool>>, onChange : (bool) => void) {
         super(props, model.get());
         self.model = model;
         self.onChange = onChange;
@@ -298,7 +298,7 @@ pub class Radio : Toggle, Widget {
     }
 
     /** A radio set as `props` say. */
-    constructor(props : ToggleProps, model : Shared<Model<i32>>, value : i32) {
+    constructor(own props : ToggleProps, model : Shared<Model<i32>>, value : i32) {
         super(props, model.get() == value);
         self.model = model;
         self.value = value;
@@ -306,7 +306,7 @@ pub class Radio : Toggle, Widget {
     }
 
     /** A radio set as `props` say, calling `onChange` with its value when it is chosen. */
-    constructor(props : ToggleProps, model : Shared<Model<i32>>, value : i32, onChange : (i32) => void) {
+    constructor(own props : ToggleProps, model : Shared<Model<i32>>, value : i32, onChange : (i32) => void) {
         super(props, model.get() == value);
         self.model = model;
         self.value = value;

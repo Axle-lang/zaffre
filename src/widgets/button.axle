@@ -76,13 +76,13 @@ pub class Button : Control, Widget {
     }
 
     /** A button set as `props` say, doing nothing yet. */
-    constructor(props : ButtonProps) {
+    constructor(own props : ButtonProps) {
         self.props = props;
         self.onPress = doNothing;
     }
 
     /** A button set as `props` say that runs `onPress`. */
-    constructor(props : ButtonProps, onPress : () => void) {
+    constructor(own props : ButtonProps, onPress : () => void) {
         self.props = props;
         self.onPress = onPress;
     }

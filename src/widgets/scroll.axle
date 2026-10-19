@@ -54,7 +54,7 @@ pub class Scroll : Base, Widget {
     barT : Eased = Eased::at(0.0);
 
     /** A scroll area around `child`, which it takes. */
-    constructor(props : ScrollProps, own child : dyn Widget) {
+    constructor(own props : ScrollProps, own child : dyn Widget) {
         self.props = props;
         self.kid = malloc<dyn Widget>(1 as i64);
         self.kid[0] = child;
