@@ -1,0 +1,50 @@
+// format — numbers as text, without a formatter.
+//
+// A slider shows "0.35", a progress bar "72 %", a stepper "12". Axle's `toString()` on a real
+// answers however many digits the value has (0.35 may print as 0.35000000000000003), which is
+// right for a debugger and wrong for a label, so the few formats an interface wants are written
+// here over integers.
+
+/** Number formats. */
+pub class Format {
+    /** `v` with exactly `decimals` digits after the point (0 to 6), rounded half away from zero. */
+    pub static fn fixed(v : f64, decimals : i32) : string {
+        let d : i32 = decimals.max(0).min(6);
+        let mut scale : i64 = 1;
+        for (i of 0..d) {
+            scale = scale * 10;
+        }
+        let negative : bool = v < 0.0;
+        let mut mag : f64 = v;
+        if (negative) {
+            mag = 0.0 - v;
+        }
+        let scaled : i64 = (mag * (scale as f64) + 0.5).floorToInt();
+        let whole : i64 = scaled / scale;
+        let frac : i64 = scaled % scale;
+        let mut out : string = whole.toString();
+        if (negative && scaled != 0) {
+            out = "-" + out;
+        }
+        if (d == 0) {
+            return out;
+        }
+        let mut digits : string = frac.toString();
+        let mut pad : i32 = d - (digits.byteLength as i32);
+        while (pad > 0) {
+            digits = "0" + digits;
+            pad = pad - 1;
+        }
+        return out + "." + digits;
+    }
+
+    /** `v` as a whole number. */
+    pub static fn whole(v : f64) : string {
+        return Format::fixed(v, 0);
+    }
+
+    /** `fraction` (0..1) as a percentage, "72 %". */
+    pub static fn percent(fraction : f64) : string {
+        return Format::fixed(fraction * 100.0, 0) + " %";
+    }
+}

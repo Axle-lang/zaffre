@@ -1,0 +1,235 @@
+// slider — a number between two others, set by dragging.
+//
+// The slider shows a `Model<f64>` and writes it as the thumb moves. It can carry a label and the
+// current value above the track, snap to a `step`, and be moved from the keyboard: arrows by a
+// step (or a hundredth of the range when there is none), Page Up and Page Down by ten, Home and
+// End to the ends.
+//
+//     let volume : Shared<Model<f64>> = new shared Model<f64>(0.6);
+//     new Slider(SliderProps { label: "Volume", min: 0.0, max: 1.0 }, volume)
+//
+// Dragging is not confined to the box: once a press has started the slider follows the pointer
+// wherever it goes, and the value is held to the ends.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::fill::Fill;
+use crate::style::styles::SliderStyle;
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::format::Format;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** How a slider looks and behaves. */
+pub struct SliderProps {
+    /** The value at the left end. */
+    pub min : f64 = 0.0;
+
+    /** The value at the right end. */
+    pub max : f64 = 1.0;
+
+    /** The spacing values snap to; 0 for a continuous slider. */
+    pub step : f64 = 0.0;
+
+    /** A label above the track; empty for none. */
+    pub label : string = "";
+
+    /** Whether the current value is shown above the track, opposite the label. */
+    pub showValue : bool = true;
+
+    /** Digits after the point in the shown value. */
+    pub decimals : i32 = 2;
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The slider's width: a default of 200 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Px(200.0);
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** The handler a slider without one runs. */
+fn ignoreNumber(v : f64) : void {
+}
+
+/** A draggable number. */
+pub class Slider : Control, Widget {
+    props : SliderProps;
+    model : Shared<Model<f64>>;
+    onChange : (f64) => void;
+
+    /** A slider set as `props` say showing `model`. */
+    constructor(props : SliderProps, model : Shared<Model<f64>>) {
+        self.props = props;
+        self.model = model;
+        self.onChange = ignoreNumber;
+    }
+
+    /** A slider set as `props` say showing `model`, calling `onChange` as the user moves it. */
+    constructor(props : SliderProps, model : Shared<Model<f64>>, onChange : (f64) => void) {
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** Height of the label row, 0 when there is neither label nor value. */
+    pub(file) fn headerH(self, ctx : Context, st : SliderStyle) : f64 {
+        if (self.props.label.byteLength == 0 && !self.props.showValue) {
+            return 0.0;
+        }
+        return ctx.lineHeight(FaceKind::Sans, st.px) + 6.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : SliderStyle = ctx.theme.slider(self.props.size);
+        let h : f64 = self.headerH(ctx, st) + st.thumb + 4.0;
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 200.0), h: h });
+    }
+
+    /** The x of the thumb's centre when the value is at its lowest, and at its highest. */
+    pub(file) fn span(self, st : SliderStyle) : (x0: f64, x1: f64) {
+        return (self.area.x + st.thumb * 0.5, self.area.right() - st.thumb * 0.5);
+    }
+
+    /** The value that has the thumb centred at `px`, snapped to the step and held to the ends. */
+    pub(file) fn valueAt(self, st : SliderStyle, px : f64) : f64 {
+        let (x0, x1) = self.span(st);
+        let mut t : f64 = 0.0;
+        if (x1 > x0) {
+            t = Mathx::clamp01((px - x0) / (x1 - x0));
+        }
+        let lo : f64 = self.props.min;
+        let hi : f64 = self.props.max;
+        let mut v : f64 = lo + t * (hi - lo);
+        if (self.props.step > 0.0) {
+            let n : f64 = (((v - lo) / self.props.step) + 0.5).floorToInt() as f64;
+            v = lo + n * self.props.step;
+        }
+        return Mathx::clampF(v, lo, hi);
+    }
+
+    /** Write a new value, tell the handler, ask for a frame. */
+    pub(file) fn commit(mut self, ctx : Context, v : f64) : void {
+        if (v == self.model.get()) {
+            return;
+        }
+        self.model.set(v);
+        let h : (f64) => void = self.onChange;
+        h(v);
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let st : SliderStyle = ctx.theme.slider(self.props.size);
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (self.pressed && (e.kind == EventKind::PointerMove || e.kind == EventKind::PointerDown)) {
+            self.commit(ctx, self.valueAt(st, e.x));
+            return true;
+        }
+        if (g == Gesture::Press || g == Gesture::Click || g == Gesture::Release) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            let mut unit : f64 = self.props.step;
+            if (unit <= 0.0) {
+                unit = (self.props.max - self.props.min) / 100.0;
+            }
+            let v : f64 = self.model.get();
+            if (e.key == Key::Left || e.key == Key::Down) {
+                self.commit(ctx, Mathx::clampF(v - unit, self.props.min, self.props.max));
+                return true;
+            }
+            if (e.key == Key::Right || e.key == Key::Up) {
+                self.commit(ctx, Mathx::clampF(v + unit, self.props.min, self.props.max));
+                return true;
+            }
+            if (e.key == Key::PageDown) {
+                self.commit(ctx, Mathx::clampF(v - unit * 10.0, self.props.min, self.props.max));
+                return true;
+            }
+            if (e.key == Key::PageUp) {
+                self.commit(ctx, Mathx::clampF(v + unit * 10.0, self.props.min, self.props.max));
+                return true;
+            }
+            if (e.key == Key::Home) {
+                self.commit(ctx, self.props.min);
+                return true;
+            }
+            if (e.key == Key::End) {
+                self.commit(ctx, self.props.max);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : SliderStyle = ctx.theme.slider(self.props.size);
+        let a : Bounds = self.area;
+        let hh : f64 = self.headerH(ctx, st);
+        let off : bool = self.props.disabled;
+        let v : f64 = self.model.get();
+        let range : f64 = self.props.max - self.props.min;
+        let mut t : f64 = 0.0;
+        if (range > 0.0) {
+            t = Mathx::clamp01((v - self.props.min) / range);
+        }
+        if (hh > 0.0) {
+            let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, hh - 6.0);
+            if (self.props.label.byteLength > 0) {
+                p.text(FaceKind::Sans, self.props.label, a.x, base, st.px, st.text);
+            }
+            if (self.props.showValue) {
+                let s : string = Format::fixed(v, self.props.decimals);
+                let w : f64 = ctx.textWidth(FaceKind::Sans, s, st.px);
+                p.text(FaceKind::Sans, s, a.right() - w, base, st.px, ctx.theme.palette.textFaint);
+            }
+        }
+        let (x0, x1) = self.span(st);
+        let cy : f64 = a.y + hh + (a.h - hh) * 0.5;
+        let track : RRect = RRect::uniform(x0 - st.thumb * 0.5, cy - st.trackH * 0.5, x1 - x0 + st.thumb, st.trackH, st.trackH * 0.5);
+        p.fillRound(track, Brush::solid(st.track.rgb, st.track.a));
+        let tx : f64 = Mathx::lerp(x0, x1, t);
+        let part : RRect = RRect::uniform(track.x, track.y, tx - track.x, st.trackH, st.trackH * 0.5);
+        if (part.w > 0.5) {
+            let mut bar : Fill = st.fill;
+            if (off) {
+                bar = st.fill.faded(110);
+            }
+            p.fillRound(part, bar.brush(track.y, st.trackH));
+        }
+        let grow : f64 = 1.0 + 0.12 * self.hoverT.value + 0.05 * self.pressT.value;
+        let d : f64 = st.thumb * grow;
+        let knob : RRect = RRect::uniform(tx - d * 0.5, cy - d * 0.5, d, d, d * 0.5);
+        p.shadow(knob, 0.0, 1.0, 4.0, 0.0, ctx.theme.palette.shadow.withAlpha(110));
+        p.fillRound(knob, Brush::solid(st.knob.rgb, st.knob.a));
+        p.strokeRound(knob, 1.0, Brush::solid(st.knobBorder.rgb, st.knobBorder.a));
+        if (self.ringShown(ctx)) {
+            let ring : Tint = st.ring.faded(self.focusT.alpha());
+            p.strokeRound(knob.grown(3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

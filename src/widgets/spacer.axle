@@ -1,0 +1,87 @@
+// spacer — space, and the line that divides it.
+//
+// A `Spacer` is the widget that takes whatever room is left: between a title and the buttons at
+// the end of a toolbar, it pushes them apart. With a fixed size it is a gap of exactly that.
+// A `Divider` is a hairline across the room it is offered.
+
+use crate::core::geometry::{Size, Bounds, Limits, Axis};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::gfx::shapes::Brush;
+
+/** Empty space. */
+pub class Spacer : Base, Widget {
+    grow : f64;
+    w : f64;
+    h : f64;
+
+    /** Space that takes an equal share of whatever room is left. */
+    constructor() {
+        self.grow = 1.0;
+        self.w = 0.0;
+        self.h = 0.0;
+    }
+
+    /** Space that takes `grow` shares of whatever room is left. */
+    constructor(grow : f64) {
+        self.grow = grow;
+        self.w = 0.0;
+        self.h = 0.0;
+    }
+
+    /** A fixed gap `w` wide and `h` tall. */
+    constructor(w : f64, h : f64) {
+        self.grow = 0.0;
+        self.w = w;
+        self.h = h;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.grow;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.w, h: self.h });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+    }
+}
+
+/** A hairline: across the width it is offered, or down the height. */
+pub class Divider : Base, Widget {
+    axis : Axis;
+
+    /** A horizontal rule. */
+    constructor() {
+        self.axis = Axis::Horizontal;
+    }
+
+    /** A rule along `axis`: horizontal draws across, vertical draws down. */
+    constructor(axis : Axis) {
+        self.axis = axis;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let t : f64 = ctx.theme.metrics.hairline;
+        if (self.axis == Axis::Horizontal) {
+            let mut w : f64 = 0.0;
+            if (limits.boundedW()) {
+                w = limits.maxW;
+            }
+            return limits.constrain(Size { w: w, h: t });
+        }
+        let mut h : f64 = 0.0;
+        if (limits.boundedH()) {
+            h = limits.maxH;
+        }
+        return limits.constrain(Size { w: t, h: h });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let c : Brush = Brush::solid(ctx.theme.palette.line.rgb, ctx.theme.palette.line.a);
+        p.fillRound(a.round(0.0), c);
+    }
+}

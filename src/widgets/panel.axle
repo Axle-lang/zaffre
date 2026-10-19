@@ -1,0 +1,106 @@
+// panel — a surface that holds something: a card, a section, a sheet.
+//
+// A panel draws what the theme says a surface at its *elevation* looks like — flat on the page, a
+// raised card with a soft shadow, an overlay with a deep one — pads its child, and gets out of the
+// way. It holds exactly one child; put a `Column` inside it for more.
+//
+//     new Panel(PanelProps { elevation: Elevation::Raised }, new Column(FlexProps { }, [ … ]))
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::styles::PanelStyle;
+use crate::style::variants::Elevation;
+use crate::core::geometry::{Size, Bounds, Insets, Limits, Length};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** How a panel looks and sizes itself. */
+pub struct PanelProps {
+    /** How much the surface stands out from the page. */
+    pub elevation : Elevation = Elevation::Raised;
+
+    /** Space between the surface's edge and its child. */
+    pub padding : Insets = Insets { top: 16.0, right: 16.0, bottom: 16.0, left: 16.0 };
+
+    /** The panel's width: its child's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The panel's height. */
+    pub height : Length = Length::Auto;
+
+    /** A corner radius to use instead of the theme's; negative keeps the theme's. */
+    pub radius : f64 = -1.0;
+
+    /** The share of a parent's spare room the panel asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** A surface around one child. */
+pub class Panel : Base, Widget {
+    props : PanelProps;
+    kid : dyn Widget[];
+
+    /** A panel around `child`, which it takes. */
+    constructor(props : PanelProps, own child : dyn Widget) {
+        self.props = props;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = child;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let pad : Insets = self.props.padding;
+        let inner : Limits = limits.deflate(pad).loosened();
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, inner);
+        let natural : Size = Size { w: s.w + pad.horizontal(), h: s.h + pad.vertical() };
+        return limits.constrain(Size {
+            w: self.props.width.resolve(limits.maxW, natural.w),
+            h: self.props.height.resolve(limits.maxH, natural.h),
+        });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area.inset(self.props.padding));
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : PanelStyle = ctx.theme.panel(self.props.elevation);
+        let a : Bounds = self.area;
+        let mut r : f64 = st.radius;
+        if (self.props.radius >= 0.0) {
+            r = self.props.radius;
+        }
+        let rr : RRect = a.round(r);
+        if (st.shadow.a > 0) {
+            p.shadow(rr, 0.0, st.shadowDy, st.shadowBlur, 0.0 - st.shadowBlur * 0.08, st.shadow);
+        }
+        if (st.shadow2.a > 0) {
+            p.shadow(rr, 0.0, st.shadow2Dy, st.shadow2Blur, 0.0, st.shadow2);
+        }
+        p.fillRound(rr, st.fill.brush(a.y, a.h));
+        if (st.border.a > 0) {
+            p.strokeRound(rr, st.borderW, Brush::solid(st.border.rgb, st.border.a));
+        }
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+}

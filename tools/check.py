@@ -10,9 +10,10 @@ failures it reports first are caught here, from the text alone:
   imports     every `use crate::a::b::{X}` names a module that exists and declares X;
               every `use smalt::{X}` names a public declaration in vendor/smalt
   layers      a module imports from its own layer or below (doc/ARCHITECTURE.md)
-  members     `Type::name(` names a member the type declares (zaffre's or smalt's);
-              `.name(` names a method that is declared somewhere (a typo is not)
-  mutability  a `let` binding that is reassigned must be `let mut`
+  syntax      the whole tree parses with tools/axparse.py (the grammar of the language's documentation)
+  semantics   tools/axcheck.py: names resolve, writes go to `let mut` bindings, members and
+              constructors exist with the right arity, struct literals are complete, matches over an
+              enum cover it, non-void functions return
   syntax      no postfix `?`; none of the reserved words the language's own
               documentation records as unusable (`free`, `of`) used as a name
   constants   a `const` / `static` initialiser is a literal (E0720)
@@ -28,6 +29,9 @@ import shutil
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import axcheck  # noqa: E402
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 # Bottom to top. A module's layer is the first path component under src/.
@@ -41,6 +45,9 @@ UNSAFE_OK = set()
 BUILTIN_METHODS = {
     "min", "max", "abs", "sqrt", "sin", "cos", "pow", "round", "floorToInt", "ceilToInt",
     "truncToInt", "byteAt", "join", "await", "length", "push", "pop",
+    # string, StringBuilder and the stdlib collections the library may use
+    "toString", "isEmpty", "substring", "charAt", "append", "appendChar", "equals", "get", "set", "add", "size",
+    "removeAt", "clear", "indexOf", "contains", "isAlive",
 }
 
 DECL = re.compile(
@@ -187,20 +194,6 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
             if a is not None and b is not None and b > a:
                 err("layer violation: %s (%s) imports %s (%s)" % ("::".join(mod), LAYERS[a], "::".join(target), LAYERS[b]))
 
-    # --- member calls ------------------------------------------------------------
-    alltypes = dict(idx.types)
-    if smalt:
-        for k, v in smalt[1].items():
-            alltypes.setdefault(k, set()).update(v)
-    for m in re.finditer(r"\b([A-Z]\w*)::(\w+)\s*\(", text):
-        t, name = m.group(1), m.group(2)
-        if t in alltypes and name not in alltypes[t]:
-            err("`%s::%s(` — %s declares no such member" % (t, name, t))
-    known = idx.methods | (smalt_methods or set())
-    for m in re.finditer(r"\.([a-z]\w*)\s*\(", text):
-        if m.group(1) not in known:
-            err("`.%s(` — no method of that name is declared anywhere" % m.group(1))
-
     # --- syntax ------------------------------------------------------------------
     for m in re.finditer(r"\bfn\s+(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|string|void)\s*\(", text):
         err("`fn %s` — a primitive type's name cannot name a method" % m.group(1))
@@ -215,27 +208,6 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
     for m in re.finditer(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?static\s+(?!fn)\w+\s*:\s*[\w<>\[\]]+\s*=\s*([^;]+);", text, re.M):
         if not re.fullmatch(r"\s*-?\s*(0x[0-9A-Fa-f_]+|\d[\d_]*(\.\d+)?|true|false|\"[^\"]*\")\s*", m.group(1)):
             err("static initialiser `%s` is not a literal (E0720)" % m.group(1).strip())
-
-    # --- mutability --------------------------------------------------------------
-    for m in re.finditer(r"\bfn\s+\w+\s*\(", text):
-        # find the body
-        p = text.find("{", m.end())
-        semi = text.find(";", m.end())
-        if p < 0 or (0 <= semi < p and "{" not in text[m.end():semi]):
-            continue
-        # parameters may contain braces never; the first `{` after the signature opens the body
-        body = text[p:matching_brace(text, p) + 1]
-        plain = set(re.findall(r"\blet\s+(?!mut\b)(\w+)", body))
-        for name in plain:
-            if re.search(r"(?<![\w.])%s\s*(?:=(?!=)|\+=|-=|\*=|/=|%%=|\|=|&=|\^=|<<=|>>=)" % re.escape(name), body):
-                # a second `let name` that is `let mut name` shadows; accept if one exists
-                if re.search(r"\blet\s+mut\s+%s\b" % re.escape(name), body):
-                    continue
-                # `let name = …` itself matches `name =`; require a use after the declaration
-                decl = re.search(r"\blet\s+%s\b[^;]*;" % re.escape(name), body)
-                after = body[decl.end():] if decl else body
-                if re.search(r"(?<![\w.])%s\s*(?:=(?!=)|\+=|-=|\*=|/=|%%=|\|=|&=|\^=|<<=|>>=)" % re.escape(name), after):
-                    err("`%s` is reassigned but declared `let`, not `let mut`" % name)
 
     # --- seam --------------------------------------------------------------------
     if re.search(r'extern\s+"C"', strip_comments(open(path, encoding="utf-8").read())):
@@ -254,6 +226,8 @@ def run(root):
         if os.path.isdir(d):
             for f in files_under(d):
                 check_file(f, idx, smalt, smalt_methods, errors, root)
+    smalt_src = os.path.join(root, "vendor", "smalt", "src")
+    errors += axcheck.check_tree(root, smalt_src if os.path.isdir(smalt_src) else None)
     return errors
 
 
@@ -264,11 +238,16 @@ def selftest():
         ("a layer violation", "use crate::ui::ui::{Ui};\n"),
         ("a postfix ?", "fn f() : void { let x = g()?; }\n"),
         ("a reassigned let", "fn f() : void { let x : i32 = 1; x = 2; }\n"),
+        ("an if-then", "fn f() : void { let x : i32 = if (true) then 1 else 2; }\n"),
+        ("an undefined name", "fn f() : i32 { return nothingByThisName; }\n"),
+        ("a missing return", "fn f() : i32 { let x : i32 = 1; }\n"),
+        ("an incomplete struct literal", "fn f() : void { let r : RRect = RRect { x: 1.0 }; }\n"),
         ("a reserved name", "fn f() : void { let free = 1; }\n"),
         ("a method named after a type", "class A { fn u16(self) : i32 { return 1; } }\n"),
         ("a non-literal const", "const A : i32 = B + 1;\n"),
         ("extern C", 'extern "C" from "c" { fn puts(s : ptr) : i32; }\n'),
         ("an unknown member", "fn f() : void { Tint::nonesuch(1); }\n"),
+        ("a wrong arity", "fn f() : void { let t : Tint = Tint::hex(1, 2); }\n"),
     ]
     bad = 0
     for name, body in faults:
@@ -280,7 +259,7 @@ def selftest():
             if os.path.isdir(vend):
                 os.symlink(vend, os.path.join(scratch, "vendor", "smalt"))
             with open(os.path.join(scratch, "src", "gfx", "planted.axle"), "w") as fh:
-                fh.write(body)
+                fh.write("use crate::gfx::tint::Tint;\nuse crate::gfx::shapes::RRect;\n" + body)
             if not run(scratch):
                 sys.stderr.write("selftest: %s was accepted\n" % name)
                 bad += 1

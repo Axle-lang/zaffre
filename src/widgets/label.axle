@@ -1,0 +1,176 @@
+// label — text, set in a role.
+//
+// A label does not choose a size or a colour. It asks for a *role* — body, heading, caption, code —
+// and the theme says what that role looks like. Changing the theme re-letters every label; asking
+// for a different role is one argument.
+//
+//     new Label("Preferences", TextRole::H2)
+//     new Label(LabelProps { role: TextRole::Dim, wrap: true }, "A long sentence that should wrap…")
+//
+// By default a label is one line as wide as its text. `wrap` breaks it at spaces to the width it is
+// offered (and its height follows), `elide` keeps one line and cuts it with an ellipsis, and
+// `maxLines` stops a wrapped label at that many lines.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::style::styles::TextStyle;
+use crate::style::variants::TextRole;
+use crate::text::fonts::{Fonts, FaceKind};
+use crate::text::typeset::Lines;
+use crate::core::geometry::{Size, Bounds, Limits, Length, Align};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** How a label is set. */
+pub struct LabelProps {
+    /** The role the text plays; the theme sets it. */
+    pub role : TextRole = TextRole::Body;
+
+    /** Whether `color` replaces the role's colour. */
+    pub tinted : bool = false;
+
+    /** The colour, when `tinted`. */
+    pub color : Tint = Tint { rgb: 0, a: 255 };
+
+    /** Break lines at spaces to fit the width offered. */
+    pub wrap : bool = false;
+
+    /** For a wrapped label: the most lines to show (0: all). */
+    pub maxLines : i32 = 0;
+
+    /** Keep to one line and cut with an ellipsis to the width offered. */
+    pub elide : bool = false;
+
+    /** Where lines sit inside the label's box. */
+    pub align : Align = Align::Start;
+
+    /** The label's width: its text's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The share of a parent's spare room the label asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** A run of text. */
+pub class Label : Base, Widget {
+    text : string;
+    props : LabelProps;
+    lines : Lines = new Lines();
+    wrapped : bool = false;
+
+    /** A label saying `text` in the body role. */
+    constructor(text : string) {
+        self.text = text;
+        self.props = LabelProps { };
+    }
+
+    /** A label saying `text` in `role`. */
+    constructor(text : string, role : TextRole) {
+        self.text = text;
+        self.props = LabelProps { role: role };
+    }
+
+    /** A label saying `text`, set as `props` say. */
+    constructor(props : LabelProps, text : string) {
+        self.text = text;
+        self.props = props;
+    }
+
+    /** Change what it says. */
+    pub fn setText(mut self, text : string) : void {
+        self.text = text;
+    }
+
+    /** What it says. */
+    pub fn getText(self) : string {
+        return self.text;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** The style the role resolves to. */
+    pub(file) fn styleOf(self, ctx : Context) : TextStyle {
+        return ctx.theme.text(self.props.role);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : TextStyle = self.styleOf(ctx);
+        let kind : FaceKind = Fonts::kindOf(st.bold, st.mono);
+        let line : f64 = ctx.lineHeight(kind, st.px);
+        let mut w : f64 = 0.0;
+        let mut h : f64 = line;
+        self.wrapped = false;
+        if (self.props.wrap && limits.boundedW()) {
+            ctx.fonts.wrap(kind, self.text, st.px, limits.maxW, self.lines);
+            let mut n : i32 = self.lines.count;
+            if (self.props.maxLines > 0 && n > self.props.maxLines) {
+                n = self.props.maxLines;
+            }
+            w = self.lines.widest();
+            h = st.px * ctx.theme.metrics.leading * (n as f64);
+            self.wrapped = true;
+        } else {
+            w = ctx.textWidth(kind, self.text, st.px);
+            if (self.props.elide && limits.boundedW()) {
+                w = Mathx::fmin(w, limits.maxW);
+            }
+        }
+        let want : f64 = self.props.width.resolve(limits.maxW, w);
+        return limits.constrain(Size { w: want, h: h });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : TextStyle = self.styleOf(ctx);
+        let kind : FaceKind = Fonts::kindOf(st.bold, st.mono);
+        let mut ink : Tint = st.color;
+        if (self.props.tinted) {
+            ink = self.props.color;
+        }
+        let a : Bounds = self.area;
+        let line : f64 = ctx.lineHeight(kind, st.px);
+        if (!self.wrapped) {
+            let base : f64 = ctx.baselineIn(kind, st.px, a.y, Mathx::fmin(a.h, line));
+            if (self.props.elide) {
+                p.textElided(kind, self.text, a.x, base, st.px, a.w, ink);
+                return;
+            }
+            let w : f64 = ctx.textWidth(kind, self.text, st.px);
+            p.text(kind, self.text, a.x + Label::shift(self.props.align, a.w - w), base, st.px, ink);
+            return;
+        }
+        let step : f64 = st.px * ctx.theme.metrics.leading;
+        let mut n : i32 = self.lines.count;
+        if (self.props.maxLines > 0 && n > self.props.maxLines) {
+            n = self.props.maxLines;
+        }
+        for (i of 0..n) {
+            let top : f64 = a.y + step * (i as f64);
+            let base : f64 = ctx.baselineIn(kind, st.px, top, step);
+            let lw : f64 = self.lines.widthOf(i);
+            p.textSpan(
+                kind,
+                self.text,
+                self.lines.startOf(i),
+                self.lines.stopOf(i),
+                a.x + Label::shift(self.props.align, a.w - lw),
+                base,
+                st.px,
+                ink
+            );
+        }
+    }
+
+    /** How far to move a run of free space `spare` to honour `align`. */
+    pub(file) static fn shift(align : Align, spare : f64) : f64 {
+        if (align == Align::Center) {
+            return spare * 0.5;
+        }
+        if (align == Align::End) {
+            return spare;
+        }
+        return 0.0;
+    }
+}

@@ -1,0 +1,173 @@
+// icon — small pictures drawn as strokes.
+//
+// Every icon is a handful of line segments on a 24 x 24 grid, drawn with the painter's round-ended
+// `line` at a stroke width of 2 grid units. Strokes scale to any size without a bitmap, take any
+// colour, and — drawn as round-ended capsules — meet each other cleanly at the joints. There is
+// no font of glyphs to ship and nothing to load.
+//
+// `Icons::draw` is a function over a `Painter` like any widget's `paint`; so is a program's own
+// icon.
+
+use crate::gfx::tint::Tint;
+use crate::paint::painter::Painter;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+
+/** The icons the library draws. */
+pub enum IconKind : i32 {
+    /** Nothing. */
+    None = 0,
+    Check = 1,
+    Close = 2,
+    Plus = 3,
+    Minus = 4,
+    ChevronDown = 5,
+    ChevronUp = 6,
+    ChevronLeft = 7,
+    ChevronRight = 8,
+    ArrowRight = 9,
+    Search = 10,
+    Menu = 11,
+    Info = 12,
+    Warning = 13,
+    Dot = 14,
+    Sun = 15,
+}
+
+/** Drawing icons. */
+pub class Icons {
+    /** One segment of the 24 x 24 grid, placed at (`x`, `y`) at `size` pixels. */
+    pub(file) static fn seg(p : Painter, x : f64, y : f64, s : f64, x0 : f64, y0 : f64, x1 : f64, y1 : f64, t : Tint) : void {
+        let k : f64 = s / 24.0;
+        p.line(x + x0 * k, y + y0 * k, x + x1 * k, y + y1 * k, 2.0 * k, t);
+    }
+
+    /** A polyline of two segments meeting at (`x1`, `y1`). */
+    pub(file) static fn bend(p : Painter, x : f64, y : f64, s : f64, x0 : f64, y0 : f64, x1 : f64, y1 : f64, x2 : f64, y2 : f64, t : Tint) : void {
+        Icons::seg(p, x, y, s, x0, y0, x1, y1, t);
+        Icons::seg(p, x, y, s, x1, y1, x2, y2, t);
+    }
+
+    /** A circle of radius `r` on the grid as `n` segments. */
+    pub(file) static fn circle(p : Painter, x : f64, y : f64, s : f64, cx : f64, cy : f64, r : f64, n : i32, t : Tint) : void {
+        let mut px : f64 = cx + r;
+        let mut py : f64 = cy;
+        for (i of 1..=n) {
+            let a : f64 = 6.283185307179586 * (i as f64) / (n as f64);
+            let qx : f64 = cx + r * a.cos();
+            let qy : f64 = cy + r * a.sin();
+            Icons::seg(p, x, y, s, px, py, qx, qy, t);
+            px = qx;
+            py = qy;
+        }
+    }
+
+    /** Draw `icon` with its 24-unit box at (`x`, `y`), `size` pixels on a side, in colour `t`. */
+    pub static fn draw(p : Painter, icon : IconKind, x : f64, y : f64, size : f64, t : Tint) : void {
+        match icon {
+            IconKind::None => {
+            },
+            IconKind::Check => {
+                Icons::bend(p, x, y, size, 5.0, 12.5, 10.0, 17.5, 19.0, 7.0, t);
+            },
+            IconKind::Close => {
+                Icons::seg(p, x, y, size, 6.0, 6.0, 18.0, 18.0, t);
+                Icons::seg(p, x, y, size, 18.0, 6.0, 6.0, 18.0, t);
+            },
+            IconKind::Plus => {
+                Icons::seg(p, x, y, size, 12.0, 5.0, 12.0, 19.0, t);
+                Icons::seg(p, x, y, size, 5.0, 12.0, 19.0, 12.0, t);
+            },
+            IconKind::Minus => {
+                Icons::seg(p, x, y, size, 5.0, 12.0, 19.0, 12.0, t);
+            },
+            IconKind::ChevronDown => {
+                Icons::bend(p, x, y, size, 6.0, 9.0, 12.0, 15.0, 18.0, 9.0, t);
+            },
+            IconKind::ChevronUp => {
+                Icons::bend(p, x, y, size, 6.0, 15.0, 12.0, 9.0, 18.0, 15.0, t);
+            },
+            IconKind::ChevronLeft => {
+                Icons::bend(p, x, y, size, 15.0, 6.0, 9.0, 12.0, 15.0, 18.0, t);
+            },
+            IconKind::ChevronRight => {
+                Icons::bend(p, x, y, size, 9.0, 6.0, 15.0, 12.0, 9.0, 18.0, t);
+            },
+            IconKind::ArrowRight => {
+                Icons::seg(p, x, y, size, 5.0, 12.0, 19.0, 12.0, t);
+                Icons::bend(p, x, y, size, 13.0, 6.0, 19.0, 12.0, 13.0, 18.0, t);
+            },
+            IconKind::Search => {
+                Icons::circle(p, x, y, size, 11.0, 11.0, 6.5, 20, t);
+                Icons::seg(p, x, y, size, 16.0, 16.0, 20.0, 20.0, t);
+            },
+            IconKind::Menu => {
+                Icons::seg(p, x, y, size, 4.0, 7.0, 20.0, 7.0, t);
+                Icons::seg(p, x, y, size, 4.0, 12.0, 20.0, 12.0, t);
+                Icons::seg(p, x, y, size, 4.0, 17.0, 20.0, 17.0, t);
+            },
+            IconKind::Info => {
+                Icons::circle(p, x, y, size, 12.0, 12.0, 9.0, 24, t);
+                Icons::seg(p, x, y, size, 12.0, 11.0, 12.0, 16.5, t);
+                Icons::seg(p, x, y, size, 12.0, 7.6, 12.0, 7.6, t);
+            },
+            IconKind::Warning => {
+                Icons::bend(p, x, y, size, 12.0, 4.0, 21.0, 20.0, 3.0, 20.0, t);
+                Icons::seg(p, x, y, size, 3.0, 20.0, 12.0, 4.0, t);
+                Icons::seg(p, x, y, size, 12.0, 10.0, 12.0, 14.0, t);
+                Icons::seg(p, x, y, size, 12.0, 17.2, 12.0, 17.2, t);
+            },
+            IconKind::Dot => {
+                p.line(x + size * 0.5, y + size * 0.5, x + size * 0.5, y + size * 0.5, size * 0.3, t);
+            },
+            IconKind::Sun => {
+                Icons::circle(p, x, y, size, 12.0, 12.0, 4.0, 16, t);
+                Icons::seg(p, x, y, size, 12.0, 2.5, 12.0, 5.0, t);
+                Icons::seg(p, x, y, size, 12.0, 19.0, 12.0, 21.5, t);
+                Icons::seg(p, x, y, size, 2.5, 12.0, 5.0, 12.0, t);
+                Icons::seg(p, x, y, size, 19.0, 12.0, 21.5, 12.0, t);
+                Icons::seg(p, x, y, size, 5.3, 5.3, 7.1, 7.1, t);
+                Icons::seg(p, x, y, size, 16.9, 16.9, 18.7, 18.7, t);
+                Icons::seg(p, x, y, size, 18.7, 5.3, 16.9, 7.1, t);
+                Icons::seg(p, x, y, size, 7.1, 16.9, 5.3, 18.7, t);
+            },
+        }
+    }
+}
+
+/** An icon as a widget: a square of `size` pixels in a colour. */
+pub class IconView : Base, Widget {
+    icon : IconKind;
+    size : f64;
+    color : Tint;
+    themed : bool;
+
+    /** `icon` at `size` pixels in the theme's secondary text colour. */
+    constructor(icon : IconKind, size : f64) {
+        self.icon = icon;
+        self.size = size;
+        self.color = Tint::hex(0);
+        self.themed = true;
+    }
+
+    /** `icon` at `size` pixels in `color`. */
+    constructor(icon : IconKind, size : f64, color : Tint) {
+        self.icon = icon;
+        self.size = size;
+        self.color = color;
+        self.themed = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.size, h: self.size });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let mut t : Tint = self.color;
+        if (self.themed) {
+            t = ctx.theme.palette.textDim;
+        }
+        Icons::draw(p, self.icon, self.area.x, self.area.y, self.size, t);
+    }
+}

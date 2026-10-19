@@ -1,0 +1,216 @@
+// button — the thing you press.
+//
+// A button is a `Control` (it keeps its box, tracks hover and press, holds the keyboard focus and
+// fades between states) with a label, an optional icon, and a handler that runs when it is
+// activated — by a click that goes down and up on it, or by Enter or Space while it has the focus.
+//
+// What it looks like is the theme's answer to two questions, its *kind* and its *size*:
+//
+//     new Button("Save", () => app.save())
+//     new Button(ButtonProps { label: "Delete", kind: ButtonKind::Danger, icon: IconKind::Close },
+//                () => app.delete())
+//
+// A handler is a lambda, which captures by value and only scalars or `Shared` handles, so the thing
+// a handler acts on is a `Shared<…>` the program built — or a `Model` (see `core::model`).
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::fill::Fill;
+use crate::style::styles::ButtonStyle;
+use crate::style::variants::{ButtonKind, ControlSize};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a button looks and sizes itself. */
+pub struct ButtonProps {
+    /** What it says. */
+    pub label : string = "";
+
+    /** How loudly it asks to be pressed. */
+    pub kind : ButtonKind = ButtonKind::Secondary;
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** A picture beside the label. */
+    pub icon : IconKind = IconKind::None;
+
+    /** Whether the picture is after the label rather than before it. */
+    pub iconRight : bool = false;
+
+    /** The button's width: its content's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The share of a parent's spare room the button asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** The handler a button without one runs. */
+fn doNothing() : void {
+}
+
+/** A pressable button. */
+pub class Button : Control, Widget {
+    props : ButtonProps;
+    onPress : () => void;
+
+    /** A button labelled `label`, doing nothing yet. */
+    constructor(label : string) {
+        self.props = ButtonProps { label: label };
+        self.onPress = doNothing;
+    }
+
+    /** A button labelled `label` that runs `onPress`. */
+    constructor(label : string, onPress : () => void) {
+        self.props = ButtonProps { label: label };
+        self.onPress = onPress;
+    }
+
+    /** A button set as `props` say, doing nothing yet. */
+    constructor(props : ButtonProps) {
+        self.props = props;
+        self.onPress = doNothing;
+    }
+
+    /** A button set as `props` say that runs `onPress`. */
+    constructor(props : ButtonProps, onPress : () => void) {
+        self.props = props;
+        self.onPress = onPress;
+    }
+
+    /** Change the label. */
+    pub fn setLabel(mut self, label : string) : void {
+        self.props = ButtonProps { label: label, ..self.props };
+    }
+
+    /** Enable or disable it. */
+    pub fn setDisabled(mut self, off : bool) : void {
+        self.props = ButtonProps { disabled: off, ..self.props };
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** Run the handler. */
+    pub(file) fn fire(mut self, ctx : Context) : void {
+        let h : () => void = self.onPress;
+        h();
+        ctx.invalidate();
+    }
+
+    /** The width of the icon-and-label content, in pixels. */
+    pub(file) fn contentWidth(self, ctx : Context, st : ButtonStyle) : f64 {
+        let mut w : f64 = ctx.textWidth(FaceKind::Bold, self.props.label, st.px);
+        if (!st.bold) {
+            w = ctx.textWidth(FaceKind::Sans, self.props.label, st.px);
+        }
+        if (self.props.icon != IconKind::None) {
+            w = w + st.px * 1.2;
+            if (self.props.label.byteLength > 0) {
+                w = w + st.gap;
+            }
+        }
+        return w;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ButtonStyle = ctx.theme.button(self.props.kind, self.props.size);
+        let natural : f64 = Mathx::fmax(st.height, self.contentWidth(ctx, st) + 2.0 * st.padX);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, natural), h: st.height });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click) {
+            self.fire(ctx);
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            if (e.key == Key::Enter || e.key == Key::Space) {
+                self.fire(ctx);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ButtonStyle = ctx.theme.button(self.props.kind, self.props.size);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        let hv : i32 = self.hoverT.alpha();
+        let pr : i32 = self.pressT.alpha();
+        let off : bool = self.props.disabled;
+        let mut fill : Fill = st.fill.mixed(st.fillHover, hv).mixed(st.fillPress, pr);
+        let mut ink : Tint = st.text;
+        if (off) {
+            fill = st.fillOff;
+            ink = st.textOff;
+        }
+        if (st.shadow.a > 0 && !off) {
+            p.shadow(rr, 0.0, st.shadowDy * (1.0 - 0.5 * self.pressT.value), st.shadowBlur, 0.0, st.shadow.faded(255 - pr / 2));
+        }
+        if (!fill.isNone()) {
+            p.fillRound(rr, fill.brush(a.y, a.h));
+        }
+        if (st.border.a > 0 && !off) {
+            let edge : Tint = st.border.mixed(st.borderHover, hv);
+            p.strokeRound(rr, st.borderW, Brush::solid(edge.rgb, edge.a));
+        }
+        if (self.ringShown(ctx)) {
+            let ring : Tint = ctx.theme.palette.accent.faded(self.focusT.alpha());
+            p.strokeRound(a.grown(2.0).round(st.radius + 2.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+        // Content: icon and label, centred as a group.
+        let mut kind : FaceKind = FaceKind::Sans;
+        if (st.bold) {
+            kind = FaceKind::Bold;
+        }
+        let cw : f64 = self.contentWidth(ctx, st);
+        let mut x : f64 = a.x + (a.w - cw) * 0.5;
+        let isz : f64 = st.px * 1.2;
+        let hasLabel : bool = self.props.label.byteLength > 0;
+        if (self.props.icon != IconKind::None && !self.props.iconRight) {
+            Icons::draw(p, self.props.icon, x, a.midY() - isz * 0.5, isz, ink);
+            x = x + isz;
+            if (hasLabel) {
+                x = x + st.gap;
+            }
+        }
+        if (hasLabel) {
+            let base : f64 = ctx.baselineIn(kind, st.px, a.y, a.h);
+            let end : f64 = p.text(kind, self.props.label, x, base, st.px, ink);
+            if (st.underline && self.hoverT.value > 0.01) {
+                p.line(x, base + 2.0, end, base + 2.0, 1.0, ink.faded(self.hoverT.alpha()));
+            }
+            x = end;
+            if (self.props.icon != IconKind::None && self.props.iconRight) {
+                x = x + st.gap;
+            }
+        }
+        if (self.props.icon != IconKind::None && self.props.iconRight) {
+            Icons::draw(p, self.props.icon, x, a.midY() - isz * 0.5, isz, ink);
+        }
+    }
+}

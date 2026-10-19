@@ -76,6 +76,13 @@ pub class Context {
     /** Text copied inside the program; the shell mirrors it to the system clipboard where there is one. */
     pub clip : string = "";
 
+    /**
+     * Seconds from `now` until something needs a frame that no event will cause — a caret to blink,
+     * a tooltip's delay running out. The shell sleeps no longer than this. A very large number
+     * when nothing is waiting.
+     */
+    pub wake : f64 = 1000000000.0;
+
     minted : i64 = 0;
     order : i64[] = malloc<i64>(CONTEXT_FOCUSABLE as i64);
     orderCount : i32 = 0;
@@ -89,6 +96,13 @@ pub class Context {
     /** Ask for another frame. */
     pub fn invalidate(mut self) : void {
         self.dirty = true;
+    }
+
+    /** Ask for a frame in `seconds` even if nothing happens before then. */
+    pub fn wakeIn(mut self, seconds : f64) : void {
+        if (seconds < self.wake) {
+            self.wake = seconds;
+        }
     }
 
     /** A new focus token, never 0 and never given twice. */

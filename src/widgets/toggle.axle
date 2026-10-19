@@ -1,0 +1,360 @@
+// toggle — checkbox, switch, radio: a mark that is on or off, and a label.
+//
+// All three show a value that belongs to the program (a `Model`), flip it when the user clicks or
+// presses Enter or Space, and fade between their two states. They share a base, `Toggle`, that
+// does what is the same — the pointer and keyboard reaction, the label, the focus ring, the fade —
+// and each draws its own mark.
+//
+//     let dark : Shared<Model<bool>> = new shared Model<bool>(true);
+//     new Switch("Dark mode", dark)
+//     new Checkbox(ToggleProps { label: "Remember me", size: ControlSize::Sm }, remember)
+//
+//     let choice : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new Radio("Small", choice, 0);   new Radio("Large", choice, 1);
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::fill::Fill;
+use crate::style::styles::ToggleStyle;
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a toggle looks. */
+pub struct ToggleProps {
+    /** The text beside the mark. */
+    pub label : string = "";
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** The handler a flag toggle without one runs. */
+fn ignoreFlag(v : bool) : void {
+}
+
+/** The handler a radio without one runs. */
+fn ignoreChoice(v : i32) : void {
+}
+
+/** What checkboxes, switches and radios share. */
+pub class Toggle : Control {
+    pub(derived) props : ToggleProps;
+    pub(derived) valueT : Eased;
+
+    /** A toggle set as `props` say, whose mark starts `on`. */
+    constructor(props : ToggleProps, on : bool) {
+        self.props = props;
+        self.valueT = Eased::at(0.0);
+        if (on) {
+            self.valueT = Eased::at(1.0);
+        }
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** The label's width. */
+    pub(derived) fn labelWidth(self, ctx : Context, st : ToggleStyle) : f64 {
+        if (self.props.label.byteLength == 0) {
+            return 0.0;
+        }
+        return ctx.textWidth(FaceKind::Sans, self.props.label, st.px);
+    }
+
+    /**
+     * React to the pointer and the keyboard. Answers `Click` when the user has asked to flip the
+     * value (a click, or Enter or Space while focused) and `Press` while a press that may become a
+     * click is under way, so the caller knows whether the event was used.
+     */
+    pub(derived) fn react(mut self, ctx : Context, e : UiEvent) : Gesture {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click || g == Gesture::Press) {
+            return g;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            if (e.key == Key::Space || e.key == Key::Enter) {
+                return Gesture::Click;
+            }
+        }
+        return Gesture::None;
+    }
+
+    /** Step the fade toward `on`; true while anything is still moving. */
+    pub(derived) fn follow(mut self, ctx : Context, dt : f64, on : bool) : bool {
+        let mut t : f64 = 0.0;
+        if (on) {
+            t = 1.0;
+        }
+        self.valueT = self.valueT.toward(t).step(dt, Rate::MOVE);
+        let moving : bool = self.animate(ctx, dt);
+        return moving || !self.valueT.settled();
+    }
+
+    /** Draw the label to the right of the mark, vertically centred in the box. */
+    pub(derived) fn drawLabel(self, ctx : Context, p : Painter, st : ToggleStyle, x : f64) : void {
+        if (self.props.label.byteLength == 0) {
+            return;
+        }
+        let mut ink : Tint = st.text;
+        if (self.props.disabled) {
+            ink = st.textOff;
+        }
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, self.area.y, self.area.h);
+        p.text(FaceKind::Sans, self.props.label, x, base, st.px, ink);
+    }
+
+    /** The focus halo around the mark `rr`, faded in. */
+    pub(derived) fn drawRing(self, ctx : Context, p : Painter, st : ToggleStyle, rr : RRect) : void {
+        if (!self.ringShown(ctx)) {
+            return;
+        }
+        let ring : Tint = st.ring.faded(self.focusT.alpha());
+        p.strokeRound(rr.grown(3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+    }
+
+    /** The fill of a mark between its off and on states, brightened under the pointer. */
+    pub(derived) fn markFill(self, ctx : Context, st : ToggleStyle) : Fill {
+        let hover : Fill = Fill::flat(ctx.theme.hoverOf(st.off.top));
+        let rest : Fill = st.off.mixed(hover, self.hoverT.alpha());
+        if (self.props.disabled) {
+            return rest.faded(120);
+        }
+        return rest.mixed(st.on, self.valueT.alpha());
+    }
+}
+
+/** A box that is ticked or not. */
+pub class Checkbox : Toggle, Widget {
+    model : Shared<Model<bool>>;
+    onChange : (bool) => void;
+
+    /** A checkbox labelled `label` showing `model`. */
+    constructor(label : string, model : Shared<Model<bool>>) {
+        super(ToggleProps { label: label }, model.get());
+        self.model = model;
+        self.onChange = ignoreFlag;
+    }
+
+    /** A checkbox set as `props` say showing `model`. */
+    constructor(props : ToggleProps, model : Shared<Model<bool>>) {
+        super(props, model.get());
+        self.model = model;
+        self.onChange = ignoreFlag;
+    }
+
+    /** A checkbox set as `props` say showing `model`, calling `onChange` with the new value when the user flips it. */
+    constructor(props : ToggleProps, model : Shared<Model<bool>>, onChange : (bool) => void) {
+        super(props, model.get());
+        self.model = model;
+        self.onChange = onChange;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ToggleStyle = ctx.theme.check(self.props.size);
+        let mut w : f64 = st.mark;
+        if (self.props.label.byteLength > 0) {
+            w = w + st.gap + self.labelWidth(ctx, st);
+        }
+        return limits.constrain(Size { w: w, h: Mathx::fmax(st.mark, ctx.lineHeight(FaceKind::Sans, st.px)) });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.react(ctx, e);
+        if (g == Gesture::Click) {
+            let next : bool = !self.model.get();
+            self.model.set(next);
+            let h : (bool) => void = self.onChange;
+            h(next);
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.follow(ctx, dt, self.model.get());
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ToggleStyle = ctx.theme.check(self.props.size);
+        let a : Bounds = self.area;
+        let y : f64 = a.midY() - st.mark * 0.5;
+        let rr : RRect = RRect::uniform(a.x, y, st.mark, st.mark, st.radius);
+        let on : i32 = self.valueT.alpha();
+        p.fillRound(rr, self.markFill(ctx, st).brush(y, st.mark));
+        let edge : Tint = st.borderOff.mixed(st.borderOn, on);
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (on > 0) {
+            let g : f64 = st.mark * 0.85;
+            let ink : Tint = st.glyph.faded(on);
+            Icons::draw(p, IconKind::Check, a.x + (st.mark - g) * 0.5, y + (st.mark - g) * 0.5, g, ink);
+        }
+        self.drawRing(ctx, p, st, rr);
+        self.drawLabel(ctx, p, st, a.x + st.mark + st.gap);
+    }
+}
+
+/** A switch: a track with a knob that slides. */
+pub class Switch : Toggle, Widget {
+    model : Shared<Model<bool>>;
+    onChange : (bool) => void;
+
+    /** A switch labelled `label` showing `model`. */
+    constructor(label : string, model : Shared<Model<bool>>) {
+        super(ToggleProps { label: label }, model.get());
+        self.model = model;
+        self.onChange = ignoreFlag;
+    }
+
+    /** A switch set as `props` say showing `model`. */
+    constructor(props : ToggleProps, model : Shared<Model<bool>>) {
+        super(props, model.get());
+        self.model = model;
+        self.onChange = ignoreFlag;
+    }
+
+    /** A switch set as `props` say showing `model`, calling `onChange` with the new value when the user flips it. */
+    constructor(props : ToggleProps, model : Shared<Model<bool>>, onChange : (bool) => void) {
+        super(props, model.get());
+        self.model = model;
+        self.onChange = onChange;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ToggleStyle = ctx.theme.check(self.props.size);
+        let mut w : f64 = st.trackW;
+        if (self.props.label.byteLength > 0) {
+            w = w + st.gap + self.labelWidth(ctx, st);
+        }
+        return limits.constrain(Size { w: w, h: Mathx::fmax(st.trackH, ctx.lineHeight(FaceKind::Sans, st.px)) });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.react(ctx, e);
+        if (g == Gesture::Click) {
+            let next : bool = !self.model.get();
+            self.model.set(next);
+            let h : (bool) => void = self.onChange;
+            h(next);
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.follow(ctx, dt, self.model.get());
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ToggleStyle = ctx.theme.check(self.props.size);
+        let a : Bounds = self.area;
+        let y : f64 = a.midY() - st.trackH * 0.5;
+        let track : RRect = RRect::uniform(a.x, y, st.trackW, st.trackH, st.trackH * 0.5);
+        let t : f64 = self.valueT.value;
+        p.fillRound(track, self.markFill(ctx, st).brush(y, st.trackH));
+        let knobD : f64 = st.trackH - 4.0;
+        let kx : f64 = Mathx::lerp(a.x + 2.0, a.x + st.trackW - 2.0 - knobD, t);
+        let knob : RRect = RRect::uniform(kx, y + 2.0, knobD, knobD, knobD * 0.5);
+        p.shadow(knob, 0.0, 1.0, 3.0, 0.0, ctx.theme.palette.shadow.withAlpha(90));
+        p.fillRound(knob, Brush::solid(st.knob.rgb, st.knob.a));
+        self.drawRing(ctx, p, st, track);
+        self.drawLabel(ctx, p, st, a.x + st.trackW + st.gap);
+    }
+}
+
+/** One of a group of round marks, of which the model says which is chosen. */
+pub class Radio : Toggle, Widget {
+    model : Shared<Model<i32>>;
+    value : i32;
+    onChange : (i32) => void;
+
+    /** A radio labelled `label` that is chosen when `model` holds `value`, and chooses it when clicked. */
+    constructor(label : string, model : Shared<Model<i32>>, value : i32) {
+        super(ToggleProps { label: label }, model.get() == value);
+        self.model = model;
+        self.value = value;
+        self.onChange = ignoreChoice;
+    }
+
+    /** A radio set as `props` say. */
+    constructor(props : ToggleProps, model : Shared<Model<i32>>, value : i32) {
+        super(props, model.get() == value);
+        self.model = model;
+        self.value = value;
+        self.onChange = ignoreChoice;
+    }
+
+    /** A radio set as `props` say, calling `onChange` with its value when it is chosen. */
+    constructor(props : ToggleProps, model : Shared<Model<i32>>, value : i32, onChange : (i32) => void) {
+        super(props, model.get() == value);
+        self.model = model;
+        self.value = value;
+        self.onChange = onChange;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ToggleStyle = ctx.theme.check(self.props.size);
+        let mut w : f64 = st.mark;
+        if (self.props.label.byteLength > 0) {
+            w = w + st.gap + self.labelWidth(ctx, st);
+        }
+        return limits.constrain(Size { w: w, h: Mathx::fmax(st.mark, ctx.lineHeight(FaceKind::Sans, st.px)) });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.react(ctx, e);
+        if (g == Gesture::Click) {
+            if (self.model.get() != self.value) {
+                self.model.set(self.value);
+                let h : (i32) => void = self.onChange;
+                h(self.value);
+            }
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.follow(ctx, dt, self.model.get() == self.value);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ToggleStyle = ctx.theme.check(self.props.size);
+        let a : Bounds = self.area;
+        let y : f64 = a.midY() - st.mark * 0.5;
+        let rr : RRect = RRect::uniform(a.x, y, st.mark, st.mark, st.mark * 0.5);
+        let on : i32 = self.valueT.alpha();
+        p.fillRound(rr, self.markFill(ctx, st).brush(y, st.mark));
+        let edge : Tint = st.borderOff.mixed(st.borderOn, on);
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (on > 0) {
+            let d : f64 = st.mark * 0.38 * self.valueT.value;
+            let dot : RRect = RRect::uniform(a.x + (st.mark - d) * 0.5, y + (st.mark - d) * 0.5, d, d, d * 0.5);
+            p.fillRound(dot, Brush::solid(st.glyph.rgb, st.glyph.a));
+        }
+        self.drawRing(ctx, p, st, rr);
+        self.drawLabel(ctx, p, st, a.x + st.mark + st.gap);
+    }
+}

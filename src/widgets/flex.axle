@@ -1,0 +1,352 @@
+// flex — rows and columns: the layout most interfaces are made of.
+//
+// A `Column` stacks its children top to bottom, a `Row` left to right. Both are one class, `Flex`,
+// parameterised by the axis they lay along (the *main* axis); the other is the *cross* axis.
+//
+//   * A child that asks for no share of spare room (`flex() == 0`) is measured loosely and keeps
+//     the size it answers.
+//   * A child that does ask (`Spacer`, or anything built with `grow`) divides what is left after
+//     the fixed children and the gaps, in proportion to its `flex()`.
+//   * `align` places children across the cross axis (start, centre, end, or stretched to fill it)
+//     and `justify` shares the spare room along the main axis (packed, centred, spread).
+//
+// Layout runs in two passes with one rule between them: **`arrange` gives a child the size it
+// returned from `measure`** (under tight limits, for a child that was stretched or given a share),
+// so a container never lays a child out twice and the cost of a layout is the number of widgets,
+// not the number of widgets times their depth.
+//
+// Children are `dyn Widget`, held in an array the container takes from its caller:
+//
+//     new Column(FlexProps { gap: 12.0 }, [
+//         new Label("Preferences", TextRole::H2),
+//         new Row(FlexProps { gap: 8.0 }, [ new Button("Cancel"), new Button("Save") ]),
+//     ])
+
+use crate::gfx::mathx::Mathx;
+use crate::core::geometry::{Size, Bounds, Insets, Limits, Length, Align, Justify, Axis, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** How a row or column lays out its children. */
+pub struct FlexProps {
+    /** Space between neighbouring children. */
+    pub gap : f64 = 8.0;
+
+    /** Space between the container's edge and its children. */
+    pub padding : Insets = Insets { };
+
+    /** Where children sit across the cross axis. */
+    pub align : Align = Align::Start;
+
+    /** How children share the spare room along the main axis. */
+    pub justify : Justify = Justify::Start;
+
+    /** The container's own width: its content's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The container's own height. */
+    pub height : Length = Length::Auto;
+
+    /** The share of a parent's spare room this container asks for (0: none). */
+    pub grow : f64 = 0.0;
+
+    /** Children the container can hold when it is built empty and filled with `add`. */
+    pub capacity : i32 = 16;
+}
+
+/** A container that lays its children along one axis. */
+pub class Flex : Base, Widget {
+    axis : Axis;
+    props : FlexProps;
+    kids : dyn Widget[];
+    count : i32 = 0;
+    sizes : Size[];
+
+    /** A container along `axis` holding `children`, which it takes. */
+    constructor(axis : Axis, props : FlexProps, own children : dyn Widget[]) {
+        self.axis = axis;
+        self.props = props;
+        self.kids = children;
+        self.count = children.length as i32;
+        self.sizes = malloc<Size>(self.count as i64);
+        for (i of 0..self.count) {
+            self.sizes[i as i64] = Size::zero();
+        }
+    }
+
+    /** An empty container along `axis`, with room for `props.capacity` children to be added. */
+    constructor(axis : Axis, props : FlexProps) {
+        self.axis = axis;
+        self.props = props;
+        self.kids = malloc<dyn Widget>(props.capacity as i64);
+        self.count = 0;
+        self.sizes = malloc<Size>(props.capacity as i64);
+        for (i of 0..props.capacity) {
+            self.sizes[i as i64] = Size::zero();
+        }
+    }
+
+    /** Add a child at the end; answers false when the container is full. */
+    pub fn add(mut self, own child : dyn Widget) : bool {
+        if (self.count >= self.props.capacity) {
+            return false;
+        }
+        self.kids[self.count as i64] = child;
+        self.count = self.count + 1;
+        return true;
+    }
+
+    /** How many children it holds. */
+    pub fn size(self) : i32 {
+        return self.count;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    // ─── Axis arithmetic ─────────────────────────────────────────
+
+    /** The part of `s` along the main axis. */
+    pub(file) fn mainOf(self, s : Size) : f64 {
+        if (self.axis == Axis::Horizontal) {
+            return s.w;
+        }
+        return s.h;
+    }
+
+    /** The part of `s` along the cross axis. */
+    pub(file) fn crossOf(self, s : Size) : f64 {
+        if (self.axis == Axis::Horizontal) {
+            return s.h;
+        }
+        return s.w;
+    }
+
+    /** A size from its main and cross parts. */
+    pub(file) fn pack(self, main : f64, cross : f64) : Size {
+        if (self.axis == Axis::Horizontal) {
+            return Size { w: main, h: cross };
+        }
+        return Size { w: cross, h: main };
+    }
+
+    /** Limits that give a child `main` along the main axis (tight when `tightMain`) and up to `cross` across. */
+    pub(file) fn limitsFor(self, main : f64, tightMain : bool, cross : f64, tightCross : bool) : Limits {
+        let mut mainMin : f64 = 0.0;
+        if (tightMain) {
+            mainMin = main;
+        }
+        let mut crossMin : f64 = 0.0;
+        if (tightCross) {
+            crossMin = cross;
+        }
+        if (self.axis == Axis::Horizontal) {
+            return Limits { minW: mainMin, maxW: main, minH: crossMin, maxH: cross };
+        }
+        return Limits { minW: crossMin, maxW: cross, minH: mainMin, maxH: main };
+    }
+
+    // ─── Layout ──────────────────────────────────────────────────
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let pad : Insets = self.props.padding;
+        let inner : Limits = limits.deflate(pad);
+        let horizontal : bool = self.axis == Axis::Horizontal;
+        let mut availMain : f64 = inner.maxH;
+        let mut availCross : f64 = inner.maxW;
+        let mut boundedMain : bool = inner.boundedH();
+        let mut boundedCross : bool = inner.boundedW();
+        if (horizontal) {
+            availMain = inner.maxW;
+            availCross = inner.maxH;
+            boundedMain = inner.boundedW();
+            boundedCross = inner.boundedH();
+        }
+        let gaps : f64 = self.props.gap * ((self.count - 1).max(0) as f64);
+        let mut fixed : f64 = 0.0;
+        let mut flexSum : f64 = 0.0;
+        let mut crossMax : f64 = 0.0;
+        for (i of 0..self.count) {
+            let c : dyn Widget = self.kids[i as i64];
+            let f : f64 = c.flex();
+            if (f > 0.0) {
+                flexSum = flexSum + f;
+                self.sizes[i as i64] = Size::zero();
+            } else {
+                let s : Size = c.measure(ctx, self.limitsFor(availMain, false, availCross, false));
+                self.sizes[i as i64] = s;
+                fixed = fixed + self.mainOf(s);
+                crossMax = Mathx::fmax(crossMax, self.crossOf(s));
+            }
+        }
+        let mut flexed : f64 = 0.0;
+        if (flexSum > 0.0) {
+            let room : f64 = Mathx::fmax(0.0, availMain - fixed - gaps);
+            for (i of 0..self.count) {
+                let c : dyn Widget = self.kids[i as i64];
+                let f : f64 = c.flex();
+                if (f > 0.0) {
+                    let mut s : Size = Size::zero();
+                    if (boundedMain) {
+                        s = c.measure(ctx, self.limitsFor(room * f / flexSum, true, availCross, false));
+                    } else {
+                        s = c.measure(ctx, self.limitsFor(availMain, false, availCross, false));
+                    }
+                    self.sizes[i as i64] = s;
+                    flexed = flexed + self.mainOf(s);
+                    crossMax = Mathx::fmax(crossMax, self.crossOf(s));
+                }
+            }
+        }
+        let mainTotal : f64 = fixed + flexed + gaps;
+        let mut crossTotal : f64 = crossMax;
+        if (self.props.align == Align::Stretch) {
+            // Fill the cross axis when it has a limit, else the widest child; children measured
+            // loosely are measured again, tight across.
+            let mut target : f64 = crossMax;
+            if (boundedCross) {
+                target = availCross;
+            }
+            for (i of 0..self.count) {
+                let c : dyn Widget = self.kids[i as i64];
+                let s : Size = self.sizes[i as i64];
+                if (self.crossOf(s) != target) {
+                    self.sizes[i as i64] = c.measure(ctx, self.limitsFor(self.mainOf(s), true, target, true));
+                }
+            }
+            crossTotal = target;
+        }
+        let packed : Size = self.pack(mainTotal, crossTotal);
+        let natural : Size = Size { w: pad.horizontal() + packed.w, h: pad.vertical() + packed.h };
+        return limits.constrain(Size {
+            w: self.props.width.resolve(limits.maxW, natural.w),
+            h: self.props.height.resolve(limits.maxH, natural.h),
+        });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let inner : Bounds = area.inset(self.props.padding);
+        let horizontal : bool = self.axis == Axis::Horizontal;
+        let mut mainExtent : f64 = inner.h;
+        let mut crossExtent : f64 = inner.w;
+        if (horizontal) {
+            mainExtent = inner.w;
+            crossExtent = inner.h;
+        }
+        let mut used : f64 = 0.0;
+        for (i of 0..self.count) {
+            used = used + self.mainOf(self.sizes[i as i64]);
+        }
+        let n : i32 = self.count;
+        let spare : f64 = Mathx::fmax(0.0, mainExtent - used - self.props.gap * ((n - 1).max(0) as f64));
+        let mut lead : f64 = 0.0;
+        let mut between : f64 = self.props.gap;
+        let j : Justify = self.props.justify;
+        if (j == Justify::Center) {
+            lead = spare * 0.5;
+        } else if (j == Justify::End) {
+            lead = spare;
+        } else if (j == Justify::Between && n > 1) {
+            between = between + spare / ((n - 1) as f64);
+        } else if (j == Justify::Around && n > 0) {
+            between = between + spare / (n as f64);
+            lead = spare / (2.0 * (n as f64));
+        }
+        let mut pos : f64 = lead;
+        for (i of 0..self.count) {
+            let c : dyn Widget = self.kids[i as i64];
+            let s : Size = self.sizes[i as i64];
+            let m : f64 = self.mainOf(s);
+            let mut cs : f64 = self.crossOf(s);
+            let mut cp : f64 = 0.0;
+            let a : Align = self.props.align;
+            if (a == Align::Center) {
+                cp = (crossExtent - cs) * 0.5;
+            } else if (a == Align::End) {
+                cp = crossExtent - cs;
+            } else if (a == Align::Stretch) {
+                cs = crossExtent;
+            }
+            if (horizontal) {
+                c.arrange(ctx, Bounds { x: inner.x + pos, y: inner.y + cp, w: m, h: cs });
+            } else {
+                c.arrange(ctx, Bounds { x: inner.x + cp, y: inner.y + pos, w: cs, h: m });
+            }
+            pos = pos + m + between;
+        }
+    }
+
+    // ─── Painting and events ─────────────────────────────────────
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        for (i of 0..self.count) {
+            let c : dyn Widget = self.kids[i as i64];
+            c.paint(ctx, p);
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        // Pointer motion, releases and leaves go to every child (a drag may have left its box);
+        // everything else goes from the topmost child down and stops at the first to use it.
+        if (e.kind == EventKind::PointerMove || e.kind == EventKind::PointerUp || e.kind == EventKind::PointerLeave) {
+            let mut used : bool = false;
+            for (i of 0..self.count) {
+                let c : dyn Widget = self.kids[i as i64];
+                if (c.event(ctx, e)) {
+                    used = true;
+                }
+            }
+            return used;
+        }
+        let mut i : i32 = self.count - 1;
+        while (i >= 0) {
+            let c : dyn Widget = self.kids[i as i64];
+            if (c.event(ctx, e)) {
+                return true;
+            }
+            i = i - 1;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut moving : bool = false;
+        for (i of 0..self.count) {
+            let c : dyn Widget = self.kids[i as i64];
+            if (c.tick(ctx, dt)) {
+                moving = true;
+            }
+        }
+        return moving;
+    }
+}
+
+/** Children stacked top to bottom. */
+pub class Column : Flex, Widget {
+    /** A column holding `children`. */
+    constructor(props : FlexProps, own children : dyn Widget[]) {
+        super(Axis::Vertical, props, children);
+    }
+
+    /** An empty column to `add` to. */
+    constructor(props : FlexProps) {
+        super(Axis::Vertical, props);
+    }
+}
+
+/** Children laid left to right. */
+pub class Row : Flex, Widget {
+    /** A row holding `children`. */
+    constructor(props : FlexProps, own children : dyn Widget[]) {
+        super(Axis::Horizontal, props, children);
+    }
+
+    /** An empty row to `add` to. */
+    constructor(props : FlexProps) {
+        super(Axis::Horizontal, props);
+    }
+}
