@@ -1,0 +1,276 @@
+// ttf — a TrueType font, read in place.
+//
+// `Ttf` borrows a block of font bytes (the file, read whole, or the words of an embedded one) and
+// answers questions about it: the header's metrics, the glyph a codepoint maps to, a glyph's
+// advance, the kerning between two glyphs. It copies nothing and owns nothing, so whoever holds
+// the bytes holds them for as long as the `Ttf` is used.
+//
+// What it reads is what a UI face needs and no more: `head`, `maxp`, `hhea`, `hmtx`, `cmap`
+// (formats 4 and 12), `loca`, `glyf` (see `outline`) and the `kern` feature of `GPOS` (see
+// `kern`). Fonts with CFF outlines, variable fonts and collections are refused at `open`, not
+// half-read.
+//
+// Every read is bounds-checked against the length it was given and answers 0 outside it, so a
+// truncated or hostile file draws nothing instead of reading past the block.
+//
+// The Axle twin of `tools/c_ref/zf_ttf.h` (checked against FreeType by `check_ttf.py`).
+
+use smalt::Mem;
+
+/** `0x00010000` — the sfnt version of a TrueType-outline font. */
+const TTF_TRUE_TYPE : i32 = 65536;
+
+/** `'true'` — the Apple spelling of the same. */
+const TTF_TRUE : i32 = 1953658213;
+
+/** A TrueType font over bytes it does not own. */
+pub class Ttf {
+    /** Address of the first byte. */
+    pub(crate) base : i64;
+
+    /** Bytes in the block. */
+    pub(crate) len : i32;
+
+    /** Design units to the em. */
+    pub(crate) unitsPerEm : i32 = 0;
+
+    /** 0: `loca` holds halved 16-bit offsets, 1: 32-bit offsets. */
+    pub(crate) locaFormat : i32 = 0;
+
+    /** Glyphs in the font. */
+    pub(crate) numGlyphs : i32 = 0;
+
+    /** Entries in `hmtx` that carry an advance of their own. */
+    pub(crate) numHMetrics : i32 = 0;
+
+    /** Distance from the baseline to the top of a line, in design units. */
+    pub(crate) ascent : i32 = 0;
+
+    /** Distance from the baseline to the bottom of a line (negative), in design units. */
+    pub(crate) descent : i32 = 0;
+
+    /** Extra space between lines, in design units. */
+    pub(crate) lineGap : i32 = 0;
+
+    pub(crate) loca : i32 = 0;
+    pub(crate) glyf : i32 = 0;
+    pub(crate) hmtx : i32 = 0;
+    pub(crate) cmap : i32 = 0;
+    pub(crate) gpos : i32 = 0;
+    cmapFormat : i32 = 0;
+    cmapOff : i32 = 0;
+
+    /** Whether the bytes parsed as a font this library can draw. */
+    pub(crate) valid : bool = false;
+
+    /** Read the tables of the font at `base` (`len` bytes). Check `valid` before use. */
+    constructor(base : i64, len : i32) {
+        self.base = base;
+        self.len = len;
+        self.valid = self.parse();
+    }
+
+    // ─── Big-endian reads ────────────────────────────────────────
+
+    /** The unsigned byte at `off`, or 0 outside the block. */
+    pub(crate) fn byteAt(self, off : i32) : i32 {
+        if (off < 0 || off >= self.len) {
+            return 0;
+        }
+        return Mem::byteAt(self.base, off as i64);
+    }
+
+    /** The unsigned 16-bit value at `off`. */
+    pub(crate) fn wordAt(self, off : i32) : i32 {
+        if (off < 0 || off + 2 > self.len) {
+            return 0;
+        }
+        return (Mem::byteAt(self.base, off as i64) << 8) | Mem::byteAt(self.base, (off + 1) as i64);
+    }
+
+    /** The signed 16-bit value at `off`. */
+    pub(crate) fn swordAt(self, off : i32) : i32 {
+        let v : i32 = self.wordAt(off);
+        if (v >= 32768) {
+            return v - 65536;
+        }
+        return v;
+    }
+
+    /** The unsigned 32-bit value at `off`, as an `i64`. */
+    pub(crate) fn dwordAt(self, off : i32) : i64 {
+        return ((self.wordAt(off) as i64) << 16) | (self.wordAt(off + 2) as i64);
+    }
+
+    /** The signed byte at `off`. */
+    pub(crate) fn sbyteAt(self, off : i32) : i32 {
+        let v : i32 = self.byteAt(off);
+        if (v >= 128) {
+            return v - 256;
+        }
+        return v;
+    }
+
+    // ─── Tables ──────────────────────────────────────────────────
+
+    /** The offset of the table tagged `a b c d`, or 0. */
+    pub(crate) fn table(self, a : i32, b : i32, c : i32, d : i32) : i32 {
+        let n : i32 = self.wordAt(4);
+        for (i of 0..n) {
+            let rec : i32 = 12 + i * 16;
+            if (rec + 16 > self.len) {
+                return 0;
+            }
+            if (self.byteAt(rec) == a && self.byteAt(rec + 1) == b && self.byteAt(rec + 2) == c && self.byteAt(rec + 3) == d) {
+                return self.dwordAt(rec + 8) as i32;
+            }
+        }
+        return 0;
+    }
+
+    pub(file) fn parse(mut self) : bool {
+        if (self.len < 12) {
+            return false;
+        }
+        let tag : i32 = self.dwordAt(0) as i32;
+        if (tag != TTF_TRUE_TYPE && tag != TTF_TRUE) {
+            return false;
+        }
+        // 'head' 'maxp' 'hhea' 'hmtx' 'loca' 'glyf' 'cmap' 'GPOS'
+        let head : i32 = self.table(104, 101, 97, 100);
+        let maxp : i32 = self.table(109, 97, 120, 112);
+        let hhea : i32 = self.table(104, 104, 101, 97);
+        self.hmtx = self.table(104, 109, 116, 120);
+        self.loca = self.table(108, 111, 99, 97);
+        self.glyf = self.table(103, 108, 121, 102);
+        self.cmap = self.table(99, 109, 97, 112);
+        self.gpos = self.table(71, 80, 79, 83);
+        if (head == 0 || maxp == 0 || hhea == 0 || self.hmtx == 0 || self.loca == 0 || self.glyf == 0 || self.cmap == 0) {
+            return false;
+        }
+        self.unitsPerEm = self.wordAt(head + 18);
+        self.locaFormat = self.swordAt(head + 50);
+        self.numGlyphs = self.wordAt(maxp + 4);
+        self.ascent = self.swordAt(hhea + 4);
+        self.descent = self.swordAt(hhea + 6);
+        self.lineGap = self.swordAt(hhea + 8);
+        self.numHMetrics = self.wordAt(hhea + 34);
+        if (self.unitsPerEm <= 0 || self.numGlyphs <= 0 || self.numHMetrics <= 0) {
+            return false;
+        }
+        return self.chooseCmap();
+    }
+
+    /** Pick the best character map: (3,10) format 12, (0,*) format 12, (3,1) format 4, (0,*) format 4. */
+    pub(file) fn chooseCmap(mut self) : bool {
+        let n : i32 = self.wordAt(self.cmap + 2);
+        let mut best : i32 = -1;
+        let mut bestScore : i32 = -1;
+        for (i of 0..n) {
+            let rec : i32 = self.cmap + 4 + i * 8;
+            let plat : i32 = self.wordAt(rec);
+            let enc : i32 = self.wordAt(rec + 2);
+            let off : i32 = self.cmap + (self.dwordAt(rec + 4) as i32);
+            let fmt : i32 = self.wordAt(off);
+            let mut score : i32 = -1;
+            if (plat == 3 && enc == 10 && fmt == 12) {
+                score = 4;
+            } else if (plat == 0 && fmt == 12) {
+                score = 3;
+            } else if (plat == 3 && enc == 1 && fmt == 4) {
+                score = 2;
+            } else if (plat == 0 && fmt == 4) {
+                score = 1;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = off;
+            }
+        }
+        if (best < 0) {
+            return false;
+        }
+        self.cmapOff = best;
+        self.cmapFormat = self.wordAt(best);
+        return true;
+    }
+
+    // ─── Mapping and metrics ─────────────────────────────────────
+
+    /** The glyph that draws codepoint `cp`, or 0 (the font's "missing" glyph). */
+    pub(crate) fn glyphOf(self, cp : i32) : i32 {
+        let o : i32 = self.cmapOff;
+        if (self.cmapFormat == 4) {
+            if (cp > 65535) {
+                return 0;
+            }
+            let segX2 : i32 = self.wordAt(o + 6);
+            let seg : i32 = segX2 / 2;
+            let endC : i32 = o + 14;
+            let startC : i32 = endC + segX2 + 2;
+            let delta : i32 = startC + segX2;
+            let range : i32 = delta + segX2;
+            for (i of 0..seg) {
+                if (cp <= self.wordAt(endC + i * 2)) {
+                    let s : i32 = self.wordAt(startC + i * 2);
+                    if (cp < s) {
+                        return 0;
+                    }
+                    let ro : i32 = self.wordAt(range + i * 2);
+                    if (ro == 0) {
+                        return (cp + self.wordAt(delta + i * 2)) & 65535;
+                    }
+                    let g : i32 = self.wordAt(range + i * 2 + ro + (cp - s) * 2);
+                    if (g == 0) {
+                        return 0;
+                    }
+                    return (g + self.wordAt(delta + i * 2)) & 65535;
+                }
+            }
+            return 0;
+        }
+        let groups : i32 = self.dwordAt(o + 12) as i32;
+        for (i of 0..groups) {
+            let g : i32 = o + 16 + i * 12;
+            let s : i64 = self.dwordAt(g);
+            let e : i64 = self.dwordAt(g + 4);
+            let c : i64 = cp as i64;
+            if (c < s) {
+                return 0;
+            }
+            if (c <= e) {
+                return (self.dwordAt(g + 8) + (c - s)) as i32;
+            }
+        }
+        return 0;
+    }
+
+    /** The advance of glyph `g`, in design units. */
+    pub(crate) fn advanceOf(self, g : i32) : i32 {
+        let mut i : i32 = g;
+        if (i >= self.numHMetrics) {
+            i = self.numHMetrics - 1;
+        }
+        return self.wordAt(self.hmtx + i * 4);
+    }
+
+    /**
+     * Where glyph `g`'s outline starts in the block and how many bytes it takes, or a length of 0
+     * for a glyph with no outline (a space).
+     */
+    pub(crate) fn glyphRange(self, g : i32) : (off: i32, len: i32) {
+        if (g < 0 || g >= self.numGlyphs) {
+            return (0, 0);
+        }
+        let mut a : i32 = 0;
+        let mut b : i32 = 0;
+        if (self.locaFormat == 0) {
+            a = self.wordAt(self.loca + g * 2) * 2;
+            b = self.wordAt(self.loca + g * 2 + 2) * 2;
+        } else {
+            a = self.dwordAt(self.loca + g * 4) as i32;
+            b = self.dwordAt(self.loca + g * 4 + 4) as i32;
+        }
+        return (self.glyf + a, b - a);
+    }
+}

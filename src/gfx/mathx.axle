@@ -1,0 +1,76 @@
+// mathx — the scalar helpers the 2-D code needs and `f64` does not carry as methods.
+//
+// `f64` has `sqrt`, `abs`, `floorToInt` and friends, and no `min`, `max`, `clamp` or `lerp`.
+// They are written once here so a pixel loop reads the same everywhere, and so the rounding
+// rule — half up, like the C twin's `floor(x + 0.5)` — is one definition rather than a habit.
+
+/** Scalar helpers over `f64` and `i32`. */
+pub class Mathx {
+    /** The smaller of two reals. */
+    pub static fn fmin(a : f64, b : f64) : f64 {
+        if (a < b) {
+            return a;
+        }
+        return b;
+    }
+
+    /** The larger of two reals. */
+    pub static fn fmax(a : f64, b : f64) : f64 {
+        if (a > b) {
+            return a;
+        }
+        return b;
+    }
+
+    /** `v` held to [`lo`, `hi`]. */
+    pub static fn clampF(v : f64, lo : f64, hi : f64) : f64 {
+        if (v < lo) {
+            return lo;
+        }
+        if (v > hi) {
+            return hi;
+        }
+        return v;
+    }
+
+    /** `v` held to [0, 1]. */
+    pub static fn clamp01(v : f64) : f64 {
+        return Mathx::clampF(v, 0.0, 1.0);
+    }
+
+    /** `v` held to [`lo`, `hi`]. */
+    pub static fn clampI(v : i32, lo : i32, hi : i32) : i32 {
+        if (v < lo) {
+            return lo;
+        }
+        if (v > hi) {
+            return hi;
+        }
+        return v;
+    }
+
+    /** `a` at `t` of the way to `b`. */
+    pub static fn lerp(a : f64, b : f64, t : f64) : f64 {
+        return a + (b - a) * t;
+    }
+
+    /** The largest integer not above `v`. */
+    pub static fn floorI(v : f64) : i32 {
+        return v.floorToInt() as i32;
+    }
+
+    /** The smallest integer not below `v`. */
+    pub static fn ceilI(v : f64) : i32 {
+        return v.ceilToInt() as i32;
+    }
+
+    /** `v` rounded half up. */
+    pub static fn roundI(v : f64) : i32 {
+        return (v + 0.5).floorToInt() as i32;
+    }
+
+    /** The smoothstep curve of `t` in [0, 1]. */
+    pub static fn smooth(t : f64) : f64 {
+        return t * t * (3.0 - 2.0 * t);
+    }
+}

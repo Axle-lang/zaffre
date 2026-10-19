@@ -1,0 +1,184 @@
+// coverage — an outline in, 8-bit coverage out.
+//
+// Signed-area accumulation (after Raph Levien's font-rs): each edge of a closed outline adds, to
+// the cells it crosses, the signed area it sweeps to their right; a running sum along each row
+// then *is* the coverage. It is exact for a single outline and costs one pass over the edges and
+// one over the cells, which is why a glyph or an icon is rasterised once and cached.
+//
+// Where two contours of one shape overlap inside a single pixel the two coverages add and are
+// clamped, so that pixel reads slightly darker than a true union would — FreeType has a separate
+// path for it, this does not. It shows at the junction of an accent and its base, or the crossing
+// of an 8, and nowhere else.
+//
+// The Axle twin of `cover_*` in `tools/c_ref/zf_ttf.h`.
+
+use smalt::Mem;
+use crate::gfx::mathx::Mathx;
+
+/** A coverage accumulator for a bitmap `w` by `h` cells. */
+pub class Coverage {
+    /** Cells per row. */
+    pub w : i32;
+
+    /** Rows. */
+    pub h : i32;
+
+    acc : f64[];
+
+    /** An empty accumulator. */
+    constructor(w : i32, h : i32) {
+        self.w = w;
+        self.h = h;
+        let n : i64 = ((w as i64) * (h as i64)) + 4;
+        self.acc = malloc<f64>(n);
+        for (i of 0..n) {
+            self.acc[i] = 0.0;
+        }
+    }
+
+    /** Add `v` to cell `idx`, ignoring a cell outside the bitmap. */
+    pub(file) fn add(mut self, idx : i32, v : f64) : void {
+        if (idx >= 0 && idx < self.w * self.h) {
+            let at : i64 = idx as i64;
+            self.acc[at] = self.acc[at] + v;
+        }
+    }
+
+    /** One straight edge from (`ax0`, `ay0`) to (`ax1`, `ay1`) of a closed outline. */
+    pub fn line(mut self, ax0 : f64, ay0 : f64, ax1 : f64, ay1 : f64) : void {
+        if (ay0 == ay1) {
+            return;
+        }
+        let mut x0 : f64 = ax0;
+        let mut y0 : f64 = ay0;
+        let mut x1 : f64 = ax1;
+        let mut y1 : f64 = ay1;
+        let mut dir : f64 = 1.0;
+        if (y0 > y1) {
+            let tx : f64 = x0;
+            let ty : f64 = y0;
+            x0 = x1;
+            y0 = y1;
+            x1 = tx;
+            y1 = ty;
+            dir = -1.0;
+        }
+        let dxdy : f64 = (x1 - x0) / (y1 - y0);
+        let mut x : f64 = x0;
+        if (y0 < 0.0) {
+            x = x - y0 * dxdy;
+            y0 = 0.0;
+        }
+        let ys : i32 = Mathx::floorI(y0);
+        let ye : i32 = Mathx::ceilI(y1).min(self.h);
+        for (y of ys..ye) {
+            let ls : i32 = y * self.w;
+            let top : f64 = Mathx::fmax(y as f64, y0);
+            let bot : f64 = Mathx::fmin((y + 1) as f64, y1);
+            let dy : f64 = bot - top;
+            let xn : f64 = x + dxdy * dy;
+            let dd : f64 = dy * dir;
+            let xa : f64 = Mathx::fmin(x, xn);
+            let xb : f64 = Mathx::fmax(x, xn);
+            let xaf : f64 = Mathx::floorI(xa) as f64;
+            let xai : i32 = Mathx::floorI(xa);
+            let xbc : f64 = Mathx::ceilI(xb) as f64;
+            let xbi : i32 = Mathx::ceilI(xb);
+            if (xbi <= xai + 1) {
+                let xmf : f64 = 0.5 * (x + xn) - xaf;
+                self.add(ls + xai, dd - dd * xmf);
+                self.add(ls + xai + 1, dd * xmf);
+            } else {
+                let s : f64 = 1.0 / (xb - xa);
+                let x0f : f64 = xa - xaf;
+                let a0 : f64 = 0.5 * s * (1.0 - x0f) * (1.0 - x0f);
+                let x1f : f64 = xb - xbc + 1.0;
+                let am : f64 = 0.5 * s * x1f * x1f;
+                self.add(ls + xai, dd * a0);
+                if (xbi == xai + 2) {
+                    self.add(ls + xai + 1, dd * (1.0 - a0 - am));
+                } else {
+                    let a1 : f64 = s * (1.5 - x0f);
+                    self.add(ls + xai + 1, dd * (a1 - a0));
+                    for (xi of (xai + 2)..(xbi - 1)) {
+                        self.add(ls + xi, dd * s);
+                    }
+                    let a2 : f64 = a1 + ((xbi - xai - 3) as f64) * s;
+                    self.add(ls + xbi - 1, dd * (1.0 - a2 - am));
+                }
+                self.add(ls + xbi, dd * am);
+            }
+            x = xn;
+        }
+    }
+
+    /** A quadratic Bézier edge, flattened to lines no more than a fiftieth of a pixel off the curve. */
+    pub fn quad(mut self, x0 : f64, y0 : f64, x1 : f64, y1 : f64, x2 : f64, y2 : f64) : void {
+        let ddx : f64 = x0 - 2.0 * x1 + x2;
+        let ddy : f64 = y0 - 2.0 * y1 + y2;
+        let dd : f64 = (ddx * ddx + ddy * ddy).sqrt();
+        let n : i32 = Mathx::ceilI((dd * 12.5).sqrt()).max(1).min(32);
+        let mut px : f64 = x0;
+        let mut py : f64 = y0;
+        for (i of 1..=n) {
+            let t : f64 = (i as f64) / (n as f64);
+            let u : f64 = 1.0 - t;
+            let qx : f64 = u * u * x0 + 2.0 * u * t * x1 + t * t * x2;
+            let qy : f64 = u * u * y0 + 2.0 * u * t * y1 + t * t * y2;
+            self.line(px, py, qx, qy);
+            px = qx;
+            py = qy;
+        }
+    }
+
+    /** A cubic Bézier edge, flattened the same way. */
+    pub fn cubic(
+        mut self,
+        x0 : f64,
+        y0 : f64,
+        x1 : f64,
+        y1 : f64,
+        x2 : f64,
+        y2 : f64,
+        x3 : f64,
+        y3 : f64
+    ) : void {
+        let d1x : f64 = x0 - 2.0 * x1 + x2;
+        let d1y : f64 = y0 - 2.0 * y1 + y2;
+        let d2x : f64 = x1 - 2.0 * x2 + x3;
+        let d2y : f64 = y1 - 2.0 * y2 + y3;
+        let dd : f64 = Mathx::fmax((d1x * d1x + d1y * d1y).sqrt(), (d2x * d2x + d2y * d2y).sqrt());
+        let n : i32 = Mathx::ceilI((dd * 18.75).sqrt()).max(1).min(48);
+        let mut px : f64 = x0;
+        let mut py : f64 = y0;
+        for (i of 1..=n) {
+            let t : f64 = (i as f64) / (n as f64);
+            let u : f64 = 1.0 - t;
+            let a : f64 = u * u * u;
+            let b : f64 = 3.0 * u * u * t;
+            let c : f64 = 3.0 * u * t * t;
+            let d : f64 = t * t * t;
+            let qx : f64 = a * x0 + b * x1 + c * x2 + d * x3;
+            let qy : f64 = a * y0 + b * y1 + c * y2 + d * y3;
+            self.line(px, py, qx, qy);
+            px = qx;
+            py = qy;
+        }
+    }
+
+    /**
+     * Prefix-sum each row into coverage and store it, one byte per cell, at `out` (row-major,
+     * `w` bytes a row).
+     */
+    pub fn finish(self, out : i64) : void {
+        for (y of 0..self.h) {
+            let mut run : f64 = 0.0;
+            let row : i64 = (y as i64) * (self.w as i64);
+            for (x of 0..self.w) {
+                run = run + self.acc[row + (x as i64)];
+                let v : f64 = Mathx::fmin(run.abs(), 1.0);
+                Mem::putByte(out, row + (x as i64), Mathx::floorI(v * 255.0 + 0.5));
+            }
+        }
+    }
+}

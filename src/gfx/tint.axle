@@ -1,0 +1,122 @@
+// tint — a colour with an alpha, and the 8-bit pixel arithmetic every painter shares.
+//
+// smalt's pixels are `0x00RRGGBB` and the blit ignores the top byte, so a colour that carries
+// transparency cannot live in one `i32` without spending the sign bit: `0xFF7A8CFF` is not a
+// literal an `i32` accepts. A `Tint` keeps the opaque colour and the alpha apart, which also lets
+// a theme say "this accent, at 40 %" without arithmetic on packed words.
+
+/** A colour and its opacity, 0 (clear) to 255 (opaque). */
+pub struct Tint {
+    /** The colour as `0xRRGGBB`. */
+    pub rgb : i32;
+
+    /** The opacity, 0 to 255. */
+    pub a : i32 = 255;
+
+    /** An opaque colour. */
+    pub static fn hex(rgb : i32) : Tint {
+        return Tint { rgb: rgb, a: 255 };
+    }
+
+    /** A colour at the given opacity. */
+    pub static fn hexA(rgb : i32, a : i32) : Tint {
+        return Tint { rgb: rgb, a: Px::clamp8(a) };
+    }
+
+    /** The same colour at opacity `a`. */
+    pub fn withAlpha(self, a : i32) : Tint {
+        return Tint { rgb: self.rgb, a: Px::clamp8(a) };
+    }
+
+    /** The same colour, its opacity scaled by `a` / 255. */
+    pub fn faded(self, a : i32) : Tint {
+        return Tint { rgb: self.rgb, a: Px::div255(self.a * Px::clamp8(a)) };
+    }
+
+    /** The colour `t` (0..255) of the way from this one to `o`, opacity included. */
+    pub fn mixed(self, o : Tint, t : i32) : Tint {
+        return Tint { rgb: Px::lerpRgb(self.rgb, o.rgb, t), a: Px::lerp8(self.a, o.a, t) };
+    }
+
+    /** Whether nothing of it would show. */
+    pub fn isClear(self) : bool {
+        return self.a <= 0;
+    }
+}
+
+/** 8-bit channel and pixel arithmetic. */
+pub class Px {
+    /** `v` held to 0..255. */
+    pub static fn clamp8(v : i32) : i32 {
+        if (v < 0) {
+            return 0;
+        }
+        if (v > 255) {
+            return 255;
+        }
+        return v;
+    }
+
+    /** `t` / 255, rounded to nearest, exact for 0 <= t <= 255 * 255. */
+    pub static fn div255(t : i32) : i32 {
+        return (t + 128 + ((t + 128) >> 8)) >> 8;
+    }
+
+    /** The red channel of `0xRRGGBB`. */
+    pub static fn red(p : i32) : i32 {
+        return (p >> 16) & 255;
+    }
+
+    /** The green channel. */
+    pub static fn green(p : i32) : i32 {
+        return (p >> 8) & 255;
+    }
+
+    /** The blue channel. */
+    pub static fn blue(p : i32) : i32 {
+        return p & 255;
+    }
+
+    /** Three channels packed to `0xRRGGBB`. */
+    pub static fn pack(r : i32, g : i32, b : i32) : i32 {
+        return (r << 16) | (g << 8) | b;
+    }
+
+    /** `dst` with `src` over it at opacity `a` (0..255). */
+    pub static fn over(dst : i32, src : i32, a : i32) : i32 {
+        if (a <= 0) {
+            return dst;
+        }
+        if (a >= 255) {
+            return src;
+        }
+        let ia : i32 = 255 - a;
+        let r : i32 = Px::div255(Px::red(dst) * ia + Px::red(src) * a);
+        let g : i32 = Px::div255(Px::green(dst) * ia + Px::green(src) * a);
+        let b : i32 = Px::div255(Px::blue(dst) * ia + Px::blue(src) * a);
+        return Px::pack(r, g, b);
+    }
+
+    /** `a` at `t` / 255 of the way to `b`, channel by channel. */
+    pub static fn lerpRgb(a : i32, b : i32, t : i32) : i32 {
+        let it : i32 = 255 - t;
+        let r : i32 = Px::div255(Px::red(a) * it + Px::red(b) * t);
+        let g : i32 = Px::div255(Px::green(a) * it + Px::green(b) * t);
+        let bl : i32 = Px::div255(Px::blue(a) * it + Px::blue(b) * t);
+        return Px::pack(r, g, bl);
+    }
+
+    /** One 0..255 value at `t` / 255 of the way to another. */
+    pub static fn lerp8(a : i32, b : i32, t : i32) : i32 {
+        return Px::div255(a * (255 - t) + b * t);
+    }
+
+    /** The 4 x 4 Bayer threshold at (x, y), 0..15 — the dither a gradient adds so it does not band. */
+    pub static fn bayer(x : i32, y : i32) : i32 {
+        let xb : i32 = x & 1;
+        let yb : i32 = y & 1;
+        let xh : i32 = (x >> 1) & 1;
+        let yh : i32 = (y >> 1) & 1;
+        return 4 * ((xb * 2) ^ (yb * 3)) + ((xh * 2) ^ (yh * 3));
+    }
+}

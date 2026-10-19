@@ -1,0 +1,365 @@
+// outline — a glyph's contours, and the bitmap they make.
+//
+// `load` reads one glyph of a `Ttf` into point arrays — following composite glyphs (an accented
+// letter is its base plus a mark, each placed by an offset and a 2 x 2 matrix) — and `render`
+// turns those contours into 8-bit coverage through `gfx::coverage`.
+//
+// TrueType contours are quadratic curves whose control points are the off-curve points, with an
+// on-curve point implied midway between two successive off-curve ones; a contour may even start
+// off-curve. `render` walks them that way. Hinting instructions are skipped: at the sizes a UI
+// draws, unhinted anti-aliased outlines against subpixel positions look better than grid-fitted
+// ones and cost nothing to ship.
+//
+// Point matching in composites (an anchor point in each part rather than an offset) is not
+// supported: such a part is placed at the origin. No glyph in the bundled fonts uses it.
+//
+// The Axle twin of `ttf_outline`, `ttf_contour` and `ttf_raster` in `tools/c_ref/zf_ttf.h`.
+
+use smalt::Mem;
+use crate::gfx::mathx::Mathx;
+use crate::gfx::coverage::Coverage;
+use crate::text::ttf::Ttf;
+
+/** Points one glyph may have. */
+const OUTLINE_POINTS : i32 = 4096;
+
+/** Contours one glyph may have. */
+const OUTLINE_CONTOURS : i32 = 256;
+
+/** Parts one composite glyph may have. */
+const OUTLINE_PARTS : i32 = 64;
+
+/** Where a rasterised glyph's bitmap sits relative to its pen position, and how big it is. */
+pub struct GlyphBox {
+    /** Pixels from the pen to the bitmap's left edge (negative: it starts left of the pen). */
+    pub left : i32;
+
+    /** Pixels from the baseline up to the bitmap's top edge. */
+    pub top : i32;
+
+    /** Bitmap width in cells (also its row stride in bytes). */
+    pub w : i32;
+
+    /** Bitmap height in rows. */
+    pub h : i32;
+}
+
+/** The contours of one glyph, in design units. */
+pub class Outline {
+    /** Points loaded. */
+    pub n : i32 = 0;
+
+    /** Contours loaded. */
+    pub nc : i32 = 0;
+
+    px : f64[] = malloc<f64>(OUTLINE_POINTS as i64);
+    py : f64[] = malloc<f64>(OUTLINE_POINTS as i64);
+    on : i32[] = malloc<i32>(OUTLINE_POINTS as i64);
+    ends : i32[] = malloc<i32>(OUTLINE_CONTOURS as i64);
+    fl : i32[] = malloc<i32>(OUTLINE_POINTS as i64);
+    xs : i32[] = malloc<i32>(OUTLINE_POINTS as i64);
+    ys : i32[] = malloc<i32>(OUTLINE_POINTS as i64);
+    cx : f64[] = malloc<f64>(OUTLINE_POINTS as i64);
+    cy : f64[] = malloc<f64>(OUTLINE_POINTS as i64);
+    cn : i32[] = malloc<i32>(OUTLINE_POINTS as i64);
+
+    /** An empty outline with room for the largest glyph the loader accepts. */
+    constructor() {
+    }
+
+    /** Forget the loaded contours. */
+    pub fn clear(mut self) : void {
+        self.n = 0;
+        self.nc = 0;
+    }
+
+    /** Whether the glyph has no contours at all (a space). */
+    pub fn isEmpty(self) : bool {
+        return self.n == 0;
+    }
+
+    /**
+     * Append glyph `g` of `t`, mapped through the matrix (`a` `b` `c` `d`) and the offset
+     * (`tx`, `ty`). Answers false when the glyph is corrupt or too large.
+     */
+    pub fn load(
+        mut self,
+        t : Ttf,
+        g : i32,
+        a : f64,
+        b : f64,
+        c : f64,
+        d : f64,
+        tx : f64,
+        ty : f64,
+        depth : i32
+    ) : bool {
+        let (off, len) = t.glyphRange(g);
+        if (len <= 0) {
+            return true;
+        }
+        if (depth > 6) {
+            return false;
+        }
+        let nc : i32 = t.swordAt(off);
+        let mut p : i32 = off + 10;
+        if (nc >= 0) {
+            return self.loadSimple(t, nc, p, a, b, c, d, tx, ty);
+        }
+        let mut parts : i32 = 0;
+        while (parts < OUTLINE_PARTS) {
+            parts = parts + 1;
+            let fl : i32 = t.wordAt(p);
+            let gi : i32 = t.wordAt(p + 2);
+            p = p + 4;
+            let mut dx : f64 = 0.0;
+            let mut dy : f64 = 0.0;
+            if ((fl & 1) != 0) {
+                dx = t.swordAt(p) as f64;
+                dy = t.swordAt(p + 2) as f64;
+                p = p + 4;
+            } else {
+                dx = t.sbyteAt(p) as f64;
+                dy = t.sbyteAt(p + 1) as f64;
+                p = p + 2;
+            }
+            if ((fl & 2) == 0) {
+                dx = 0.0;
+                dy = 0.0;
+            }
+            let mut ma : f64 = 1.0;
+            let mut mb : f64 = 0.0;
+            let mut mc : f64 = 0.0;
+            let mut md : f64 = 1.0;
+            if ((fl & 8) != 0) {
+                ma = (t.swordAt(p) as f64) / 16384.0;
+                md = ma;
+                p = p + 2;
+            } else if ((fl & 64) != 0) {
+                ma = (t.swordAt(p) as f64) / 16384.0;
+                md = (t.swordAt(p + 2) as f64) / 16384.0;
+                p = p + 4;
+            } else if ((fl & 128) != 0) {
+                ma = (t.swordAt(p) as f64) / 16384.0;
+                mb = (t.swordAt(p + 2) as f64) / 16384.0;
+                mc = (t.swordAt(p + 4) as f64) / 16384.0;
+                md = (t.swordAt(p + 6) as f64) / 16384.0;
+                p = p + 8;
+            }
+            let na : f64 = a * ma + c * mb;
+            let nb : f64 = b * ma + d * mb;
+            let nc2 : f64 = a * mc + c * md;
+            let nd : f64 = b * mc + d * md;
+            let ntx : f64 = a * dx + c * dy + tx;
+            let nty : f64 = b * dx + d * dy + ty;
+            if (!self.load(t, gi, na, nb, nc2, nd, ntx, nty, depth + 1)) {
+                return false;
+            }
+            if ((fl & 32) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A simple glyph: `nc` contours whose header ends at byte offset `at`. */
+    pub(file) fn loadSimple(
+        mut self,
+        t : Ttf,
+        nc : i32,
+        at : i32,
+        a : f64,
+        b : f64,
+        c : f64,
+        d : f64,
+        tx : f64,
+        ty : f64
+    ) : bool {
+        if (self.nc + nc > OUTLINE_CONTOURS) {
+            return false;
+        }
+        let mut p : i32 = at;
+        let base : i32 = self.n;
+        let mut last : i32 = -1;
+        for (i of 0..nc) {
+            last = t.wordAt(p + i * 2);
+            self.ends[(self.nc + i) as i64] = base + last;
+        }
+        p = p + nc * 2;
+        let np : i32 = last + 1;
+        if (base + np > OUTLINE_POINTS) {
+            return false;
+        }
+        p = p + 2 + t.wordAt(p);
+        let mut i : i32 = 0;
+        while (i < np) {
+            let f : i32 = t.byteAt(p);
+            p = p + 1;
+            self.fl[i as i64] = f;
+            i = i + 1;
+            if ((f & 8) != 0) {
+                let mut r : i32 = t.byteAt(p);
+                p = p + 1;
+                while (r > 0 && i < np) {
+                    self.fl[i as i64] = f;
+                    i = i + 1;
+                    r = r - 1;
+                }
+            }
+        }
+        let mut v : i32 = 0;
+        for (k of 0..np) {
+            let f : i32 = self.fl[k as i64];
+            if ((f & 2) != 0) {
+                let dx : i32 = t.byteAt(p);
+                p = p + 1;
+                if ((f & 16) != 0) {
+                    v = v + dx;
+                } else {
+                    v = v - dx;
+                }
+            } else if ((f & 16) == 0) {
+                v = v + t.swordAt(p);
+                p = p + 2;
+            }
+            self.xs[k as i64] = v;
+        }
+        v = 0;
+        for (k of 0..np) {
+            let f : i32 = self.fl[k as i64];
+            if ((f & 4) != 0) {
+                let dy : i32 = t.byteAt(p);
+                p = p + 1;
+                if ((f & 32) != 0) {
+                    v = v + dy;
+                } else {
+                    v = v - dy;
+                }
+            } else if ((f & 32) == 0) {
+                v = v + t.swordAt(p);
+                p = p + 2;
+            }
+            self.ys[k as i64] = v;
+        }
+        for (k of 0..np) {
+            let x : f64 = self.xs[k as i64] as f64;
+            let y : f64 = self.ys[k as i64] as f64;
+            let at2 : i64 = (base + k) as i64;
+            self.px[at2] = a * x + c * y + tx;
+            self.py[at2] = b * x + d * y + ty;
+            self.on[at2] = self.fl[k as i64] & 1;
+        }
+        self.n = self.n + np;
+        self.nc = self.nc + nc;
+        return true;
+    }
+
+    // ─── To a bitmap ─────────────────────────────────────────────
+
+    /**
+     * The pixel box the outline covers when scaled by `s` (pixels per design unit), shifted right
+     * by `sub` pixels, with a pixel of margin all round. `stride` of the bitmap is `w`, which is
+     * two cells wider than the ink so the accumulator's last writes have somewhere to land.
+     */
+    pub fn extent(self, s : f64, sub : f64) : GlyphBox {
+        let mut minx : f64 = 1.0e30;
+        let mut maxx : f64 = -1.0e30;
+        let mut miny : f64 = 1.0e30;
+        let mut maxy : f64 = -1.0e30;
+        for (i of 0..self.n) {
+            let x : f64 = self.px[i as i64] * s + sub;
+            let y : f64 = 0.0 - self.py[i as i64] * s;
+            minx = Mathx::fmin(minx, x);
+            maxx = Mathx::fmax(maxx, x);
+            miny = Mathx::fmin(miny, y);
+            maxy = Mathx::fmax(maxy, y);
+        }
+        let left : i32 = Mathx::floorI(minx) - 1;
+        let top : i32 = Mathx::floorI(miny) - 1;
+        let right : i32 = Mathx::ceilI(maxx) + 1;
+        let bottom : i32 = Mathx::ceilI(maxy) + 1;
+        return GlyphBox { left: left, top: 0 - top, w: right - left + 2, h: bottom - top };
+    }
+
+    /** Rasterise into the `w` x `h` bytes at `dst`, as laid out by `extent` for the same `s` and `sub`. */
+    pub fn render(mut self, s : f64, sub : f64, gb : GlyphBox, dst : i64) : void {
+        let cov : Coverage = new Coverage(gb.w, gb.h);
+        let left : i32 = gb.left;
+        let top : i32 = 0 - gb.top;
+        let mut start : i32 = 0;
+        for (ci of 0..self.nc) {
+            let stop : i32 = self.ends[ci as i64];
+            let n : i32 = stop - start + 1;
+            if (n >= 2) {
+                self.contour(cov, start, n, s, sub, left, top);
+            }
+            start = stop + 1;
+        }
+        cov.finish(dst);
+    }
+
+    /**
+     * One contour into the accumulator. Starts at an on-curve point when the contour has one,
+     * otherwise at the midpoint of its last and first points, and closes back to where it began.
+     */
+    pub(file) fn contour(mut self, cov : Coverage, start : i32, n : i32, s : f64, sub : f64, left : i32, top : i32) : void {
+        for (i of 0..n) {
+            let at : i64 = (start + i) as i64;
+            self.cx[i as i64] = self.px[at] * s + sub - (left as f64);
+            self.cy[i as i64] = 0.0 - self.py[at] * s - (top as f64);
+            self.cn[i as i64] = self.on[at];
+        }
+        let mut sx : f64 = 0.0;
+        let mut sy : f64 = 0.0;
+        let mut lo : i32 = 0;
+        let mut hi : i32 = n;
+        let last : i64 = (n - 1) as i64;
+        if (self.cn[0] != 0) {
+            sx = self.cx[0];
+            sy = self.cy[0];
+            lo = 1;
+        } else if (self.cn[last] != 0) {
+            sx = self.cx[last];
+            sy = self.cy[last];
+            hi = n - 1;
+        } else {
+            sx = (self.cx[last] + self.cx[0]) * 0.5;
+            sy = (self.cy[last] + self.cy[0]) * 0.5;
+        }
+        let mut curx : f64 = sx;
+        let mut cury : f64 = sy;
+        let mut offx : f64 = 0.0;
+        let mut offy : f64 = 0.0;
+        let mut pending : bool = false;
+        for (i of lo..hi) {
+            let x : f64 = self.cx[i as i64];
+            let y : f64 = self.cy[i as i64];
+            if (self.cn[i as i64] != 0) {
+                if (pending) {
+                    cov.quad(curx, cury, offx, offy, x, y);
+                } else {
+                    cov.line(curx, cury, x, y);
+                }
+                curx = x;
+                cury = y;
+                pending = false;
+            } else {
+                if (pending) {
+                    let mx : f64 = (offx + x) * 0.5;
+                    let my : f64 = (offy + y) * 0.5;
+                    cov.quad(curx, cury, offx, offy, mx, my);
+                    curx = mx;
+                    cury = my;
+                }
+                offx = x;
+                offy = y;
+                pending = true;
+            }
+        }
+        if (pending) {
+            cov.quad(curx, cury, offx, offy, sx, sy);
+        } else {
+            cov.line(curx, cury, sx, sy);
+        }
+    }
+}

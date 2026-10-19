@@ -1,0 +1,310 @@
+// typeset — measuring, wrapping, eliding and drawing runs of text.
+//
+// Everything here walks a `string`'s UTF-8 bytes, decodes a codepoint at a time and asks the `Font`
+// for its glyph, advance and kerning against the glyph before. Widths are real numbers: the pen
+// is never rounded, so a run measures the same however it is cut up (`width` of a whole is the
+// sum of the widths of its parts, kerning across the seam aside), and the box a label asks for is
+// the box its text fills.
+//
+// Positions inside a string are **byte offsets**, which is what `string.byteAt` indexes and what
+// the caret of a text field stores; `Utf8::next` steps from one codepoint to the next.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::canvas::Canvas;
+use crate::text::font::Font;
+
+/** U+FFFD, the replacement character: what a byte that decodes to nothing becomes. */
+const UTF8_REPLACEMENT : i32 = 65533;
+
+/** U+2026, the horizontal ellipsis. */
+const TEXT_ELLIPSIS : i32 = 8230;
+
+/** Lines a wrap may produce. */
+const LINES_MAX : i32 = 256;
+
+/** UTF-8 decoding. */
+pub class Utf8 {
+    /** The codepoint starting at byte `i` of `s`, and how many bytes it takes (1 for a bad byte). */
+    pub static fn next(s : string, i : i64) : (cp: i32, n: i32) {
+        let len : i64 = s.byteLength;
+        if (i >= len) {
+            return (0, 0);
+        }
+        let b0 : i32 = s.byteAt(i);
+        if (b0 < 128) {
+            return (b0, 1);
+        }
+        let mut need : i32 = 0;
+        let mut cp : i32 = 0;
+        if ((b0 & 224) == 192) {
+            need = 1;
+            cp = b0 & 31;
+        } else if ((b0 & 240) == 224) {
+            need = 2;
+            cp = b0 & 15;
+        } else if ((b0 & 248) == 240) {
+            need = 3;
+            cp = b0 & 7;
+        } else {
+            return (UTF8_REPLACEMENT, 1);
+        }
+        if (i + (need as i64) >= len + 1) {
+            return (UTF8_REPLACEMENT, 1);
+        }
+        for (k of 1..=need) {
+            let b : i32 = s.byteAt(i + (k as i64));
+            if ((b & 192) != 128) {
+                return (UTF8_REPLACEMENT, 1);
+            }
+            cp = (cp << 6) | (b & 63);
+        }
+        return (cp, need + 1);
+    }
+
+    /** The byte offset of the codepoint before the one at `i` (0 at the start). */
+    pub static fn previous(s : string, i : i64) : i64 {
+        if (i <= 0) {
+            return 0;
+        }
+        let mut j : i64 = i - 1;
+        while (j > 0 && (s.byteAt(j) & 192) == 128) {
+            j = j - 1;
+        }
+        return j;
+    }
+}
+
+/** The lines a wrap produced: byte ranges of the string and how wide each is. */
+pub class Lines {
+    /** Lines held. */
+    pub count : i32 = 0;
+
+    starts : i32[] = malloc<i32>(LINES_MAX as i64);
+    stops : i32[] = malloc<i32>(LINES_MAX as i64);
+    widths : f64[] = malloc<f64>(LINES_MAX as i64);
+
+    /** An empty set of lines. */
+    constructor() {
+    }
+
+    /** Forget every line. */
+    pub fn reset(mut self) : void {
+        self.count = 0;
+    }
+
+    /** Add a line; lines past the limit are dropped. */
+    pub fn add(mut self, start : i32, stop : i32, width : f64) : void {
+        if (self.count >= LINES_MAX) {
+            return;
+        }
+        let at : i64 = self.count as i64;
+        self.starts[at] = start;
+        self.stops[at] = stop;
+        self.widths[at] = width;
+        self.count = self.count + 1;
+    }
+
+    /** First byte of line `i`. */
+    pub fn startOf(self, i : i32) : i32 {
+        return self.starts[i as i64];
+    }
+
+    /** One past the last byte of line `i`, trailing spaces excluded. */
+    pub fn stopOf(self, i : i32) : i32 {
+        return self.stops[i as i64];
+    }
+
+    /** Width of line `i` in pixels. */
+    pub fn widthOf(self, i : i32) : f64 {
+        return self.widths[i as i64];
+    }
+
+    /** The widest line. */
+    pub fn widest(self) : f64 {
+        let mut w : f64 = 0.0;
+        for (i of 0..self.count) {
+            w = Mathx::fmax(w, self.widths[i as i64]);
+        }
+        return w;
+    }
+}
+
+/** Text measurement and drawing. */
+pub class Typeset {
+    /** The width of bytes [`start`, `stop`) of `s` at `px`. */
+    pub static fn span(f : Font, s : string, px : f64, start : i32, stop : i32) : f64 {
+        let mut w : f64 = 0.0;
+        let mut i : i64 = start as i64;
+        let end : i64 = stop as i64;
+        let mut prev : i32 = 0;
+        while (i < end) {
+            let (cp, n) = Utf8::next(s, i);
+            if (n <= 0) {
+                break;
+            }
+            let g : i32 = f.glyphOf(cp);
+            w = w + f.kernOf(prev, g, px) + f.advanceOf(g, px);
+            prev = g;
+            i = i + (n as i64);
+        }
+        return w;
+    }
+
+    /** The width of the whole of `s`. */
+    pub static fn width(f : Font, s : string, px : f64) : f64 {
+        return Typeset::span(f, s, px, 0, s.byteLength as i32);
+    }
+
+    /**
+     * Draw bytes [`start`, `stop`) of `s` with the pen at (`x`, `baseline`); answers the pen after
+     * the last glyph.
+     */
+    pub static fn drawSpan(f : Font, c : Canvas, s : string, start : i32, stop : i32, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        let mut pen : f64 = x;
+        let mut i : i64 = start as i64;
+        let end : i64 = stop as i64;
+        let mut prev : i32 = 0;
+        while (i < end) {
+            let (cp, n) = Utf8::next(s, i);
+            if (n <= 0) {
+                break;
+            }
+            let g : i32 = f.glyphOf(cp);
+            pen = pen + f.kernOf(prev, g, px);
+            f.drawGlyph(c, pen, baseline, g, px, t);
+            pen = pen + f.advanceOf(g, px);
+            prev = g;
+            i = i + (n as i64);
+        }
+        return pen;
+    }
+
+    /** Draw all of `s`. */
+    pub static fn draw(f : Font, c : Canvas, s : string, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        return Typeset::drawSpan(f, c, s, 0, s.byteLength as i32, x, baseline, px, t);
+    }
+
+    /**
+     * How much of `s` fits `maxW` pixels, leaving room for an ellipsis when it does not all fit:
+     * the byte offset to cut at, and whether to draw the ellipsis after it.
+     */
+    pub static fn elide(f : Font, s : string, px : f64, maxW : f64) : (stop: i32, dots: bool) {
+        let total : i32 = s.byteLength as i32;
+        if (Typeset::width(f, s, px) <= maxW) {
+            return (total, false);
+        }
+        let dotsW : f64 = f.advanceOf(f.glyphOf(TEXT_ELLIPSIS), px);
+        let room : f64 = maxW - dotsW;
+        let mut w : f64 = 0.0;
+        let mut i : i64 = 0;
+        let mut prev : i32 = 0;
+        let mut stop : i32 = 0;
+        while (i < (total as i64)) {
+            let (cp, n) = Utf8::next(s, i);
+            let g : i32 = f.glyphOf(cp);
+            let a : f64 = f.kernOf(prev, g, px) + f.advanceOf(g, px);
+            if (w + a > room) {
+                break;
+            }
+            w = w + a;
+            prev = g;
+            i = i + (n as i64);
+            stop = i as i32;
+        }
+        return (stop, true);
+    }
+
+    /** Draw `s` cut to `maxW` pixels with an ellipsis; answers the pen at the end. */
+    pub static fn drawElided(f : Font, c : Canvas, s : string, x : f64, baseline : f64, px : f64, maxW : f64, t : Tint) : f64 {
+        let (stop, dots) = Typeset::elide(f, s, px, maxW);
+        let pen : f64 = Typeset::drawSpan(f, c, s, 0, stop, x, baseline, px, t);
+        if (!dots) {
+            return pen;
+        }
+        let g : i32 = f.glyphOf(TEXT_ELLIPSIS);
+        f.drawGlyph(c, pen, baseline, g, px, t);
+        return pen + f.advanceOf(g, px);
+    }
+
+    /**
+     * Break `s` into lines no wider than `maxW`: at a newline, at the last space that lets the
+     * line fit, or inside a word too long for any line. Trailing spaces belong to no line's width.
+     */
+    pub static fn wrap(f : Font, s : string, px : f64, maxW : f64, lines : Lines) : void {
+        lines.reset();
+        let total : i64 = s.byteLength;
+        let mut start : i64 = 0;
+        while (start <= total) {
+            let mut i : i64 = start;
+            let mut w : f64 = 0.0;
+            let mut prev : i32 = 0;
+            let mut lastSpace : i64 = -1;
+            let mut wAtSpace : f64 = 0.0;
+            let mut stop : i64 = total;
+            let mut next : i64 = total + 1;
+            let mut done : bool = false;
+            while (i < total && !done) {
+                let (cp, n) = Utf8::next(s, i);
+                if (cp == 10) {
+                    stop = i;
+                    next = i + 1;
+                    done = true;
+                } else {
+                    let g : i32 = f.glyphOf(cp);
+                    let a : f64 = f.kernOf(prev, g, px) + f.advanceOf(g, px);
+                    if (w + a > maxW && i > start) {
+                        if (lastSpace > start) {
+                            stop = lastSpace;
+                            next = lastSpace + 1;
+                            w = wAtSpace;
+                        } else {
+                            stop = i;
+                            next = i;
+                        }
+                        done = true;
+                    } else {
+                        if (cp == 32) {
+                            lastSpace = i;
+                            wAtSpace = w;
+                        }
+                        w = w + a;
+                        prev = g;
+                        i = i + (n as i64);
+                    }
+                }
+            }
+            if (!done) {
+                lines.add(start as i32, total as i32, w);
+                return;
+            }
+            lines.add(start as i32, stop as i32, w);
+            start = next;
+        }
+    }
+
+    /** The x offset of the caret before byte `at` of `s`, in pixels from the start of the run. */
+    pub static fn xAt(f : Font, s : string, px : f64, at : i32) : f64 {
+        return Typeset::span(f, s, px, 0, at);
+    }
+
+    /** The byte offset of the caret position nearest `x` pixels from the start of the run. */
+    pub static fn indexAt(f : Font, s : string, px : f64, x : f64) : i32 {
+        let total : i64 = s.byteLength;
+        let mut pen : f64 = 0.0;
+        let mut i : i64 = 0;
+        let mut prev : i32 = 0;
+        while (i < total) {
+            let (cp, n) = Utf8::next(s, i);
+            let g : i32 = f.glyphOf(cp);
+            let a : f64 = f.kernOf(prev, g, px) + f.advanceOf(g, px);
+            if (x < pen + a * 0.5) {
+                return i as i32;
+            }
+            pen = pen + a;
+            prev = g;
+            i = i + (n as i64);
+        }
+        return total as i32;
+    }
+}

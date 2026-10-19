@@ -31,7 +31,7 @@ import tempfile
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 # Bottom to top. A module's layer is the first path component under src/.
-LAYERS = ["gfx", "text", "style", "tree", "layout", "draw", "input", "ui", "widgets", "shell"]
+LAYERS = ["gfx", "text", "style", "paint", "core", "widgets", "shell"]
 
 # Files allowed `unsafe`: none today. Raw memory is smalt's `Mem`; a hot loop that needs a typed
 # pointer asks for it in smalt rather than here.
@@ -202,11 +202,13 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
             err("`.%s(` — no method of that name is declared anywhere" % m.group(1))
 
     # --- syntax ------------------------------------------------------------------
+    for m in re.finditer(r"\bfn\s+(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|string|void)\s*\(", text):
+        err("`fn %s` — a primitive type's name cannot name a method" % m.group(1))
     for i, line in enumerate(text.split("\n"), 1):
         if re.search(r"\)\s*\?\s*(;|\.|\)|,)", line):
             err("line %d: a postfix `?` — the compiler refuses it" % i)
-        if re.search(r"\b(?:let(?:\s+mut)?|fn)\s+(free|of)\b", line) or re.search(r"\b(free|of)\s*:\s*[A-Za-z]", line):
-            err("line %d: `free` / `of` are reserved" % i)
+        if re.search(r"\b(?:let(?:\s+mut)?|fn)\s+(free|of|from)\b", line) or re.search(r"\b(free|of|from)\s*:\s*[A-Za-z]", line):
+            err("line %d: `free` / `of` / `from` are reserved" % i)
     for m in re.finditer(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:static\s+)?const\s+\w+\s*:\s*[\w<>\[\]]+\s*=\s*([^;]+);", text, re.M):
         if not re.fullmatch(r"\s*-?\s*(0x[0-9A-Fa-f_]+|\d[\d_]*(\.\d+)?|true|false|\"[^\"]*\")\s*", m.group(1)):
             err("constant initialiser `%s` is not a literal (E0720)" % m.group(1).strip())
@@ -236,7 +238,7 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
                     err("`%s` is reassigned but declared `let`, not `let mut`" % name)
 
     # --- seam --------------------------------------------------------------------
-    if re.search(r'extern\s+"C"', text):
+    if re.search(r'extern\s+"C"', strip_comments(open(path, encoding="utf-8").read())):
         err('`extern "C"` — nothing in this library names an operating system')
     if "unsafe" in text and rel.replace(os.sep, "/") not in UNSAFE_OK:
         err("`unsafe` outside the files allowed it")
@@ -263,6 +265,7 @@ def selftest():
         ("a postfix ?", "fn f() : void { let x = g()?; }\n"),
         ("a reassigned let", "fn f() : void { let x : i32 = 1; x = 2; }\n"),
         ("a reserved name", "fn f() : void { let free = 1; }\n"),
+        ("a method named after a type", "class A { fn u16(self) : i32 { return 1; } }\n"),
         ("a non-literal const", "const A : i32 = B + 1;\n"),
         ("extern C", 'extern "C" from "c" { fn puts(s : ptr) : i32; }\n'),
         ("an unknown member", "fn f() : void { Tint::nonesuch(1); }\n"),

@@ -1,0 +1,264 @@
+// font — a face at any size: metrics, advances, kerning, and glyph bitmaps from a cache.
+//
+// One `Font` is one face (Instrument Sans Regular, JetBrains Mono Bold, …). It owns the font's
+// bytes, parses them through `Ttf`, and rasterises glyphs on demand: a glyph at a size and a
+// quarter-pixel horizontal offset is drawn once into a bump-allocated arena and looked up
+// after that, so a repaint of text it has seen costs one table probe and one blend per pixel.
+//
+// Sizes are real numbers of pixels, not a fixed menu: the cache is keyed on the size to a
+// quarter pixel, so 13 and 13.25 are different entries and 13.01 is the first. A UI that scales
+// by a factor gets sharp text at every factor; the price is memory, which the arena bounds — when
+// it fills, everything is dropped and the next frame re-rasterises what it uses.
+//
+// Positions are fractional. The pen advances by the glyph's exact advance plus kerning, never
+// rounded, and each glyph is drawn at the quarter pixel nearest its pen. That is most of why the
+// text looks set rather than typed.
+//
+// A `Font` is `Closeable`: it holds a block of memory.
+
+use smalt::{Mem, SlotIndex, AssetFile};
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::canvas::Canvas;
+use crate::text::ttf::Ttf;
+use crate::text::outline::{Outline, GlyphBox};
+use crate::text::kern::Kern;
+
+/** Bytes of glyph bitmaps kept before the cache is emptied. */
+const FONT_CACHE_BYTES : i64 = 4194304;
+
+/** Distinct glyph bitmaps kept before the cache is emptied. */
+const FONT_CACHE_SLOTS : i32 = 4096;
+
+/** Entries of the kerning memo (a power of two). */
+const FONT_KERN_SLOTS : i32 = 2048;
+
+/** Codepoints below this are mapped to glyphs through a direct table. */
+const FONT_DIRECT : i32 = 4096;
+
+/** The largest font file `fromFile` will read. */
+const FONT_FILE_MAX : i64 = 16777216;
+
+/** Horizontal sub-pixel positions a glyph is drawn at. */
+const FONT_SUBPIXELS : i32 = 4;
+
+/** A TrueType face and its glyph cache. */
+pub class Font : Closeable {
+    block : i64;
+    bytes : i32;
+    ttf : Ttf;
+    outline : Outline = new Outline();
+    direct : i32[] = malloc<i32>(FONT_DIRECT as i64);
+    kernKey : i64[] = malloc<i64>(FONT_KERN_SLOTS as i64);
+    kernVal : i32[] = malloc<i32>(FONT_KERN_SLOTS as i64);
+    arena : i64;
+    used : i64 = 0;
+    index : SlotIndex = new SlotIndex(FONT_CACHE_SLOTS * 2);
+    count : i32 = 0;
+    eoff : i64[] = malloc<i64>(FONT_CACHE_SLOTS as i64);
+    ew : i32[] = malloc<i32>(FONT_CACHE_SLOTS as i64);
+    eh : i32[] = malloc<i32>(FONT_CACHE_SLOTS as i64);
+    eleft : i32[] = malloc<i32>(FONT_CACHE_SLOTS as i64);
+    etop : i32[] = malloc<i32>(FONT_CACHE_SLOTS as i64);
+
+    /**
+     * A font over the `bytes` bytes at `block`, a block from `Mem::take` that the font now owns
+     * and releases at `close`.
+     */
+    constructor(block : i64, bytes : i32) {
+        self.block = block;
+        self.bytes = bytes;
+        self.ttf = new Ttf(block, bytes);
+        self.arena = Mem::take(FONT_CACHE_BYTES);
+        for (i of 0..FONT_DIRECT) {
+            self.direct[i as i64] = -1;
+        }
+        for (i of 0..FONT_KERN_SLOTS) {
+            self.kernKey[i as i64] = 0;
+            self.kernVal[i as i64] = 0;
+        }
+    }
+
+    /**
+     * The font stored as the little-endian 32-bit words of its file, `bytes` bytes long — how a
+     * font is embedded in source, where a byte table would be a type the compiler widens.
+     */
+    pub static fn fromWords(words : i32[], bytes : i32) : Font {
+        let block : i64 = Mem::take(((bytes + 3) / 4 * 4) as i64);
+        let n : i32 = (bytes + 3) / 4;
+        for (i of 0..n) {
+            Mem::putWordOf(block, i as i64, words[i as i64]);
+        }
+        return new Font(block, bytes);
+    }
+
+    /** The font file at `path`; check `isValid` — a missing or unreadable file gives an invalid font. */
+    pub static fn fromFile(path : string) : Font {
+        let block : i64 = Mem::take(FONT_FILE_MAX);
+        let got : i64 = AssetFile::readInto(path, block, FONT_FILE_MAX);
+        if (got <= 0) {
+            Mem::release(block);
+            return new Font(0, 0);
+        }
+        return new Font(block, got as i32);
+    }
+
+    /** Whether the bytes were a TrueType font this library can draw. */
+    pub fn isValid(self) : bool {
+        return self.ttf.valid;
+    }
+
+    // ─── Metrics ─────────────────────────────────────────────────
+
+    /** Pixels per design unit at `px` pixels to the em. */
+    pub fn scale(self, px : f64) : f64 {
+        return px / (self.ttf.unitsPerEm as f64);
+    }
+
+    /** From the baseline up to the top of a line, in pixels. */
+    pub fn ascent(self, px : f64) : f64 {
+        return (self.ttf.ascent as f64) * self.scale(px);
+    }
+
+    /** From the baseline down to the bottom of a line, in pixels (positive). */
+    pub fn descent(self, px : f64) : f64 {
+        return ((0 - self.ttf.descent) as f64) * self.scale(px);
+    }
+
+    /** The distance between two baselines in pixels: ascent, descent and the font's line gap. */
+    pub fn lineHeight(self, px : f64) : f64 {
+        return ((self.ttf.ascent - self.ttf.descent + self.ttf.lineGap) as f64) * self.scale(px);
+    }
+
+    // ─── Glyphs ──────────────────────────────────────────────────
+
+    /** The glyph for codepoint `cp`, through a direct table for the common range. */
+    pub fn glyphOf(mut self, cp : i32) : i32 {
+        if (cp >= 0 && cp < FONT_DIRECT) {
+            let at : i64 = cp as i64;
+            let known : i32 = self.direct[at];
+            if (known >= 0) {
+                return known;
+            }
+            let g : i32 = self.ttf.glyphOf(cp);
+            self.direct[at] = g;
+            return g;
+        }
+        return self.ttf.glyphOf(cp);
+    }
+
+    /** The pen's advance past glyph `g` at `px`, in pixels. */
+    pub fn advanceOf(self, g : i32, px : f64) : f64 {
+        return (self.ttf.advanceOf(g) as f64) * self.scale(px);
+    }
+
+    /** The kerning between glyphs `a` and `b` at `px`, in pixels (usually negative or zero). */
+    pub fn kernOf(mut self, a : i32, b : i32, px : f64) : f64 {
+        if (a == 0 || b == 0) {
+            return 0.0;
+        }
+        let key : i64 = (((a as i64) << 20) | (b as i64)) + 1;
+        let at : i64 = (((a * 31) + b) & (FONT_KERN_SLOTS - 1)) as i64;
+        if (self.kernKey[at] == key) {
+            return (self.kernVal[at] as f64) * self.scale(px);
+        }
+        let v : i32 = Kern::between(self.ttf, a, b);
+        self.kernKey[at] = key;
+        self.kernVal[at] = v;
+        return (v as f64) * self.scale(px);
+    }
+
+    // ─── The glyph cache ─────────────────────────────────────────
+
+    /** Drop every cached bitmap. */
+    pub fn flush(mut self) : void {
+        self.index.clear();
+        self.used = 0;
+        self.count = 0;
+    }
+
+    /**
+     * The cache entry for glyph `g` at `px` shifted `sub` quarter pixels, rasterising it when it
+     * is not there. -1 for a glyph that cannot be drawn.
+     */
+    pub(file) fn entry(mut self, g : i32, px : f64, sub : i32) : i32 {
+        let size4 : i64 = Mathx::roundI(px * 4.0) as i64;
+        let key : i64 = (size4 << 24) | ((g as i64) << 4) | (sub as i64);
+        let found : i32 = self.index.get(key);
+        if (found >= 0) {
+            return found;
+        }
+        self.outline.clear();
+        if (!self.outline.load(self.ttf, g, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0)) {
+            return -1;
+        }
+        let s : f64 = self.scale(px);
+        let mut w : i32 = 0;
+        let mut h : i32 = 0;
+        let mut left : i32 = 0;
+        let mut top : i32 = 0;
+        let mut off : i64 = 0;
+        if (!self.outline.isEmpty()) {
+            let gb : GlyphBox = self.outline.extent(s, (sub as f64) / (FONT_SUBPIXELS as f64));
+            let need : i64 = (gb.w as i64) * (gb.h as i64);
+            if (self.used + need > FONT_CACHE_BYTES || self.count >= FONT_CACHE_SLOTS) {
+                self.flush();
+            }
+            if (need > FONT_CACHE_BYTES) {
+                return -1;
+            }
+            off = self.used;
+            self.used = self.used + need;
+            self.outline.render(s, (sub as f64) / (FONT_SUBPIXELS as f64), gb, self.arena + off);
+            w = gb.w;
+            h = gb.h;
+            left = gb.left;
+            top = gb.top;
+        } else if (self.count >= FONT_CACHE_SLOTS) {
+            self.flush();
+        }
+        let slot : i32 = self.count;
+        self.count = slot + 1;
+        let at : i64 = slot as i64;
+        self.eoff[at] = off;
+        self.ew[at] = w;
+        self.eh[at] = h;
+        self.eleft[at] = left;
+        self.etop[at] = top;
+        self.index.put(key, slot);
+        return slot;
+    }
+
+    /**
+     * Draw glyph `g` at `px` with its origin at (`x`, `baseline`), blended in `t`. The origin may
+     * fall between pixels horizontally; the baseline is rounded to one.
+     */
+    pub fn drawGlyph(mut self, c : Canvas, x : f64, baseline : f64, g : i32, px : f64, t : Tint) : void {
+        let ix : i32 = Mathx::floorI(x);
+        let sub : i32 = Mathx::clampI(Mathx::floorI((x - (ix as f64)) * (FONT_SUBPIXELS as f64)), 0, FONT_SUBPIXELS - 1);
+        let e : i32 = self.entry(g, px, sub);
+        if (e < 0) {
+            return;
+        }
+        let at : i64 = e as i64;
+        if (self.ew[at] <= 0) {
+            return;
+        }
+        c.mask(
+            ix + self.eleft[at],
+            Mathx::roundI(baseline) - self.etop[at],
+            self.arena + self.eoff[at],
+            self.ew[at],
+            self.eh[at],
+            self.ew[at],
+            t
+        );
+    }
+
+    /** Release the font's memory. */
+    pub fn close(self) : void {
+        Mem::release(self.block);
+        Mem::release(self.arena);
+        self.index.close();
+    }
+}

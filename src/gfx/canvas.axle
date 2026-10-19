@@ -1,0 +1,314 @@
+// canvas — the CPU painter's pixels: a clip, an opacity, and the primitives.
+//
+// A `Canvas` is a view of a smalt `Frame` — it owns nothing, takes the plane's address and size,
+// and keeps its own clip stack and opacity so a widget can narrow both for its children and put
+// them back. Everything drawn is anti-aliased from a signed distance (see `shapes`), blended in
+// 8 bits, and clipped to the current rectangle.
+//
+// Take a `Canvas` fresh each repaint, from the frame the surface hands out: it carries the
+// frame's address, and a resize moves it.
+//
+// Opacity here multiplies each primitive's alpha. It is not group opacity (a translucent panel
+// whose children overlap shows the overlap); a widget that wants the group effect draws its
+// children opaque over its own faded background instead.
+//
+// The Axle twin of `tools/c_ref/zf_gfx.h`.
+
+use smalt::{Frame, Rect, Mem};
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::{Tint, Px};
+use crate::gfx::shapes::{RRect, Brush, Cover};
+
+/** Clips a canvas remembers: how deep widgets may nest scroll areas. */
+const CANVAS_CLIPS : i32 = 16;
+
+/** The 2-D drawing surface of one repaint. */
+pub class Canvas {
+    base : i64;
+    w    : i32;
+    h    : i32;
+    cx0  : i32 = 0;
+    cy0  : i32 = 0;
+    cx1  : i32 = 0;
+    cy1  : i32 = 0;
+    opacity : i32 = 255;
+    saved : i32[] = malloc<i32>(64 as i64);
+    depth : i32 = 0;
+
+    /** A canvas over `f`, clipped to the frame's own clip. */
+    constructor(f : Frame) {
+        self.base = f.base();
+        self.w = f.w;
+        self.h = f.h;
+        let r : Rect = f.clipRect();
+        self.cx0 = r.x;
+        self.cy0 = r.y;
+        self.cx1 = r.x + r.w;
+        self.cy1 = r.y + r.h;
+    }
+
+    /** Plane width, in pixels. */
+    pub fn width(self) : i32 {
+        return self.w;
+    }
+
+    /** Plane height, in pixels. */
+    pub fn height(self) : i32 {
+        return self.h;
+    }
+
+    /** The rectangle drawing is confined to. */
+    pub fn clip(self) : Rect {
+        return Rect::make(self.cx0, self.cy0, self.cx1 - self.cx0, self.cy1 - self.cy0);
+    }
+
+    /** Whether nothing can be drawn: the clip is empty. */
+    pub fn isClosed(self) : bool {
+        return self.cx1 <= self.cx0 || self.cy1 <= self.cy0;
+    }
+
+    // ─── Clip and opacity ────────────────────────────────────────
+
+    /**
+     * Narrow the clip to its intersection with the box, remembering the old one for `popClip`.
+     *
+     * Past `CANVAS_CLIPS` nested clips the push is ignored and so is its pop, so an excess of
+     * nesting draws unclipped rather than corrupting the stack.
+     */
+    pub fn pushClip(mut self, x : i32, y : i32, w : i32, h : i32) : void {
+        if (self.depth >= CANVAS_CLIPS) {
+            self.depth = self.depth + 1;
+            return;
+        }
+        let at : i64 = (self.depth * 4) as i64;
+        self.saved[at] = self.cx0;
+        self.saved[at + 1] = self.cy0;
+        self.saved[at + 2] = self.cx1;
+        self.saved[at + 3] = self.cy1;
+        self.depth = self.depth + 1;
+        self.cx0 = self.cx0.max(x);
+        self.cy0 = self.cy0.max(y);
+        self.cx1 = self.cx1.min(x + w);
+        self.cy1 = self.cy1.min(y + h);
+    }
+
+    /** Put back the clip the matching `pushClip` replaced. */
+    pub fn popClip(mut self) : void {
+        if (self.depth <= 0) {
+            return;
+        }
+        self.depth = self.depth - 1;
+        if (self.depth >= CANVAS_CLIPS) {
+            return;
+        }
+        let at : i64 = (self.depth * 4) as i64;
+        self.cx0 = self.saved[at];
+        self.cy0 = self.saved[at + 1];
+        self.cx1 = self.saved[at + 2];
+        self.cy1 = self.saved[at + 3];
+    }
+
+    /** Multiply every following primitive's alpha by `o` / 255; answers the opacity it replaced. */
+    pub fn setOpacity(mut self, o : i32) : i32 {
+        let before : i32 = self.opacity;
+        self.opacity = Px::clamp8(o);
+        return before;
+    }
+
+    // ─── Pixels ──────────────────────────────────────────────────
+
+    /** The pixel at (`x`, `y`), or 0 outside the plane. */
+    pub fn at(self, x : i32, y : i32) : i32 {
+        if (x < 0 || x >= self.w || y < 0 || y >= self.h) {
+            return 0;
+        }
+        return Mem::wordOf(self.base, ((y as i64) * (self.w as i64)) + (x as i64));
+    }
+
+    /** `rgb` at opacity `a` over the pixel (`x`, `y`), if it is inside the clip. */
+    pub fn put(self, x : i32, y : i32, rgb : i32, a : i32) : void {
+        if (x < self.cx0 || x >= self.cx1 || y < self.cy0 || y >= self.cy1) {
+            return;
+        }
+        let mut e : i32 = a;
+        if (self.opacity < 255) {
+            e = Px::div255(a * self.opacity);
+        }
+        if (e <= 0) {
+            return;
+        }
+        let idx : i64 = ((y as i64) * (self.w as i64)) + (x as i64);
+        Mem::putWordOf(self.base, idx, Px::over(Mem::wordOf(self.base, idx), rgb, e));
+    }
+
+    /** Fill the whole clip with `rgb`. */
+    pub fn clear(self, rgb : i32) : void {
+        self.fillRect(self.cx0, self.cy0, self.cx1 - self.cx0, self.cy1 - self.cy0, Tint::hex(rgb));
+    }
+
+    /** A pixel-aligned rectangle in one colour. */
+    pub fn fillRect(self, x : i32, y : i32, w : i32, h : i32, t : Tint) : void {
+        let x0 : i32 = x.max(self.cx0);
+        let y0 : i32 = y.max(self.cy0);
+        let x1 : i32 = (x + w).min(self.cx1);
+        let y1 : i32 = (y + h).min(self.cy1);
+        if (x1 <= x0 || y1 <= y0 || t.a <= 0) {
+            return;
+        }
+        let mut e : i32 = t.a;
+        if (self.opacity < 255) {
+            e = Px::div255(e * self.opacity);
+        }
+        if (e >= 255) {
+            for (yy of y0..y1) {
+                let row : i64 = (yy as i64) * (self.w as i64);
+                for (xx of x0..x1) {
+                    Mem::putWordOf(self.base, row + (xx as i64), t.rgb);
+                }
+            }
+            return;
+        }
+        for (yy of y0..y1) {
+            let row : i64 = (yy as i64) * (self.w as i64);
+            for (xx of x0..x1) {
+                let idx : i64 = row + (xx as i64);
+                Mem::putWordOf(self.base, idx, Px::over(Mem::wordOf(self.base, idx), t.rgb, e));
+            }
+        }
+    }
+
+    // ─── Shapes ──────────────────────────────────────────────────
+
+    /** One pixel of a shape: coverage `cv` (0..1) of the brush at (`x`, `y`). */
+    pub(file) fn shapePixel(self, brush : Brush, x : i32, y : i32, cv : f64) : void {
+        if (cv <= 0.0) {
+            return;
+        }
+        let e : i32 = Mathx::floorI((brush.alphaAt(x, y) as f64) * cv + 0.5);
+        if (e > 0) {
+            self.put(x, y, brush.rgbAt(x, y), e);
+        }
+    }
+
+    /**
+     * Fill the rounded rectangle with the brush (`bw` of 0), or stroke a line `bw` wide inside
+     * its outline.
+     *
+     * Each row is three parts. The left and right ends, as wide as the larger corner radius on
+     * that side plus the stroke and a pixel of margin, are done pixel by pixel from the distance
+     * field. Between them every pixel has the same distance, so it is computed once and the span
+     * is filled with it.
+     */
+    pub fn shape(self, rr : RRect, bw : f64, brush : Brush) : void {
+        let ix0 : i32 = Mathx::floorI(rr.x);
+        let ix1 : i32 = Mathx::ceilI(rr.x + rr.w);
+        let iy0 : i32 = Mathx::floorI(rr.y);
+        let iy1 : i32 = Mathx::ceilI(rr.y + rr.h);
+        let rl : i32 = Mathx::ceilI(Mathx::fmax(rr.tl, rr.bl) + bw) + 1;
+        let rrr : i32 = Mathx::ceilI(Mathx::fmax(rr.tr, rr.br) + bw) + 1;
+        let y0 : i32 = iy0.max(self.cy0);
+        let y1 : i32 = iy1.min(self.cy1);
+        let leftEnd : i32 = ix1.min(ix0 + rl);
+        let rightStart : i32 = leftEnd.max(ix1 - rrr);
+        for (y of y0..y1) {
+            let py : f64 = (y as f64) + 0.5;
+            self.shapeSpan(rr, bw, brush, y, ix0.max(self.cx0), leftEnd.min(self.cx1));
+            self.shapeSpan(rr, bw, brush, y, rightStart.max(self.cx0), ix1.min(self.cx1));
+            if (rightStart > leftEnd) {
+                let d : f64 = rr.sdf((leftEnd as f64) + 0.5, py);
+                let cv : f64 = Cover::ring(d, bw);
+                if (cv > 0.0) {
+                    let xa : i32 = leftEnd.max(self.cx0);
+                    let xb : i32 = rightStart.min(self.cx1);
+                    for (x of xa..xb) {
+                        self.shapePixel(brush, x, y, cv);
+                    }
+                }
+            }
+        }
+    }
+
+    /** Row `y` of a shape, pixel by pixel from `xa` up to `xb`. */
+    pub(file) fn shapeSpan(self, rr : RRect, bw : f64, brush : Brush, y : i32, xa : i32, xb : i32) : void {
+        let py : f64 = (y as f64) + 0.5;
+        for (x of xa..xb) {
+            let d : f64 = rr.sdf((x as f64) + 0.5, py);
+            self.shapePixel(brush, x, y, Cover::ring(d, bw));
+        }
+    }
+
+    /** A soft shadow of the outline, offset by (`dx`, `dy`), grown by `spread`, faded over `blur`. */
+    pub fn shadow(self, rr : RRect, dx : f64, dy : f64, blur : f64, spread : f64, t : Tint) : void {
+        if (t.a <= 0) {
+            return;
+        }
+        let s : RRect = rr.moved(dx, dy).grown(spread);
+        let b : f64 = Mathx::fmax(blur, 0.5);
+        let x0 : i32 = Mathx::floorI(s.x - b).max(self.cx0);
+        let x1 : i32 = Mathx::ceilI(s.x + s.w + b).min(self.cx1);
+        let y0 : i32 = Mathx::floorI(s.y - b).max(self.cy0);
+        let y1 : i32 = Mathx::ceilI(s.y + s.h + b).min(self.cy1);
+        for (y of y0..y1) {
+            let py : f64 = (y as f64) + 0.5;
+            for (x of x0..x1) {
+                let d : f64 = s.sdf((x as f64) + 0.5, py);
+                let e : i32 = Mathx::floorI((t.a as f64) * Cover::soft(d, b) + 0.5);
+                if (e > 0) {
+                    self.put(x, y, t.rgb, e);
+                }
+            }
+        }
+    }
+
+    /** A line segment of the given width with round ends. */
+    pub fn capsule(self, x0 : f64, y0 : f64, x1 : f64, y1 : f64, width : f64, t : Tint) : void {
+        let hw : f64 = width * 0.5;
+        let bx0 : i32 = Mathx::floorI(Mathx::fmin(x0, x1) - hw - 1.0).max(self.cx0);
+        let bx1 : i32 = Mathx::ceilI(Mathx::fmax(x0, x1) + hw + 1.0).min(self.cx1);
+        let by0 : i32 = Mathx::floorI(Mathx::fmin(y0, y1) - hw - 1.0).max(self.cy0);
+        let by1 : i32 = Mathx::ceilI(Mathx::fmax(y0, y1) + hw + 1.0).min(self.cy1);
+        let vx : f64 = x1 - x0;
+        let vy : f64 = y1 - y0;
+        let len2 : f64 = vx * vx + vy * vy;
+        for (y of by0..by1) {
+            for (x of bx0..bx1) {
+                let px : f64 = (x as f64) + 0.5 - x0;
+                let py : f64 = (y as f64) + 0.5 - y0;
+                let mut u : f64 = 0.0;
+                if (len2 > 0.0) {
+                    u = Mathx::clamp01((px * vx + py * vy) / len2);
+                }
+                let ex : f64 = px - vx * u;
+                let ey : f64 = py - vy * u;
+                let d : f64 = (ex * ex + ey * ey).sqrt() - hw;
+                let e : i32 = Mathx::floorI((t.a as f64) * Cover::edge(d) + 0.5);
+                if (e > 0) {
+                    self.put(x, y, t.rgb, e);
+                }
+            }
+        }
+    }
+
+    /**
+     * A coverage mask — one byte per pixel at `mask` — tinted and blended with its top-left at
+     * (`x`, `y`). A glyph and an icon are drawn this way.
+     */
+    pub fn mask(self, x : i32, y : i32, mask : i64, mw : i32, mh : i32, stride : i32, t : Tint) : void {
+        if (t.a <= 0) {
+            return;
+        }
+        let j0 : i32 = (self.cy0 - y).max(0);
+        let j1 : i32 = (self.cy1 - y).min(mh);
+        let i0 : i32 = (self.cx0 - x).max(0);
+        let i1 : i32 = (self.cx1 - x).min(mw);
+        for (j of j0..j1) {
+            let row : i64 = (j as i64) * (stride as i64);
+            for (i of i0..i1) {
+                let cv : i32 = Mem::byteAt(mask, row + (i as i64));
+                if (cv != 0) {
+                    self.put(x + i, y + j, t.rgb, Px::div255(cv * t.a));
+                }
+            }
+        }
+    }
+}

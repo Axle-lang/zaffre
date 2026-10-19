@@ -1,0 +1,272 @@
+// shapes — the outlines a painter fills, and the distance field that makes them smooth.
+//
+// Every shape here is a rounded rectangle, because every surface a UI draws is one: a button is
+// a rounded rectangle, a switch is a rounded rectangle whose radius is half its height, a knob is
+// a rounded rectangle that is square. The signed distance from a pixel's centre to the outline
+// is all a painter needs — a pixel at distance 0.5 inside is fully covered, at 0.5 outside
+// untouched, and the one-pixel ramp between is anti-aliasing that needs no supersampling and no
+// special case for a corner.
+//
+// This file is the Axle twin of `tools/c_ref/zf_gfx.h`; the C runs and is looked at
+// (`tools/c_ref/test_gfx.c`), this is transliterated from it, and an edit to one is an edit to the
+// other.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Px;
+
+/** A rectangle with a radius per corner, in fractional pixels. */
+pub struct RRect {
+    /** Left edge. */
+    pub x : f64;
+
+    /** Top edge. */
+    pub y : f64;
+
+    /** Width. */
+    pub w : f64;
+
+    /** Height. */
+    pub h : f64;
+
+    /** Top-left radius. */
+    pub tl : f64 = 0.0;
+
+    /** Top-right radius. */
+    pub tr : f64 = 0.0;
+
+    /** Bottom-right radius. */
+    pub br : f64 = 0.0;
+
+    /** Bottom-left radius. */
+    pub bl : f64 = 0.0;
+
+    /** A box with one radius on every corner. */
+    pub static fn uniform(x : f64, y : f64, w : f64, h : f64, r : f64) : RRect {
+        return RRect::corners(x, y, w, h, r, r, r, r);
+    }
+
+    /** A box with its own radius at each corner, each held to half the shorter side. */
+    pub static fn corners(
+        x : f64,
+        y : f64,
+        w : f64,
+        h : f64,
+        tl : f64,
+        tr : f64,
+        br : f64,
+        bl : f64
+    ) : RRect {
+        let m : f64 = Mathx::fmax(0.0, Mathx::fmin(w, h) * 0.5);
+        return RRect {
+            x: x,
+            y: y,
+            w: w,
+            h: h,
+            tl: Mathx::clampF(tl, 0.0, m),
+            tr: Mathx::clampF(tr, 0.0, m),
+            br: Mathx::clampF(br, 0.0, m),
+            bl: Mathx::clampF(bl, 0.0, m),
+        };
+    }
+
+    /** The same box grown by `d` on every side (shrunk when negative), radii following. */
+    pub fn grown(self, d : f64) : RRect {
+        return RRect::corners(
+            self.x - d,
+            self.y - d,
+            self.w + 2.0 * d,
+            self.h + 2.0 * d,
+            self.tl + d,
+            self.tr + d,
+            self.br + d,
+            self.bl + d
+        );
+    }
+
+    /** The same box moved by (`dx`, `dy`). */
+    pub fn moved(self, dx : f64, dy : f64) : RRect {
+        return RRect {
+            x: self.x + dx,
+            y: self.y + dy,
+            w: self.w,
+            h: self.h,
+            tl: self.tl,
+            tr: self.tr,
+            br: self.br,
+            bl: self.bl,
+        };
+    }
+
+    /** Whether the point is inside the outline. */
+    pub fn contains(self, px : f64, py : f64) : bool {
+        return self.sdf(px, py) <= 0.0;
+    }
+
+    /**
+     * Signed distance from (`px`, `py`) to the outline: negative inside, zero on it.
+     *
+     * The rounded-box distance function. The square root is taken only in a corner's quarter
+     * disc, where both offsets from the corner centre are positive; everywhere else the distance
+     * is one offset or the larger of two, which is what keeps a straight edge cheap.
+     */
+    pub fn sdf(self, px : f64, py : f64) : f64 {
+        let hx : f64 = self.w * 0.5;
+        let hy : f64 = self.h * 0.5;
+        let dx : f64 = px - (self.x + hx);
+        let dy : f64 = py - (self.y + hy);
+        let mut r : f64 = self.br;
+        if (dx < 0.0) {
+            if (dy < 0.0) {
+                r = self.tl;
+            } else {
+                r = self.bl;
+            }
+        } else {
+            if (dy < 0.0) {
+                r = self.tr;
+            }
+        }
+        let qx : f64 = dx.abs() - (hx - r);
+        let qy : f64 = dy.abs() - (hy - r);
+        let ox : f64 = Mathx::fmax(qx, 0.0);
+        let oy : f64 = Mathx::fmax(qy, 0.0);
+        let mut outside : f64 = Mathx::fmax(ox, oy);
+        if (ox > 0.0 && oy > 0.0) {
+            outside = (ox * ox + oy * oy).sqrt();
+        }
+        let inside : f64 = Mathx::fmin(Mathx::fmax(qx, qy), 0.0);
+        return outside + inside - r;
+    }
+}
+
+/** How a brush colours the pixels a shape covers. */
+pub enum BrushKind : i32 {
+    /** One colour. */
+    Solid = 0,
+
+    /** A linear gradient between two colours along an axis. */
+    Linear = 1,
+}
+
+/**
+ * What a shape is painted with: a colour, or a gradient between two.
+ *
+ * A gradient runs from (`gx0`, `gy0`) to (`gx1`, `gy1`); the colour at a pixel is the one at its
+ * projection on that axis, held at the ends. Both ends carry an alpha, so a gradient can fade to
+ * nothing — the shadow at the foot of a scroll area. A 4 x 4 Bayer dither is added before the
+ * channels are rounded, so a slow gradient does not band.
+ */
+pub struct Brush {
+    /** Solid or linear. */
+    pub kind : BrushKind = BrushKind::Solid;
+
+    /** First colour, `0xRRGGBB`. */
+    pub rgb0 : i32 = 0;
+
+    /** Second colour. */
+    pub rgb1 : i32 = 0;
+
+    /** Opacity at the first end, 0..255. */
+    pub a0 : i32 = 255;
+
+    /** Opacity at the second end. */
+    pub a1 : i32 = 255;
+
+    /** Axis start x. */
+    pub gx0 : f64 = 0.0;
+
+    /** Axis start y. */
+    pub gy0 : f64 = 0.0;
+
+    /** Axis end x. */
+    pub gx1 : f64 = 0.0;
+
+    /** Axis end y. */
+    pub gy1 : f64 = 0.0;
+
+    /** A single colour at opacity `a`. */
+    pub static fn solid(rgb : i32, a : i32) : Brush {
+        return Brush { kind: BrushKind::Solid, rgb0: rgb, rgb1: rgb, a0: a, a1: a };
+    }
+
+    /** A gradient from (`x0`, `y0`) in `rgb0` / `a0` to (`x1`, `y1`) in `rgb1` / `a1`. */
+    pub static fn linear(
+        rgb0 : i32,
+        a0 : i32,
+        rgb1 : i32,
+        a1 : i32,
+        x0 : f64,
+        y0 : f64,
+        x1 : f64,
+        y1 : f64
+    ) : Brush {
+        return Brush {
+            kind: BrushKind::Linear,
+            rgb0: rgb0,
+            rgb1: rgb1,
+            a0: a0,
+            a1: a1,
+            gx0: x0,
+            gy0: y0,
+            gx1: x1,
+            gy1: y1,
+        };
+    }
+
+    /** The colour at pixel (`x`, `y`) of the brush. */
+    pub fn rgbAt(self, x : i32, y : i32) : i32 {
+        if (self.kind == BrushKind::Solid) {
+            return self.rgb0;
+        }
+        let t : f64 = self.along(x, y);
+        let dith : f64 = ((Px::bayer(x, y) as f64) - 7.5) / 16.0;
+        let r : i32 = Mathx::clampI(Mathx::floorI((Px::red(self.rgb0) as f64) + ((Px::red(self.rgb1) - Px::red(self.rgb0)) as f64) * t + 0.5 + dith), 0, 255);
+        let g : i32 = Mathx::clampI(Mathx::floorI((Px::green(self.rgb0) as f64) + ((Px::green(self.rgb1) - Px::green(self.rgb0)) as f64) * t + 0.5 + dith), 0, 255);
+        let b : i32 = Mathx::clampI(Mathx::floorI((Px::blue(self.rgb0) as f64) + ((Px::blue(self.rgb1) - Px::blue(self.rgb0)) as f64) * t + 0.5 + dith), 0, 255);
+        return Px::pack(r, g, b);
+    }
+
+    /** The opacity at pixel (`x`, `y`) of the brush, 0..255. */
+    pub fn alphaAt(self, x : i32, y : i32) : i32 {
+        if (self.kind == BrushKind::Solid) {
+            return self.a0;
+        }
+        let t : f64 = self.along(x, y);
+        return Mathx::floorI((self.a0 as f64) + ((self.a1 - self.a0) as f64) * t + 0.5);
+    }
+
+    /** How far along the axis pixel (`x`, `y`) sits, 0..1. */
+    pub(file) fn along(self, x : i32, y : i32) : f64 {
+        let ax : f64 = self.gx1 - self.gx0;
+        let ay : f64 = self.gy1 - self.gy0;
+        let len2 : f64 = ax * ax + ay * ay;
+        if (len2 <= 0.0) {
+            return 0.0;
+        }
+        let px : f64 = (x as f64) + 0.5 - self.gx0;
+        let py : f64 = (y as f64) + 0.5 - self.gy0;
+        return Mathx::clamp01((px * ax + py * ay) / len2);
+    }
+}
+
+/** Coverage functions of a signed distance. */
+pub class Cover {
+    /** Coverage of a pixel whose centre is at signed distance `d`: a one-pixel linear ramp. */
+    pub static fn edge(d : f64) : f64 {
+        return Mathx::clamp01(0.5 - d);
+    }
+
+    /** Coverage of a ring `bw` wide drawn inside the outline; `bw` of zero is the filled shape. */
+    pub static fn ring(d : f64, bw : f64) : f64 {
+        let c : f64 = Cover::edge(d);
+        if (bw > 0.0) {
+            return c - Cover::edge(d + bw);
+        }
+        return c;
+    }
+
+    /** Coverage of a shadow `blur` wide at signed distance `d`: a smoothstep from inside to out. */
+    pub static fn soft(d : f64, blur : f64) : f64 {
+        return Mathx::smooth(Mathx::clamp01((blur - d) / (2.0 * blur)));
+    }
+}
