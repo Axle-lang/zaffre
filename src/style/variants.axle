@@ -82,6 +82,9 @@ pub enum TextRole : i32 {
 
     /** Code and figures. */
     Mono = 8,
+
+    /** Body text in bold: the title of an alert, a name in a list. */
+    Strong = 9,
 }
 
 /** How much a surface stands out from the page. */

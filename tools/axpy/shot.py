@@ -8,7 +8,7 @@ z = load([os.path.join(ROOT, "examples", "gallery", "src")])
 view = z.build()
 if len(sys.argv) > 2 and sys.argv[2] == "light":
     view.darkMode().set(False)
-W, H = 1040, 700
+W, H = 1040, 1080
 screen = rt.Surface(W, H)
 view.resize(float(W), float(H))
 for _ in range(40):

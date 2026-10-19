@@ -1,0 +1,377 @@
+// select — a field that opens a menu of options, and the menu.
+//
+//     let size : Shared<Model<i32>> = new shared Model<i32>(1);
+//     new Select(["Small", "Medium", "Large"], size)
+//
+// A `Select` is a control that shows the chosen option and a chevron. Clicking it (or Enter, Space
+// or Down while it has the focus) opens a `Menu` as an overlay: a list that floats above the page
+// under the field, follows the pointer and the arrow keys, and closes on a pick, on Escape, or on
+// a press anywhere else — which it swallows, so closing a menu never clicks the button behind it.
+//
+// `Menu` is public on its own: a program can open one at any place with `Menu::show`, for a
+// context menu or a split button's list.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::fill::Fill;
+use crate::style::styles::{FieldStyle, ItemStyle};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Handler a select or menu without one runs. */
+fn ignorePick(v : i32) : void {
+}
+
+/** The list that floats above the page. */
+pub class Menu : Base, Widget {
+    anchor : Bounds;
+    options : string[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    onPick : (i32) => void;
+    isOpen : Shared<Model<bool>>;
+    size : ControlSize;
+    hot : i32;
+    armed : i32 = -1;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+    above : bool = false;
+
+    /**
+     * A menu of `options` that will sit under `anchor` (over it when there is no room below), reading
+     * the chosen index from `model` and writing the pick back, then telling `onPick`. `isOpen` is set
+     * to false when the menu goes away.
+     */
+    constructor(anchor : Bounds, options : string[], model : Shared<Model<i32>>, onPick : (i32) => void, isOpen : Shared<Model<bool>>, size : ControlSize) {
+        self.anchor = anchor;
+        self.options = options;
+        self.count = options.length as i32;
+        self.model = model;
+        self.onPick = onPick;
+        self.isOpen = isOpen;
+        self.size = size;
+        self.hot = model.get();
+    }
+
+    /** Open a menu of `options` under `anchor`; false when the interface has no room for another overlay. */
+    pub static fn show(ctx : Context, anchor : Bounds, options : string[], model : Shared<Model<i32>>, onPick : (i32) => void) : bool {
+        let flag : Shared<Model<bool>> = new shared Model<bool>(true);
+        return ctx.openOverlay(new Menu(anchor, options, model, onPick, flag, ControlSize::Md));
+    }
+
+    /** Start closing: fade out, then finish. */
+    pub fn close(mut self, ctx : Context) : void {
+        self.closing = true;
+        self.isOpen.set(false);
+        ctx.invalidate();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let st : ItemStyle = ctx.theme.item(self.size);
+        let mut widest : f64 = self.anchor.w;
+        for (i of 0..self.count) {
+            widest = Mathx::fmax(widest, ctx.textWidth(FaceKind::Sans, self.options[i as i64], st.px) + 2.0 * st.padX + 8.0);
+        }
+        let h : f64 = st.height * (self.count as f64) + 8.0;
+        let mut y : f64 = self.anchor.bottom() + 6.0;
+        self.above = false;
+        if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
+            y = self.anchor.y - 6.0 - h;
+            self.above = true;
+        }
+        let x : f64 = Mathx::clampF(self.anchor.x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - widest));
+        self.sheet = Bounds::make(x, y, widest, h);
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished && self.sheet.contains(x, y);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    /** The row under `y`, or -1. */
+    pub(file) fn rowAt(self, ctx : Context, x : f64, y : f64) : i32 {
+        if (!self.sheet.contains(x, y)) {
+            return -1;
+        }
+        let st : ItemStyle = ctx.theme.item(self.size);
+        let i : i32 = Mathx::floorI((y - self.sheet.y - 4.0) / st.height);
+        if (i < 0 || i >= self.count) {
+            return -1;
+        }
+        return i;
+    }
+
+    /** Take the pick: write it, tell the handler, close. */
+    pub(file) fn pick(mut self, ctx : Context, i : i32) : void {
+        self.model.set(i);
+        let h : (i32) => void = self.onPick;
+        h(i);
+        self.close(ctx);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return false;
+        }
+        if (e.kind == EventKind::PointerMove) {
+            let r : i32 = self.rowAt(ctx, e.x, e.y);
+            if (r >= 0 && r != self.hot) {
+                self.hot = r;
+                ctx.invalidate();
+            }
+            return self.sheet.contains(e.x, e.y);
+        }
+        if (e.kind == EventKind::PointerDown) {
+            let r : i32 = self.rowAt(ctx, e.x, e.y);
+            if (r < 0) {
+                // Outside: close, and keep the press from reaching what is underneath.
+                self.close(ctx);
+                return true;
+            }
+            self.armed = r;
+            return true;
+        }
+        if (e.kind == EventKind::PointerUp) {
+            let r : i32 = self.rowAt(ctx, e.x, e.y);
+            let armed : i32 = self.armed;
+            self.armed = -1;
+            if (r >= 0 && r == armed) {
+                self.pick(ctx, r);
+            }
+            return r >= 0;
+        }
+        if (e.kind == EventKind::Wheel) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Escape) {
+                self.close(ctx);
+                return true;
+            }
+            if (e.key == Key::Down) {
+                self.hot = Mathx::clampI(self.hot + 1, 0, self.count - 1);
+                ctx.invalidate();
+                return true;
+            }
+            if (e.key == Key::Up) {
+                self.hot = Mathx::clampI(self.hot - 1, 0, self.count - 1);
+                ctx.invalidate();
+                return true;
+            }
+            if (e.key == Key::Enter || e.key == Key::Space) {
+                if (self.hot >= 0 && self.hot < self.count) {
+                    self.pick(ctx, self.hot);
+                }
+                return true;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.5);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let st : ItemStyle = ctx.theme.item(self.size);
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        // Slide a few pixels toward the anchor as it fades in.
+        let mut dy : f64 = (1.0 - k) * 6.0;
+        if (self.above) {
+            dy = 0.0 - dy;
+        }
+        dy = 0.0 - dy;
+        let b : Bounds = self.sheet.moved(0.0, dy);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusMd);
+        p.shadow(rr, 0.0, 10.0, 28.0, -4.0, pal.shadow.faded(110));
+        p.shadow(rr, 0.0, 2.0, 6.0, 0.0, pal.shadow.faded(60));
+        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        let chosen : i32 = self.model.get();
+        for (i of 0..self.count) {
+            let row : Bounds = Bounds::make(b.x + 4.0, b.y + 4.0 + st.height * (i as f64), b.w - 8.0, st.height);
+            let mut ink : Tint = st.text;
+            if (i == self.hot) {
+                p.fillRound(row.round(st.radius), Brush::solid(st.hover.rgb, st.hover.a));
+            }
+            if (i == chosen) {
+                ink = st.textSelected;
+                Icons::draw(p, IconKind::Check, row.right() - st.padX - st.px, row.midY() - st.px * 0.5, st.px, ink);
+            }
+            let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, row.y, row.h);
+            p.text(FaceKind::Sans, self.options[i as i64], row.x + st.padX - 4.0, base, st.px, ink);
+        }
+        p.setOpacity(prev);
+    }
+}
+
+/** How a select looks. */
+pub struct SelectProps {
+    /** What it says while nothing is chosen (the model is negative). */
+    pub placeholder : string = "Select…";
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The select's width: a default of 220 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Px(220.0);
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** A field that picks one of several options from a menu. */
+pub class Select : Control {
+    options : string[];
+    props : SelectProps;
+    model : Shared<Model<i32>>;
+    onChange : (i32) => void = ignorePick;
+    isOpen : Shared<Model<bool>> = new shared Model<bool>(false);
+    openT : Eased = Eased::at(0.0);
+
+    /** A select over `options`, reading and writing `model` (the chosen index). */
+    constructor(options : string[], model : Shared<Model<i32>>) {
+        self.options = options;
+        self.props = SelectProps { };
+        self.model = model;
+    }
+
+    /** A select set as `props` say. */
+    constructor(props : SelectProps, options : string[], model : Shared<Model<i32>>) {
+        self.options = options;
+        self.props = props;
+        self.model = model;
+    }
+
+    /** A select that also tells `onChange` when the user picks. */
+    constructor(props : SelectProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        self.options = options;
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 220.0), h: st.height });
+    }
+
+    /** Open the menu under the field. */
+    pub(file) fn open(mut self, ctx : Context) : void {
+        if (self.isOpen.get() || self.props.disabled) {
+            return;
+        }
+        self.isOpen.set(true);
+        let ok : bool = ctx.openOverlay(new Menu(self.area, self.options, self.model, self.onChange, self.isOpen, self.props.size));
+        if (!ok) {
+            self.isOpen.set(false);
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click) {
+            self.open(ctx);
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            if (e.key == Key::Enter || e.key == Key::Space || e.key == Key::Down) {
+                self.open(ctx);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 0.0;
+        if (self.isOpen.get()) {
+            t = 1.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::HOVER);
+        let moving : bool = self.animate(ctx, dt);
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        let act : i32 = Mathx::roundI(Mathx::fmax(self.openT.value, self.focusT.value) * 255.0);
+        let hv : i32 = self.hoverT.alpha();
+        let mut fill : Fill = st.fill.mixed(st.fillFocus, act);
+        if (self.props.disabled) {
+            fill = st.fillOff;
+        }
+        p.fillRound(rr, fill.brush(a.y, a.h));
+        let edge : Tint = st.border.mixed(st.borderHover, hv).mixed(st.borderFocus, self.openT.alpha());
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (self.ringShown(ctx)) {
+            let ring : Tint = st.ring.faded(self.focusT.alpha());
+            p.strokeRound(a.grown(2.0).round(st.radius + 2.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+        let i : i32 = self.model.get();
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h);
+        let room : f64 = a.w - 2.0 * st.padX - st.px * 1.3;
+        if (i >= 0 && i < (self.options.length as i32)) {
+            p.textElided(FaceKind::Sans, self.options[i as i64], a.x + st.padX, base, st.px, room, st.text);
+        } else {
+            p.textElided(FaceKind::Sans, self.props.placeholder, a.x + st.padX, base, st.px, room, st.placeholder);
+        }
+        let isz : f64 = st.px * 1.3;
+        let mut chev : IconKind = IconKind::ChevronDown;
+        if (self.openT.value > 0.5) {
+            chev = IconKind::ChevronUp;
+        }
+        Icons::draw(p, chev, a.right() - st.padX - isz + 2.0, a.midY() - isz * 0.5, isz, ctx.theme.palette.textFaint);
+    }
+}

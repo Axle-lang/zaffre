@@ -1,0 +1,95 @@
+// alert — a message that stands out: a tinted box with an icon, a title and some text.
+//
+//     new Alert(Tone::Warn, "Disk almost full", "Only 2 GB left on this volume.")
+//
+// The colours come from the same per-tone records badges use, so a theme that restyles badges
+// restyles alerts with them. The box wraps its text to the width it is offered. An alert is
+// composed of other widgets — a column of labels — and draws its own background, edge and icon;
+// that is how most molecules here are built.
+
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::styles::BadgeStyle;
+use crate::style::variants::{Tone, TextRole};
+use crate::core::geometry::{Size, Bounds, Limits, Insets, Align};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::flex::{Column, FlexProps};
+use crate::widgets::label::{Label, LabelProps};
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Room the icon takes at the left: its margin, its size, and the gap after it. */
+const ALERT_GUTTER : f64 = 46.0;
+
+/** A tinted box around an icon, a title and a message. The icon is drawn by the box, in the tone's colour. */
+pub class Alert : Base, Widget {
+    tone : Tone;
+    kid : dyn Widget[];
+
+    /** An alert of `tone` with a `title` and a `message`. */
+    constructor(tone : Tone, title : string, message : string) {
+        self.tone = tone;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = Alert::content(tone, title, message);
+    }
+
+    /** An alert of `tone` with just a `message`. */
+    constructor(tone : Tone, message : string) {
+        self.tone = tone;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = Alert::content(tone, "", message);
+    }
+
+    /** The icon each tone shows. */
+    pub static fn iconOf(tone : Tone) : IconKind {
+        return match tone {
+            Tone::Ok => IconKind::Check,
+            Tone::Warn => IconKind::Warning,
+            Tone::Danger => IconKind::Warning,
+            _ => IconKind::Info,
+        };
+    }
+
+    /** The widgets inside: the icon, then the title over the message. */
+    pub(file) static fn content(tone : Tone, title : string, message : string) : dyn Widget {
+        let mut text : Column = new Column(FlexProps { gap: 4.0, padding: Insets { top: 12.0, right: 14.0, bottom: 12.0, left: ALERT_GUTTER } });
+        if (title.byteLength > 0) {
+            text.add(new Label(title, TextRole::Strong));
+        }
+        text.add(new Label(LabelProps { role: TextRole::Body, wrap: true }, message));
+        return text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits.loosened());
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : BadgeStyle = ctx.theme.badge(self.tone);
+        let rr : RRect = self.area.round(ctx.theme.metrics.radiusMd);
+        p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
+        p.strokeRound(rr, 1.0, Brush::solid(st.border.rgb, st.border.a));
+        Icons::draw(p, Alert::iconOf(self.tone), self.area.x + 14.0, self.area.y + 13.0, 18.0, st.text);
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+}

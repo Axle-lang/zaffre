@@ -58,7 +58,7 @@ pub class Theme {
     pub badges : BadgeStyle[] = malloc<BadgeStyle>(5 as i64);
     pub progress : ProgressStyle[] = malloc<ProgressStyle>(3 as i64);
     pub items : ItemStyle[] = malloc<ItemStyle>(3 as i64);
-    pub texts : TextStyle[] = malloc<TextStyle>(9 as i64);
+    pub texts : TextStyle[] = malloc<TextStyle>(10 as i64);
 
     /** A theme that switches between two palettes, starting in the dark one when `startDark`. */
     constructor(dark : Palette, light : Palette, metrics : Metrics, startDark : bool) {
@@ -208,7 +208,7 @@ pub class Theme {
         for (t of 0..5) {
             self.badges[t as i64] = self.makeBadge(t);
         }
-        for (r of 0..9) {
+        for (r of 0..10) {
             self.texts[r as i64] = self.makeText(r);
         }
     }
@@ -526,6 +526,9 @@ pub class Theme {
         }
         if (r == 8) {
             return TextStyle { px: m.fontMd - 1.0, bold: false, mono: true, color: p.text };
+        }
+        if (r == 9) {
+            return TextStyle { px: m.fontMd, bold: true, mono: false, color: p.text };
         }
         return TextStyle { px: m.fontMd, bold: false, mono: false, color: p.text };
     }

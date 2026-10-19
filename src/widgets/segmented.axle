@@ -1,0 +1,195 @@
+// segmented — a row of options of which exactly one is chosen, drawn as a track with a thumb.
+//
+//     let view : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new Segmented(["List", "Grid", "Board"], view)
+//
+// The thumb slides from option to option as the value changes, whoever changed it: a click, the
+// arrow keys while focused, or the program setting the model. Every option has the width of the
+// widest label, so the control does not twitch as the selection moves.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::styles::ItemStyle;
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** How a segmented control looks. */
+pub struct SegmentedProps {
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The control's width: its options', a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** The handler a control without one runs. */
+fn ignoreChoice(v : i32) : void {
+}
+
+/** A single choice among a few labelled options. */
+pub class Segmented : Control {
+    options : string[];
+    count : i32;
+    props : SegmentedProps;
+    model : Shared<Model<i32>>;
+    onChange : (i32) => void = ignoreChoice;
+    thumb : Eased;
+    hot : i32 = -1;
+
+    /** A control over `options`, reading and writing `model` (the chosen index). */
+    constructor(options : string[], model : Shared<Model<i32>>) {
+        self.options = options;
+        self.count = options.length as i32;
+        self.props = SegmentedProps { };
+        self.model = model;
+        self.thumb = Eased::at(model.get() as f64);
+    }
+
+    /** A control set as `props` say, over `options`. */
+    constructor(props : SegmentedProps, options : string[], model : Shared<Model<i32>>) {
+        self.options = options;
+        self.count = options.length as i32;
+        self.props = props;
+        self.model = model;
+        self.thumb = Eased::at(model.get() as f64);
+    }
+
+    /** A control that also tells `onChange` when the user picks an option. */
+    constructor(props : SegmentedProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        self.options = options;
+        self.count = options.length as i32;
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+        self.thumb = Eased::at(model.get() as f64);
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** The width of every option: the widest label and room either side. */
+    pub(file) fn cellWidth(self, ctx : Context, st : ItemStyle) : f64 {
+        let mut widest : f64 = 0.0;
+        for (i of 0..self.count) {
+            widest = Mathx::fmax(widest, ctx.textWidth(FaceKind::Sans, self.options[i as i64], st.px));
+        }
+        return widest + 2.0 * st.padX;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ItemStyle = ctx.theme.item(self.props.size);
+        let natural : f64 = self.cellWidth(ctx, st) * (self.count as f64) + 8.0;
+        return limits.constrain(Size {
+            w: self.props.width.resolve(limits.maxW, natural),
+            h: st.height + 8.0,
+        });
+    }
+
+    /** The index under `x`, or -1. */
+    pub(file) fn indexAt(self, x : f64) : i32 {
+        let inner : f64 = self.area.w - 8.0;
+        if (inner <= 0.0 || self.count == 0) {
+            return -1;
+        }
+        let i : i32 = Mathx::floorI((x - self.area.x - 4.0) / (inner / (self.count as f64)));
+        if (i < 0 || i >= self.count) {
+            return -1;
+        }
+        return i;
+    }
+
+    /** Choose option `i`. */
+    pub(file) fn choose(mut self, ctx : Context, i : i32) : void {
+        if (i < 0 || i >= self.count || i == self.model.get()) {
+            return;
+        }
+        self.model.set(i);
+        let h : (i32) => void = self.onChange;
+        h(i);
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.indexAt(e.x);
+                self.wantHand(ctx);
+            }
+        }
+        if (g == Gesture::Click) {
+            self.choose(ctx, self.indexAt(e.x));
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            if (e.key == Key::Left) {
+                self.choose(ctx, self.model.get() - 1);
+                return true;
+            }
+            if (e.key == Key::Right) {
+                self.choose(ctx, self.model.get() + 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.thumb = self.thumb.toward(self.model.get() as f64).step(dt, Rate::MOVE);
+        let moving : bool = self.animate(ctx, dt);
+        return moving || !self.thumb.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ItemStyle = ctx.theme.item(self.props.size);
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius + 3.0);
+        p.fillRound(rr, Brush::solid(ctx.theme.trackTint().rgb, ctx.theme.trackTint().a));
+        if (self.ringShown(ctx)) {
+            let ring : Tint = pal.accent.faded(self.focusT.alpha());
+            p.strokeRound(a.grown(2.0).round(st.radius + 5.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+        if (self.count == 0) {
+            return;
+        }
+        let cell : f64 = (a.w - 8.0) / (self.count as f64);
+        let slot : Bounds = Bounds::make(a.x + 4.0 + cell * self.thumb.value, a.y + 4.0, cell, a.h - 8.0);
+        let tr : RRect = slot.round(st.radius);
+        p.shadow(tr, 0.0, 1.0, 4.0, 0.0, pal.shadow.faded(70));
+        p.fillRound(tr, Brush::solid(pal.raised.rgb, pal.raised.a));
+        p.strokeRound(tr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        for (i of 0..self.count) {
+            let label : string = self.options[i as i64];
+            let w : f64 = ctx.textWidth(FaceKind::Sans, label, st.px);
+            let near : f64 = 1.0 - Mathx::fmin(1.0, (self.thumb.value - (i as f64)).abs());
+            let mut ink : Tint = st.text.mixed(st.textSelected, Mathx::roundI(near * 255.0));
+            if (self.props.disabled) {
+                ink = st.textOff;
+            }
+            let cx : f64 = a.x + 4.0 + cell * (i as f64) + (cell - w) * 0.5;
+            let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h);
+            p.text(FaceKind::Sans, label, cx, base, st.px, ink);
+        }
+    }
+}

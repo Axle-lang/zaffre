@@ -1,0 +1,238 @@
+// tabs — a strip of titles over a stack of pages, one page shown at a time.
+//
+//     let tab : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new Tabs(["General", "Network", "About"], tab, [
+//         new Column(FlexProps { }, [ ... ]),
+//         new Column(FlexProps { }, [ ... ]),
+//         new Label("v0.1"),
+//     ])
+//
+// `TabBar` is the strip by itself, for a program that lays its pages out some other way and reads
+// the same model. The underline slides to the chosen title; Left and Right move the choice while
+// the bar has the focus. Only the page on show is laid out, drawn, and given events — a hidden
+// page does not take part in the Tab order.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::styles::ItemStyle;
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** Space between neighbouring titles. */
+const TAB_GAP : f64 = 4.0;
+
+/** The handler a tab bar without one runs. */
+fn ignoreTab(v : i32) : void {
+}
+
+/** The strip of titles. */
+pub class TabBar : Control {
+    titles : string[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    size : ControlSize;
+    onChange : (i32) => void = ignoreTab;
+    mark : Eased;
+    hot : i32 = -1;
+    left : f64[] = malloc<f64>(32 as i64);
+    right : f64[] = malloc<f64>(32 as i64);
+
+    /** A bar of `titles`, reading and writing `model` (the chosen index). */
+    constructor(titles : string[], model : Shared<Model<i32>>) {
+        self.titles = titles;
+        self.count = titles.length as i32;
+        self.model = model;
+        self.size = ControlSize::Md;
+        self.mark = Eased::at(model.get() as f64);
+    }
+
+    /** A bar that also tells `onChange` when the user picks a title. */
+    constructor(titles : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        self.titles = titles;
+        self.count = titles.length as i32;
+        self.model = model;
+        self.size = ControlSize::Md;
+        self.onChange = onChange;
+        self.mark = Eased::at(model.get() as f64);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ItemStyle = ctx.theme.item(self.size);
+        let mut x : f64 = 0.0;
+        for (i of 0..self.count) {
+            let w : f64 = ctx.textWidth(FaceKind::Bold, self.titles[i as i64], st.px) + 2.0 * st.padX;
+            self.left[i as i64] = x;
+            self.right[i as i64] = x + w;
+            x = x + w + TAB_GAP;
+        }
+        return limits.constrain(Size { w: Mathx::fmax(0.0, x - TAB_GAP), h: st.height + 6.0 });
+    }
+
+    /** The title under `x`, or -1. */
+    pub(file) fn indexAt(self, x : f64) : i32 {
+        let rel : f64 = x - self.area.x;
+        for (i of 0..self.count) {
+            if (rel >= self.left[i as i64] && rel < self.right[i as i64] + TAB_GAP * 0.5) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    pub(file) fn choose(mut self, ctx : Context, i : i32) : void {
+        if (i < 0 || i >= self.count || i == self.model.get()) {
+            return;
+        }
+        self.model.set(i);
+        let h : (i32) => void = self.onChange;
+        h(i);
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.indexAt(e.x);
+                self.wantHand(ctx);
+            }
+        }
+        if (g == Gesture::Click) {
+            self.choose(ctx, self.indexAt(e.x));
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            if (e.key == Key::Left) {
+                self.choose(ctx, self.model.get() - 1);
+                return true;
+            }
+            if (e.key == Key::Right) {
+                self.choose(ctx, self.model.get() + 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.mark = self.mark.toward(self.model.get() as f64).step(dt, Rate::MOVE);
+        let moving : bool = self.animate(ctx, dt);
+        return moving || !self.mark.settled();
+    }
+
+    /** The span the underline covers at the eased position `t`, between two titles' spans. */
+    pub(file) fn spanAt(self, t : f64) : (f64, f64) {
+        if (self.count == 0) {
+            return (0.0, 0.0);
+        }
+        let lo : i32 = Mathx::clampI(Mathx::floorI(t), 0, self.count - 1);
+        let hi : i32 = Mathx::clampI(lo + 1, 0, self.count - 1);
+        let f : f64 = Mathx::clamp01(t - (lo as f64));
+        return (Mathx::lerp(self.left[lo as i64], self.left[hi as i64], f), Mathx::lerp(self.right[lo as i64], self.right[hi as i64], f));
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ItemStyle = ctx.theme.item(self.size);
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        p.line(a.x, a.bottom() - 0.5, a.right(), a.bottom() - 0.5, 1.0, pal.line);
+        let chosen : i32 = self.model.get();
+        for (i of 0..self.count) {
+            let x : f64 = a.x + self.left[i as i64];
+            let w : f64 = self.right[i as i64] - self.left[i as i64];
+            let cell : Bounds = Bounds::make(x, a.y + 2.0, w, a.h - 6.0);
+            if (i == self.hot && i != chosen) {
+                p.fillRound(cell.round(st.radius), Brush::solid(st.hover.rgb, st.hover.a));
+            }
+            let near : f64 = 1.0 - Mathx::fmin(1.0, (self.mark.value - (i as f64)).abs());
+            let ink : Tint = st.text.mixed(st.textSelected, Mathx::roundI(near * 255.0));
+            let tw : f64 = ctx.textWidth(FaceKind::Bold, self.titles[i as i64], st.px);
+            let base : f64 = ctx.baselineIn(FaceKind::Bold, st.px, cell.y, cell.h);
+            p.text(FaceKind::Bold, self.titles[i as i64], x + (w - tw) * 0.5, base, st.px, ink);
+        }
+        let (from0, to0) = self.spanAt(self.mark.value);
+        let bar : RRect = Bounds::make(a.x + from0 + 6.0, a.bottom() - 2.5, to0 - from0 - 12.0, 2.5).round(1.25);
+        p.fillRound(bar, Brush::solid(pal.accent.rgb, pal.accent.a));
+        if (self.ringShown(ctx)) {
+            let ring : Tint = pal.accent.faded(self.focusT.alpha());
+            p.strokeRound(a.grown(2.0).round(st.radius + 2.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}
+
+/** A tab bar over pages. */
+pub class Tabs : Base, Widget {
+    bar : TabBar;
+    pages : dyn Widget[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    gap : f64 = 14.0;
+
+    /** `titles` over `pages` (one each), reading and writing `model`; the tabs take the pages. */
+    constructor(titles : string[], model : Shared<Model<i32>>, own pages : dyn Widget[]) {
+        self.bar = new TabBar(titles, model);
+        self.pages = pages;
+        self.count = pages.length as i32;
+        self.model = model;
+    }
+
+    /** The page on show. */
+    pub(file) fn current(self) : dyn Widget {
+        return self.pages[Mathx::clampI(self.model.get(), 0, self.count - 1) as i64];
+    }
+
+    pub fn flex(self) : f64 {
+        return 0.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let b : Size = self.bar.measure(ctx, limits.loosened());
+        let page : dyn Widget = self.current();
+        let rest : Limits = Limits { minW: 0.0, maxW: limits.maxW, minH: 0.0, maxH: Mathx::fmax(0.0, limits.maxH - b.h - self.gap) };
+        let s : Size = page.measure(ctx, rest);
+        return limits.constrain(Size { w: Mathx::fmax(b.w, s.w), h: b.h + self.gap + s.h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let b : Size = self.bar.measure(ctx, Limits::loose(area.w, area.h));
+        self.bar.arrange(ctx, Bounds::make(area.x, area.y, area.w, b.h));
+        let page : dyn Widget = self.current();
+        let top : f64 = area.y + b.h + self.gap;
+        let s : Size = page.measure(ctx, Limits::loose(area.w, Mathx::fmax(0.0, area.bottom() - top)));
+        page.arrange(ctx, Bounds::make(area.x, top, area.w, s.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.bar.event(ctx, e)) {
+            return true;
+        }
+        let page : dyn Widget = self.current();
+        return page.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let a : bool = self.bar.tick(ctx, dt);
+        let page : dyn Widget = self.current();
+        let b : bool = page.tick(ctx, dt);
+        return a || b;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.bar.paint(ctx, p);
+        let page : dyn Widget = self.current();
+        page.paint(ctx, p);
+    }
+}

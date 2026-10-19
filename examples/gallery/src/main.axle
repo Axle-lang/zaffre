@@ -12,7 +12,7 @@
 use zaffre::{
     View, Theme, Fonts, App, AppDesc, Model,
     Column, Row, Panel, Label, Button, Switch, Checkbox, Radio, Slider, TextField, Badge, Avatar,
-    ProgressBar, Spinner, Spacer, Divider,
+    ProgressBar, Spinner, Spacer, Divider, Segmented, Tabs, Select, Alert, Scroll, ScrollProps,
     FlexProps, PanelProps, LabelProps, ButtonProps, ToggleProps, SliderProps, FieldProps,
     TextRole, ButtonKind, ControlSize, Tone, Elevation, IconKind, Insets, Align, Justify, Length,
 };
@@ -23,7 +23,7 @@ use std::lang::IndexOutOfBoundsException;
 const WIDTH : i32 = 1040;
 
 /** The height of the window, and of the snapshot. */
-const HEIGHT : i32 = 700;
+const HEIGHT : i32 = 1080;
 
 /** The whole page, as the view a window or a snapshot shows. */
 fn build() : View {
@@ -98,9 +98,43 @@ fn build() : View {
         new Label("let mut total = 42;", TextRole::Mono),
     ]));
 
+    let tab : Shared<Model<i32>> = new shared Model<i32>(0);
+    let layout : Shared<Model<i32>> = new shared Model<i32>(1);
+    let size : Shared<Model<i32>> = new shared Model<i32>(-1);
+
+    let navigation = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, [
+        new Label("Navigation", TextRole::H3),
+        new Tabs(["General", "Network", "About"], tab, [
+            new Column(FlexProps { gap: 14.0, align: Align::Start }, [
+                new Segmented(["List", "Grid", "Board"], layout),
+                new Select(["Small", "Medium", "Large"], size),
+            ]),
+            new Label("Nothing to configure on the network.", TextRole::Dim),
+            new Label("zaffre 0.1 — native, themable, atomic.", TextRole::Dim),
+        ]),
+    ]));
+
+    let feedback = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, [
+        new Label("Feedback", TextRole::H3),
+        new Alert(Tone::Ok, "Saved", "Your preferences were stored."),
+        new Alert(Tone::Warn, "Disk almost full", "Only 2 GB are left on this volume, so downloads may fail."),
+        new Alert(Tone::Danger, "Connection lost"),
+        new Scroll(ScrollProps { height: Length::Px(96.0), width: Length::Fill }, new Column(FlexProps { gap: 6.0 }, [
+            new Label("Scrolling content, line 1", TextRole::Dim),
+            new Label("Scrolling content, line 2", TextRole::Dim),
+            new Label("Scrolling content, line 3", TextRole::Dim),
+            new Label("Scrolling content, line 4", TextRole::Dim),
+            new Label("Scrolling content, line 5", TextRole::Dim),
+            new Label("Scrolling content, line 6", TextRole::Dim),
+            new Label("Scrolling content, line 7", TextRole::Dim),
+            new Label("Scrolling content, line 8", TextRole::Dim),
+        ])),
+    ]));
+
     let page = new Column(FlexProps { gap: 22.0, padding: Insets::all(28.0) }, [
         header,
         new Row(FlexProps { gap: 22.0, align: Align::Start }, [controls, status]),
+        new Row(FlexProps { gap: 22.0, align: Align::Start }, [navigation, feedback]),
     ]);
 
     return new View(Theme::dark(), fonts, dark, page);

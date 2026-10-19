@@ -1,0 +1,204 @@
+// scroll — a window onto a child taller than the room it was given.
+//
+//     new Scroll(ScrollProps { height: Length::Px(240.0) }, new Column(FlexProps { }, [ ... ]))
+//
+// The child is measured at the window's width with no limit on its height, and drawn shifted up by
+// the offset, clipped to the window. The wheel moves the offset, and so does dragging the thumb of
+// the bar that fades in at the right edge when there is something to scroll. A press or a wheel
+// turn outside the window never reaches the child, though it may have a part that is clipped away
+// but still inside its own box; moves and releases always do, so a drag that began inside ends
+// properly.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::core::geometry::{Size, Bounds, Limits, Length, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** How a scroll area is sized. */
+pub struct ScrollProps {
+    /** The window's height: the child's, a fixed number, or as much as it is offered. */
+    pub height : Length = Length::Auto;
+
+    /** The window's width. */
+    pub width : Length = Length::Auto;
+
+    /** How far one wheel notch moves the content, in pixels. */
+    pub step : f64 = 56.0;
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** Thickness of the bar's thumb. */
+const SCROLL_THUMB : f64 = 6.0;
+
+/** Shortest the thumb gets, however long the content. */
+const SCROLL_THUMB_MIN : f64 = 28.0;
+
+/** A vertical scroll area around one child. */
+pub class Scroll : Base, Widget {
+    props : ScrollProps;
+    kid : dyn Widget[];
+    contentW : f64 = 0.0;
+    contentH : f64 = 0.0;
+    offset : Eased = Eased::at(0.0);
+    over : bool = false;
+    grabbed : bool = false;
+    grabY : f64 = 0.0;
+    grabOffset : f64 = 0.0;
+    barT : Eased = Eased::at(0.0);
+
+    /** A scroll area around `child`, which it takes. */
+    constructor(props : ScrollProps, own child : dyn Widget) {
+        self.props = props;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = child;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** How far the content can move. */
+    pub(file) fn travel(self) : f64 {
+        return Mathx::fmax(0.0, self.contentH - self.area.h);
+    }
+
+    /** Move the offset target to `y`, held to the ends. */
+    pub fn scrollTo(mut self, ctx : Context, y : f64) : void {
+        self.offset = self.offset.toward(Mathx::clampF(y, 0.0, self.travel()));
+        ctx.invalidate();
+    }
+
+    /** The offset the content is drawn at right now. */
+    pub fn position(self) : f64 {
+        return self.offset.value;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, Limits { minW: 0.0, maxW: limits.maxW, minH: 0.0, maxH: UNBOUNDED });
+        self.contentW = s.w;
+        self.contentH = s.h;
+        return limits.constrain(Size {
+            w: self.props.width.resolve(limits.maxW, s.w),
+            h: self.props.height.resolve(limits.maxH, s.h),
+        });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let travel : f64 = Mathx::fmax(0.0, self.contentH - area.h);
+        if (self.offset.value > travel || self.offset.target > travel) {
+            self.offset = Eased { value: Mathx::fmin(self.offset.value, travel), target: Mathx::fmin(self.offset.target, travel) };
+        }
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, Bounds::make(area.x, area.y - self.offset.value, Mathx::fmax(area.w, self.contentW), self.contentH));
+    }
+
+    /** The thumb's box, or an empty one when there is nothing to scroll. */
+    pub(file) fn thumb(self) : Bounds {
+        let travel : f64 = self.travel();
+        if (travel <= 0.0) {
+            return Bounds::zero();
+        }
+        let a : Bounds = self.area;
+        let track : f64 = a.h - 8.0;
+        let len : f64 = Mathx::fmax(SCROLL_THUMB_MIN, track * a.h / self.contentH);
+        let y : f64 = a.y + 4.0 + (track - len) * (self.offset.value / travel);
+        return Bounds::make(a.right() - SCROLL_THUMB - 4.0, y, SCROLL_THUMB, len);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let inside : bool = self.area.contains(e.x, e.y);
+        if (e.kind == EventKind::PointerMove) {
+            self.over = inside && !ctx.blocked;
+            if (self.grabbed) {
+                let travel : f64 = self.travel();
+                let a : Bounds = self.area;
+                let len : f64 = self.thumb().h;
+                let room : f64 = a.h - 8.0 - len;
+                if (room > 0.0) {
+                    let y : f64 = self.grabOffset + (e.y - self.grabY) * travel / room;
+                    let t : f64 = Mathx::clampF(y, 0.0, travel);
+                    self.offset = Eased { value: t, target: t };
+                    ctx.invalidate();
+                }
+                return true;
+            }
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.over = false;
+        }
+        if (e.kind == EventKind::PointerUp && self.grabbed) {
+            self.grabbed = false;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0 && inside && !ctx.blocked) {
+            let t : Bounds = self.thumb();
+            if (!t.isEmpty() && t.grown(4.0).contains(e.x, e.y)) {
+                self.grabbed = true;
+                self.grabY = e.y;
+                self.grabOffset = self.offset.value;
+                return true;
+            }
+        }
+        if (e.kind == EventKind::Wheel && inside && !ctx.blocked) {
+            let travel : f64 = self.travel();
+            let at : f64 = self.offset.target;
+            let to : f64 = Mathx::clampF(at + e.wheel * self.props.step, 0.0, travel);
+            if (to != at) {
+                self.offset = self.offset.toward(to);
+                ctx.invalidate();
+                return true;
+            }
+            // At an end: let a scroll area further out take the wheel.
+            return false;
+        }
+        // Presses outside the window belong to whatever is there, not to the clipped child.
+        if (e.kind == EventKind::PointerDown && !inside) {
+            return false;
+        }
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let before : f64 = self.offset.value;
+        self.offset = self.offset.step(dt, Rate::MOVE);
+        let mut want : f64 = 0.0;
+        if ((self.over || self.grabbed) && self.travel() > 0.0) {
+            want = 1.0;
+        }
+        self.barT = self.barT.toward(want).step(dt, Rate::HOVER);
+        let c : dyn Widget = self.kid[0];
+        let kidMoving : bool = c.tick(ctx, dt);
+        if (self.offset.value != before) {
+            ctx.invalidate();
+        }
+        return kidMoving || !self.offset.settled() || !self.barT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        p.pushClip(a.x, a.y, a.w, a.h);
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+        p.popClip();
+        let t : Bounds = self.thumb();
+        if (!t.isEmpty()) {
+            let pal = ctx.theme.palette;
+            let mut level : i32 = 70 + Mathx::roundI(self.barT.value * 110.0);
+            if (self.grabbed) {
+                level = 230;
+            }
+            p.fillRound(t.round(SCROLL_THUMB * 0.5), Brush::solid(pal.textFaint.rgb, level));
+        }
+    }
+}
