@@ -1,0 +1,35 @@
+// keys — smalt's scancodes, in the library's own words.
+
+use smalt::Scancode;
+use crate::core::event::Key;
+
+/** Key translation. */
+pub class Keys {
+    /** The `Key` a smalt scancode is, or `Key::Other`. */
+    pub static fn key(sc : Scancode) : Key {
+        return match sc {
+            Scancode::Return => Key::Enter,
+            Scancode::KeypadEnter => Key::Enter,
+            Scancode::Escape => Key::Escape,
+            Scancode::Space => Key::Space,
+            Scancode::Tab => Key::Tab,
+            Scancode::Backspace => Key::Backspace,
+            Scancode::Delete => Key::Delete,
+            Scancode::Left => Key::Left,
+            Scancode::Right => Key::Right,
+            Scancode::Up => Key::Up,
+            Scancode::Down => Key::Down,
+            Scancode::Home => Key::Home,
+            Scancode::End => Key::End,
+            Scancode::PageUp => Key::PageUp,
+            Scancode::PageDown => Key::PageDown,
+            Scancode::A => Key::A,
+            Scancode::C => Key::C,
+            Scancode::V => Key::V,
+            Scancode::X => Key::X,
+            Scancode::Y => Key::Y,
+            Scancode::Z => Key::Z,
+            _ => Key::Other,
+        };
+    }
+}

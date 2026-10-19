@@ -156,13 +156,23 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
         errors.append("%s: %s" % (rel, msg))
 
     # --- imports -----------------------------------------------------------------
-    for m in re.finditer(r"^\s*use\s+(crate|smalt)::([\w:]+)(?:::\{([^}]*)\}|::(\w+))?;", text, re.M):
+    for m in re.finditer(r"^\s*use\s+(crate|smalt|zaffre)::([\w:]+)(?:::\{([^}]*)\}|::(\w+))?;", text, re.M):
         root_name, pathstr, group, single = m.group(1), m.group(2), m.group(3), m.group(4)
         names = []
         if group:
             names = [n.strip() for n in group.split(",") if n.strip()]
         elif single:
             names = [single]
+        if root_name == "zaffre":
+            # `use zaffre::{A, B}` from an example: every name must be a declaration somewhere in src/
+            allnames = set()
+            for f in idx.decls.values():
+                allnames |= f
+            for n in ([pathstr] if not names else names):
+                base = n.split(" as ")[0].strip()
+                if base not in allnames:
+                    err("`use zaffre::…` names `%s`, which the library does not declare" % base)
+            continue
         if root_name == "smalt":
             if smalt is None:
                 continue
@@ -181,6 +191,13 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
                 target = parts[:cut]
                 break
         if target is None:
+            # a directory: `use crate::gfx::{canvas, tint};` names modules inside it
+            if any(k[:len(parts)] == parts for k in idx.modules):
+                for n in names:
+                    base = n.split(" as ")[0].strip()
+                    if parts + (base,) not in idx.modules:
+                        err("`%s` is not a module under crate::%s" % (base, pathstr))
+                continue
             err("`use crate::%s` names no module" % pathstr)
             continue
         f = idx.modules[target]

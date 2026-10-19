@@ -1,0 +1,185 @@
+// app — the window loop: smalt's events in, a frame out, and sleep in between.
+//
+// `App::run` opens a window, builds a surface the size of its client area, and turns smalt's events
+// into `UiEvent`s for a `View`. Each pass of the loop does what the view says it needs:
+//
+//   * nothing changed and nothing animates  — sleep in the OS until an event arrives or the view's
+//     next timed wake (a caret to blink), so an idle program uses no measurable CPU;
+//   * something animates — wait at most one frame (16 ms) so the loop is paced, then draw;
+//   * something changed — draw now.
+//
+// The shell is the one place that names smalt's window and event types; everything under it is
+// written against plain values, so a program that already has a window — a game painting a menu
+// over its own frame — drives a `View` itself with the same four calls (`resize`, `input`,
+// `update`, `render`) and never uses this file.
+//
+// What smalt does not have yet, and so this does not do: the pointer's shape (the view asks, the
+// window stays an arrow), the system clipboard (copy and paste work inside the program), the
+// window's scale factor (everything is drawn at the pixel size smalt reports).
+
+use smalt::{
+    Platform, PlatformError, WindowDesc, Clock, Events, EventKind as SmaltKind, Event, Surface, MouseButton,
+    Scancode, Bmp
+};
+use crate::core::event::{UiEvent, EventKind, Key, Mod};
+use crate::core::view::View;
+use crate::shell::keys::Keys;
+
+/** Longest the loop sleeps with nothing to do, in milliseconds. */
+const APP_IDLE_MS : i32 = 1000;
+
+/** The wait while something animates: about a frame. */
+const APP_FRAME_MS : i32 = 16;
+
+/** How a window is asked for. */
+pub struct AppDesc {
+    /** The title in the window's caption. */
+    pub title : string = "zaffre";
+
+    /** Client width in pixels. */
+    pub width : i32 = 960;
+
+    /** Client height in pixels. */
+    pub height : i32 = 640;
+
+    /** Whether the user may resize it. */
+    pub resizable : bool = true;
+}
+
+/** Running an interface in a window. */
+pub class App {
+    /** The modifier bits that are down now. */
+    pub(file) static fn modsOf(events : Events) : i32 {
+        let mut m : i32 = 0;
+        if (events.isKeyDown(Scancode::LeftShift) || events.isKeyDown(Scancode::RightShift)) {
+            m = m | Mod::SHIFT;
+        }
+        if (events.isKeyDown(Scancode::LeftControl) || events.isKeyDown(Scancode::RightControl)) {
+            m = m | Mod::CTRL;
+        }
+        if (events.isKeyDown(Scancode::LeftAlt) || events.isKeyDown(Scancode::RightAlt)) {
+            m = m | Mod::ALT;
+        }
+        return m;
+    }
+
+    /** The library's number for smalt's mouse button. */
+    pub(file) static fn buttonOf(b : MouseButton) : i32 {
+        return match b {
+            MouseButton::Left => 0,
+            MouseButton::Right => 1,
+            MouseButton::Middle => 2,
+            _ => 3,
+        };
+    }
+
+    /**
+     * Open a window as `desc` says and run `view` in it until it is closed. Answers the exit code:
+     * 0, or 1 when the window could not be opened.
+     */
+    pub static fn run(desc : AppDesc, view : View) : i32 {
+        try {
+            return App::drive(desc, view);
+        } catch e : PlatformError {
+            println(e.message);
+            return 1;
+        }
+    }
+
+    pub(file) static fn drive(desc : AppDesc, view : View) : i32 ! PlatformError {
+        let platform = new Platform();
+        defer platform.close();
+        let win = platform.open(WindowDesc { title: desc.title, w: desc.width, h: desc.height, resizable: desc.resizable });
+        defer win.close();
+        let clock = new Clock();
+        defer clock.close();
+        let events = new Events();
+        defer events.close();
+        let screen = new Surface(desc.width, desc.height);
+        defer screen.close();
+
+        view.resize(desc.width as f64, desc.height as f64);
+        let start : f64 = clock.seconds();
+        let mut mx : f64 = 0.0;
+        let mut my : f64 = 0.0;
+        let mut running : bool = true;
+
+        while (running && win.isOpen()) {
+            let mut wait : i32 = APP_IDLE_MS;
+            if (view.isAnimating()) {
+                wait = APP_FRAME_MS;
+            } else if (view.isDirty()) {
+                wait = 0;
+            } else {
+                let s : f64 = view.waitSeconds() * 1000.0;
+                if (s < (APP_IDLE_MS as f64)) {
+                    wait = s.ceilToInt() as i32;
+                }
+            }
+            events.wait(win, clock, wait);
+            while (events.hasNext()) {
+                let e : Event = events.next();
+                match e.kind {
+                    SmaltKind::Quit => {
+                        running = false;
+                    },
+                    SmaltKind::WindowResized => {
+                        screen.resize(e.width, e.height);
+                        view.resize(e.width as f64, e.height as f64);
+                    },
+                    SmaltKind::MouseMotion => {
+                        mx = e.x as f64;
+                        my = e.y as f64;
+                        view.input(UiEvent { kind: EventKind::PointerMove, x: mx, y: my, mods: App::modsOf(events) });
+                    },
+                    SmaltKind::MouseButtonDown => {
+                        mx = e.x as f64;
+                        my = e.y as f64;
+                        view.input(UiEvent { kind: EventKind::PointerDown, x: mx, y: my, button: App::buttonOf(e.button), mods: App::modsOf(events) });
+                    },
+                    SmaltKind::MouseButtonUp => {
+                        mx = e.x as f64;
+                        my = e.y as f64;
+                        view.input(UiEvent { kind: EventKind::PointerUp, x: mx, y: my, button: App::buttonOf(e.button), mods: App::modsOf(events) });
+                    },
+                    SmaltKind::MouseWheel => {
+                        view.input(UiEvent { kind: EventKind::Wheel, x: mx, y: my, wheel: e.wheel as f64, mods: App::modsOf(events) });
+                    },
+                    SmaltKind::KeyDown => {
+                        view.input(UiEvent { kind: EventKind::KeyDown, key: Keys::key(e.scancode), mods: App::modsOf(events), repeat: e.repeat });
+                    },
+                    SmaltKind::KeyUp => {
+                        view.input(UiEvent { kind: EventKind::KeyUp, key: Keys::key(e.scancode), mods: App::modsOf(events) });
+                    },
+                    SmaltKind::TextInput => {
+                        view.input(UiEvent { kind: EventKind::Text, cp: e.text, mods: App::modsOf(events) });
+                    },
+                    SmaltKind::WindowFocusLost => {
+                        view.input(UiEvent { kind: EventKind::WindowBlur });
+                    },
+                    _ => {
+                    },
+                }
+            }
+            view.update(clock.seconds() - start);
+            if (view.needsFrame() && !win.minimised()) {
+                view.render(screen.frame());
+                screen.present(win);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Draw `view` once at `w` by `h` into the BMP file at `path`, with no window: the picture a test
+     * compares and a README shows. Answers whether the file was written.
+     */
+    pub static fn snapshot(view : View, w : i32, h : i32, path : string) : bool {
+        let screen = new Surface(w, h);
+        defer screen.close();
+        view.resize(w as f64, h as f64);
+        view.update(0.0);
+        view.render(screen.frame());
+        return Bmp::write(path, screen.frame());
+    }
+}

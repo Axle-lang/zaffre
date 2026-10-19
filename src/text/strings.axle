@@ -1,0 +1,151 @@
+// strings — editing a `string` by byte offset.
+//
+// A `string` is immutable UTF-8, so an edit is a new string built from pieces of the old one. These
+// are the pieces a text field needs: slicing by byte offsets that fall on codepoint boundaries,
+// inserting, deleting, and stepping a caret a codepoint or a word at a time. Offsets are bytes
+// (what `Typeset` and the caret speak); a position that falls inside a codepoint is moved to the
+// start of it rather than splitting it.
+
+use std::text::StringBuilder;
+use crate::text::typeset::Utf8;
+
+/** String editing. */
+pub class Strings {
+    /** `s` with `cp` appended as one codepoint. */
+    pub static fn appendCp(sb : StringBuilder, cp : i32) : void {
+        sb.appendChar(cp);
+    }
+
+    /** The string for the single codepoint `cp`. */
+    pub static fn ofCp(cp : i32) : string {
+        let sb : StringBuilder = new StringBuilder();
+        sb.appendChar(cp);
+        return sb.toString();
+    }
+
+    /** Move `i` back to the start of the codepoint it is inside. */
+    pub static fn boundary(s : string, i : i64) : i64 {
+        let len : i64 = s.byteLength;
+        if (i <= 0) {
+            return 0;
+        }
+        if (i >= len) {
+            return len;
+        }
+        let mut j : i64 = i;
+        while (j > 0 && (s.byteAt(j) & 192) == 128) {
+            j = j - 1;
+        }
+        return j;
+    }
+
+    /** Bytes [`a`, `b`) of `s` as a string. */
+    pub static fn slice(s : string, a : i64, b : i64) : string {
+        let lo : i64 = Strings::boundary(s, a);
+        let hi : i64 = Strings::boundary(s, b);
+        let sb : StringBuilder = new StringBuilder();
+        let mut i : i64 = lo;
+        while (i < hi) {
+            let (cp, n) = Utf8::next(s, i);
+            if (n <= 0) {
+                break;
+            }
+            sb.appendChar(cp);
+            i = i + (n as i64);
+        }
+        return sb.toString();
+    }
+
+    /** `s` with `text` inserted at byte `at`. */
+    pub static fn insert(s : string, at : i64, text : string) : string {
+        let len : i64 = s.byteLength;
+        let p : i64 = Strings::boundary(s, at);
+        return Strings::slice(s, 0, p) + text + Strings::slice(s, p, len);
+    }
+
+    /** `s` with bytes [`a`, `b`) removed. */
+    pub static fn remove(s : string, a : i64, b : i64) : string {
+        let len : i64 = s.byteLength;
+        return Strings::slice(s, 0, a) + Strings::slice(s, b, len);
+    }
+
+    /** The byte offset one codepoint before `i`. */
+    pub static fn left(s : string, i : i64) : i64 {
+        return Utf8::previous(s, Strings::boundary(s, i));
+    }
+
+    /** The byte offset one codepoint after `i`. */
+    pub static fn right(s : string, i : i64) : i64 {
+        let p : i64 = Strings::boundary(s, i);
+        let (cp, n) = Utf8::next(s, p);
+        return p + (n as i64);
+    }
+
+    /** Whether `cp` belongs to a word: a letter, a digit or an underscore. */
+    pub static fn isWord(cp : i32) : bool {
+        return (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) || cp == 95 || cp > 127;
+    }
+
+    /** The byte offset of the start of the word before `i` (skipping spaces first). */
+    pub static fn wordLeft(s : string, i : i64) : i64 {
+        let mut p : i64 = Strings::boundary(s, i);
+        while (p > 0) {
+            let q : i64 = Utf8::previous(s, p);
+            let (cp, n) = Utf8::next(s, q);
+            if (Strings::isWord(cp)) {
+                break;
+            }
+            p = q;
+        }
+        while (p > 0) {
+            let q : i64 = Utf8::previous(s, p);
+            let (cp, n) = Utf8::next(s, q);
+            if (!Strings::isWord(cp)) {
+                break;
+            }
+            p = q;
+        }
+        return p;
+    }
+
+    /** The byte offset of the end of the word after `i` (skipping spaces first). */
+    pub static fn wordRight(s : string, i : i64) : i64 {
+        let len : i64 = s.byteLength;
+        let mut p : i64 = Strings::boundary(s, i);
+        while (p < len) {
+            let (cp, n) = Utf8::next(s, p);
+            if (Strings::isWord(cp)) {
+                break;
+            }
+            p = p + (n as i64);
+        }
+        while (p < len) {
+            let (cp, n) = Utf8::next(s, p);
+            if (!Strings::isWord(cp)) {
+                break;
+            }
+            p = p + (n as i64);
+        }
+        return p;
+    }
+
+    /** `s` with newlines turned into spaces, for pasting into a single-line field. */
+    pub static fn singleLine(s : string) : string {
+        let sb : StringBuilder = new StringBuilder();
+        let mut i : i64 = 0;
+        let len : i64 = s.byteLength;
+        while (i < len) {
+            let (cp, n) = Utf8::next(s, i);
+            if (n <= 0) {
+                break;
+            }
+            if (cp == 10 || cp == 13 || cp == 9) {
+                sb.appendChar(32);
+            } else {
+                sb.appendChar(cp);
+            }
+            i = i + (n as i64);
+        }
+        return sb.toString();
+    }
+}

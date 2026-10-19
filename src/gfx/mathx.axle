@@ -69,6 +69,11 @@ pub class Mathx {
         return (v + 0.5).floorToInt() as i32;
     }
 
+    /** The fractional part of `v`: `v` less the largest integer not above it, in [0, 1). */
+    pub static fn fract(v : f64) : f64 {
+        return v - (v.floorToInt() as f64);
+    }
+
     /** The smoothstep curve of `t` in [0, 1]. */
     pub static fn smooth(t : f64) : f64 {
         return t * t * (3.0 - 2.0 * t);

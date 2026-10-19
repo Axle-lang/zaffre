@@ -1,0 +1,271 @@
+// view — the root: one tree of widgets, its overlays, and everything that turns events and time
+// into a frame.
+//
+// A `View` owns the widget at the root of an interface and a `Context`. Its job is a frame's worth
+// of the same four steps, in the same order, whoever drives it:
+//
+//     view.resize(w, h);            // the size changed
+//     view.input(event);            // something happened  (any number of times)
+//     view.update(seconds);         // time passed; animations advance
+//     view.render(frame);           // lay out, draw into a smalt `Frame`
+//
+// and two questions the loop asks to know whether to bother: `needsFrame()` (something changed or
+// is animating) and `waitSeconds()` (how long it may sleep when it is not).
+//
+// Overlays — menus, tooltips, dialogs — are widgets the tree asked for (`Context::openOverlay`) and
+// the view keeps above the root. They see events first, they are painted last, and while the
+// pointer is over one the widgets beneath it are told not to light up.
+
+use smalt::Frame;
+use crate::gfx::canvas::Canvas;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::gfx::tint::Tint;
+use crate::style::theme::Theme;
+use crate::text::fonts::Fonts;
+use crate::paint::painter::{Painter, CpuPainter};
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::Widget;
+
+/** Overlays that can be open at once. */
+const VIEW_OVERLAYS : i32 = 8;
+
+/** An interface: a root widget, its overlays, and its context. */
+pub class View {
+    ctx : Context;
+    kid : dyn Widget[];
+    overlays : dyn Widget[] = malloc<dyn Widget>(VIEW_OVERLAYS as i64);
+    used : i32 = 0;
+    animating : bool = true;
+    lastTime : f64 = 0.0;
+    dark : Shared<Model<bool>>;
+
+    /** An interface drawn with `theme` and `fonts`, whose root widget is `root`. */
+    constructor(own theme : Theme, fonts : Shared<Fonts>, own root : dyn Widget) {
+        self.dark = new shared Model<bool>(theme.isDark);
+        self.ctx = new Context(theme, fonts);
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = root;
+    }
+
+    /**
+     * As above, with the model dark mode follows made by the caller — so a switch in `root` can be
+     * built bound to it before the view exists.
+     */
+    constructor(own theme : Theme, fonts : Shared<Fonts>, dark : Shared<Model<bool>>, own root : dyn Widget) {
+        theme.setDark(dark.get());
+        self.dark = dark;
+        self.ctx = new Context(theme, fonts);
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = root;
+    }
+
+    // ─── State the loop reads ────────────────────────────────────
+
+    /** Whether a new frame is wanted: something changed, or something is animating. */
+    pub fn needsFrame(self) : bool {
+        return self.ctx.dirty || self.animating;
+    }
+
+    /** Whether something is animating: the loop should be paced at about a frame. */
+    pub fn isAnimating(self) : bool {
+        return self.animating;
+    }
+
+    /** Whether something changed since the last frame. */
+    pub fn isDirty(self) : bool {
+        return self.ctx.dirty;
+    }
+
+    /** Seconds the loop may sleep with nothing to do: 0 while animating, else until the next timed wake. */
+    pub fn waitSeconds(self) : f64 {
+        if (self.animating || self.ctx.dirty) {
+            return 0.0;
+        }
+        return self.ctx.wake;
+    }
+
+    /** The pointer shape the widget under the pointer asked for. */
+    pub fn cursor(self) : Cursor {
+        return self.ctx.cursor;
+    }
+
+    /** Text the program copied (Ctrl+C in a field), for the shell to mirror to the system clipboard. */
+    pub fn clipboard(self) : string {
+        return self.ctx.clip;
+    }
+
+    /** Set the clipboard text, as the shell does when the system's changes. */
+    pub fn setClipboard(mut self, text : string) : void {
+        self.ctx.clip = text;
+    }
+
+    /**
+     * The model the interface's dark mode follows. A switch bound to it changes the theme from
+     * inside the interface; the program may write it too.
+     */
+    pub fn darkMode(self) : Shared<Model<bool>> {
+        return self.dark;
+    }
+
+    /** Change the theme and redraw. */
+    pub fn setTheme(mut self, own theme : Theme) : void {
+        self.ctx.theme = theme;
+        self.ctx.invalidate();
+    }
+
+    /** Ask for a frame. */
+    pub fn invalidate(mut self) : void {
+        self.ctx.invalidate();
+    }
+
+    // ─── Input and time ──────────────────────────────────────────
+
+    /** The interface is now `w` by `h` logical pixels. */
+    pub fn resize(mut self, w : f64, h : f64) : void {
+        self.ctx.width = w;
+        self.ctx.height = h;
+        self.ctx.invalidate();
+    }
+
+    /** Move overlays the tree asked for into the open list. */
+    pub(file) fn adopt(mut self) : void {
+        let n : i32 = self.ctx.waiting();
+        for (i of 0..n) {
+            let w : dyn Widget = self.ctx.takeOverlay(i);
+            // A finished overlay's slot is reused; with none free the request is dropped.
+            let mut slot : i32 = -1;
+            for (k of 0..self.used) {
+                let o : dyn Widget = self.overlays[k as i64];
+                if (o.done()) {
+                    slot = k;
+                    break;
+                }
+            }
+            if (slot < 0 && self.used < VIEW_OVERLAYS) {
+                slot = self.used;
+                self.used = self.used + 1;
+            }
+            if (slot >= 0) {
+                self.overlays[slot as i64] = w;
+            }
+        }
+        self.ctx.clearWaiting();
+    }
+
+    /** Whether an overlay is solid at (`x`, `y`). */
+    pub(file) fn overlayAt(self, x : f64, y : f64) : bool {
+        for (k of 0..self.used) {
+            let o : dyn Widget = self.overlays[k as i64];
+            if (!o.done() && o.covers(x, y)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Deliver an event: to the overlays from the topmost down, then to the tree. */
+    pub fn input(mut self, e : UiEvent) : void {
+        if (e.isPointer() || e.kind == EventKind::PointerLeave) {
+            self.ctx.pointerX = e.x;
+            self.ctx.pointerY = e.y;
+            self.ctx.blocked = e.kind != EventKind::PointerLeave && self.overlayAt(e.x, e.y);
+        }
+        if (e.kind == EventKind::PointerMove) {
+            self.ctx.cursor = Cursor::Arrow;
+        }
+        // Tab moves the focus; the tree never sees it.
+        if (e.kind == EventKind::KeyDown && e.key == Key::Tab) {
+            self.ctx.focusNext(e.shift());
+            return;
+        }
+        let mut used : bool = false;
+        let mut k : i32 = self.used - 1;
+        while (k >= 0 && !used) {
+            let o : dyn Widget = self.overlays[k as i64];
+            if (!o.done()) {
+                used = o.event(self.ctx, e);
+            }
+            k = k - 1;
+        }
+        if (!used || e.kind == EventKind::PointerMove || e.kind == EventKind::PointerUp) {
+            let root : dyn Widget = self.kid[0];
+            root.event(self.ctx, e);
+        }
+        self.adopt();
+        self.ctx.invalidate();
+    }
+
+    /** Time is now `now` seconds since the interface began; animate. */
+    pub fn update(mut self, now : f64) : void {
+        let mut dt : f64 = now - self.lastTime;
+        if (dt < 0.0) {
+            dt = 0.0;
+        }
+        if (dt > 0.1) {
+            dt = 0.1;
+        }
+        self.lastTime = now;
+        self.ctx.now = now;
+        if (self.dark.get() != self.ctx.theme.isDark) {
+            self.ctx.theme.setDark(self.dark.get());
+            self.ctx.invalidate();
+        }
+        self.ctx.wake = 1000000000.0;
+        let root : dyn Widget = self.kid[0];
+        let mut moving : bool = root.tick(self.ctx, dt);
+        for (k of 0..self.used) {
+            let o : dyn Widget = self.overlays[k as i64];
+            if (!o.done() && o.tick(self.ctx, dt)) {
+                moving = true;
+            }
+        }
+        self.adopt();
+        self.animating = moving;
+    }
+
+    // ─── Drawing ─────────────────────────────────────────────────
+
+    /** Lay the tree and the overlays out for the current size. */
+    pub fn layout(mut self) : void {
+        let w : f64 = self.ctx.width;
+        let h : f64 = self.ctx.height;
+        self.ctx.beginLayout();
+        let root : dyn Widget = self.kid[0];
+        root.measure(self.ctx, Limits::tight(w, h));
+        root.arrange(self.ctx, Bounds::make(0.0, 0.0, w, h));
+        for (k of 0..self.used) {
+            let o : dyn Widget = self.overlays[k as i64];
+            if (!o.done()) {
+                o.measure(self.ctx, Limits::tight(w, h));
+                o.arrange(self.ctx, Bounds::make(0.0, 0.0, w, h));
+            }
+        }
+    }
+
+    /** Lay out and draw the whole interface into `f`. */
+    pub fn render(mut self, f : Frame) : void {
+        self.layout();
+        let p : CpuPainter = new CpuPainter(new Canvas(f), self.ctx.fonts);
+        self.paintWith(p);
+        self.ctx.dirty = false;
+    }
+
+    /** Draw with any painter: the page, the tree, then the overlays. */
+    pub fn paintWith(mut self, p : Painter) : void {
+        let w : f64 = self.ctx.width;
+        let h : f64 = self.ctx.height;
+        let bg : Tint = self.ctx.theme.palette.background;
+        p.fillRound(RRect::uniform(0.0, 0.0, w, h, 0.0), Brush::solid(bg.rgb, bg.a));
+        let root : dyn Widget = self.kid[0];
+        root.paint(self.ctx, p);
+        for (k of 0..self.used) {
+            let o : dyn Widget = self.overlays[k as i64];
+            if (!o.done()) {
+                o.paint(self.ctx, p);
+            }
+        }
+    }
+}

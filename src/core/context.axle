@@ -12,7 +12,11 @@
 // reference to another.
 
 use crate::style::theme::Theme;
+use crate::core::widget::Widget;
 use crate::text::fonts::{Fonts, FaceKind};
+
+/** Overlays that can be waiting to be opened. */
+const CONTEXT_PENDING : i32 = 4;
 
 /** Focus tokens one layout can announce. */
 const CONTEXT_FOCUSABLE : i32 = 512;
@@ -83,6 +87,8 @@ pub class Context {
      */
     pub wake : f64 = 1000000000.0;
 
+    pending : dyn Widget[] = malloc<dyn Widget>(CONTEXT_PENDING as i64);
+    pendingCount : i32 = 0;
     minted : i64 = 0;
     order : i64[] = malloc<i64>(CONTEXT_FOCUSABLE as i64);
     orderCount : i32 = 0;
@@ -109,6 +115,38 @@ pub class Context {
     pub fn mint(mut self) : i64 {
         self.minted = self.minted + 1;
         return self.minted;
+    }
+
+    // ─── Overlays ────────────────────────────────────────────────
+
+    /**
+     * Ask for `overlay` to be shown above everything: a menu, a tooltip, a dialog. It is adopted
+     * after the event or tick that asked. An overlay arranges itself over the whole interface and
+     * answers `covers` for the part of it that is solid; it answers `done` when it should go.
+     */
+    pub fn openOverlay(mut self, own overlay : dyn Widget) : bool {
+        if (self.pendingCount >= CONTEXT_PENDING) {
+            return false;
+        }
+        self.pending[self.pendingCount as i64] = overlay;
+        self.pendingCount = self.pendingCount + 1;
+        self.dirty = true;
+        return true;
+    }
+
+    /** How many overlays are waiting to be adopted. */
+    pub fn waiting(self) : i32 {
+        return self.pendingCount;
+    }
+
+    /** The overlay waiting at `i`, handed to the caller that adopts it. */
+    pub fn takeOverlay(mut self, i : i32) : dyn Widget {
+        return self.pending[i as i64];
+    }
+
+    /** Forget the overlays that were waiting, once they have been adopted. */
+    pub fn clearWaiting(mut self) : void {
+        self.pendingCount = 0;
     }
 
     // ─── Focus ───────────────────────────────────────────────────

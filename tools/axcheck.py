@@ -212,7 +212,7 @@ class World:
         imp = fi.imports.get(name)
         if imp:
             src, orig = imp
-            if src == "crate":
+            if src in ("crate", "zaffre"):
                 return self.crate_classes.get(orig)
             if src == "smalt":
                 return self.smalt_classes.get(orig)
@@ -1004,7 +1004,7 @@ class Checker:
                 return None
             elif name in self.fi.imports:
                 src, orig = self.fi.imports[name]
-                if src == "crate":
+                if src in ("crate", "zaffre"):
                     fns = self.w.crate_fns.get(orig)
             elif name in PRELUDE or name in self.generics:
                 return None

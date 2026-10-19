@@ -49,6 +49,16 @@ pub trait Widget {
     fn flex(self) : f64 {
         return 0.0;
     }
+
+    /** For an overlay: whether it is over the point (`x`, `y`), so widgets beneath must not react to it. Default: no. */
+    fn covers(self, x : f64, y : f64) : bool {
+        return false;
+    }
+
+    /** For an overlay: whether it has finished and may be dropped. Default: no. */
+    fn done(self) : bool {
+        return false;
+    }
 }
 
 /** What a pointer event did to a `Control`. */

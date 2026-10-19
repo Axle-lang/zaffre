@@ -1,0 +1,119 @@
+// progress — a bar that fills, and a spinner that turns.
+//
+// A `ProgressBar` shows a `Model<f64>` between 0 and 1, or — built without a model — a segment that
+// sweeps back and forth for work whose length nobody knows. A `Spinner` is a ring of dots that
+// fades round, for the same case in a smaller space. Both animate off the context's clock, so they
+// ask for frames while they are on screen and cost nothing when they are not drawn.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::styles::ProgressStyle;
+use crate::style::variants::ControlSize;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** A bar that fills as a model rises, or sweeps when the end is unknown. */
+pub class ProgressBar : Base, Widget {
+    model : Shared<Model<f64>>;
+    indeterminate : bool;
+    size : ControlSize;
+    width : Length;
+
+    /** A bar showing `model` (0..1). */
+    constructor(model : Shared<Model<f64>>) {
+        self.model = model;
+        self.indeterminate = false;
+        self.size = ControlSize::Md;
+        self.width = Length::Px(200.0);
+    }
+
+    /** A bar showing `model`, of the given `width` and `size`. */
+    constructor(model : Shared<Model<f64>>, width : Length, size : ControlSize) {
+        self.model = model;
+        self.indeterminate = false;
+        self.size = size;
+        self.width = width;
+    }
+
+    /** A bar that sweeps, for work of unknown length. */
+    constructor(width : Length, size : ControlSize) {
+        self.model = new shared Model<f64>(0.0);
+        self.indeterminate = true;
+        self.size = size;
+        self.width = width;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ProgressStyle = ctx.theme.bar(self.size);
+        return limits.constrain(Size { w: self.width.resolve(limits.maxW, 200.0), h: st.height });
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.indeterminate;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : ProgressStyle = ctx.theme.bar(self.size);
+        let a : Bounds = self.area;
+        let r : f64 = a.h * 0.5;
+        p.fillRound(a.round(r), Brush::solid(st.track.rgb, st.track.a));
+        if (self.indeterminate) {
+            let seg : f64 = a.w * 0.35;
+            let phase : f64 = Mathx::fract(ctx.now * 0.9);
+            // A triangle wave: out and back.
+            let mut t : f64 = phase * 2.0;
+            if (t > 1.0) {
+                t = 2.0 - t;
+            }
+            let x : f64 = a.x + (a.w - seg) * Mathx::smooth(t);
+            p.pushClip(a.x, a.y, a.w, a.h);
+            p.fillRound(RRect::uniform(x, a.y, seg, a.h, r), st.fill.brush(a.y, a.h));
+            p.popClip();
+            return;
+        }
+        let t : f64 = Mathx::clamp01(self.model.get());
+        if (t > 0.0) {
+            let w : f64 = Mathx::fmax(a.h, a.w * t);
+            p.fillRound(RRect::uniform(a.x, a.y, w, a.h, r), st.fill.brush(a.y, a.h));
+        }
+    }
+}
+
+/** A ring of dots that fades round. */
+pub class Spinner : Base, Widget {
+    size : ControlSize;
+
+    /** A spinner at the theme's `size`. */
+    constructor(size : ControlSize) {
+        self.size = size;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : ProgressStyle = ctx.theme.bar(self.size);
+        return limits.constrain(Size { w: st.spinner, h: st.spinner });
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return true;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let r : f64 = a.w * 0.5;
+        let dot : f64 = a.w * 0.13;
+        let head : f64 = Mathx::fract(ctx.now * 1.2);
+        let accent : Tint = ctx.theme.palette.accent;
+        for (i of 0..8) {
+            let ang : f64 = 6.283185307179586 * (i as f64) / 8.0;
+            let d : f64 = (head * 8.0 - (i as f64)) / 8.0;
+            let fade : f64 = 1.0 - Mathx::fract(d);
+            let cx : f64 = a.midX() + (r - dot) * ang.cos();
+            let cy : f64 = a.midY() + (r - dot) * ang.sin();
+            p.line(cx, cy, cx, cy, dot * (0.7 + 0.5 * fade), accent.faded(Mathx::roundI(60.0 + 195.0 * fade)));
+        }
+    }
+}

@@ -1,0 +1,141 @@
+// badge — small things that label other things: a badge, an avatar.
+//
+// A `Badge` is a pill of text in a tone (neutral, accent, ok, warn, danger) — a count, a status, a
+// tag. An `Avatar` is a disc with a person's initial on a colour derived from their name, so the
+// same person is the same colour everywhere without anyone choosing it.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::{Tint, Px};
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::styles::BadgeStyle;
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::text::typeset::Utf8;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** A pill of text. */
+pub class Badge : Base, Widget {
+    text : string;
+    tone : Tone;
+
+    /** A neutral badge saying `text`. */
+    constructor(text : string) {
+        self.text = text;
+        self.tone = Tone::Neutral;
+    }
+
+    /** A badge saying `text` in `tone`. */
+    constructor(text : string, tone : Tone) {
+        self.text = text;
+        self.tone = tone;
+    }
+
+    /** Change what it says. */
+    pub fn setText(mut self, text : string) : void {
+        self.text = text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : BadgeStyle = ctx.theme.badge(self.tone);
+        let w : f64 = ctx.textWidth(FaceKind::Bold, self.text, st.px) + 2.0 * st.padX;
+        return limits.constrain(Size { w: Mathx::fmax(w, st.height), h: st.height });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : BadgeStyle = ctx.theme.badge(self.tone);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(a.h * 0.5);
+        p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
+        p.strokeRound(rr, 1.0, Brush::solid(st.border.rgb, st.border.a));
+        let w : f64 = ctx.textWidth(FaceKind::Bold, self.text, st.px);
+        let base : f64 = ctx.baselineIn(FaceKind::Bold, st.px, a.y, a.h);
+        p.text(FaceKind::Bold, self.text, a.x + (a.w - w) * 0.5, base, st.px, st.text);
+    }
+}
+
+/** A disc with an initial on a colour that comes from the name. */
+pub class Avatar : Base, Widget {
+    name : string;
+    size : f64;
+
+    /** An avatar for `name`, `size` pixels across. */
+    constructor(name : string, size : f64) {
+        self.name = name;
+        self.size = size;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.size, h: self.size });
+    }
+
+    /** The hue (0..360) a name maps to: the same name is always the same colour. */
+    pub static fn hueOf(name : string) : f64 {
+        let mut h : i64 = 7;
+        let n : i64 = name.byteLength;
+        for (i of 0..n) {
+            h = (h * 31 + (name.byteAt(i) as i64)) % 360;
+        }
+        return h as f64;
+    }
+
+    /** The `0xRRGGBB` colour of hue `h` (0..360) at saturation `s` and value `v` (0..1). */
+    pub static fn hsv(h : f64, s : f64, v : f64) : i32 {
+        let hh : f64 = h / 60.0;
+        let sector : i32 = Mathx::floorI(hh);
+        let f : f64 = hh - (sector as f64);
+        let pp : f64 = v * (1.0 - s);
+        let q : f64 = v * (1.0 - s * f);
+        let t : f64 = v * (1.0 - s * (1.0 - f));
+        let mut r : f64 = v;
+        let mut g : f64 = t;
+        let mut b : f64 = pp;
+        let k : i32 = sector % 6;
+        if (k == 1) {
+            r = q;
+            g = v;
+            b = pp;
+        } else if (k == 2) {
+            r = pp;
+            g = v;
+            b = t;
+        } else if (k == 3) {
+            r = pp;
+            g = q;
+            b = v;
+        } else if (k == 4) {
+            r = t;
+            g = pp;
+            b = v;
+        } else if (k == 5) {
+            r = v;
+            g = pp;
+            b = q;
+        }
+        return Px::pack(Mathx::roundI(r * 255.0), Mathx::roundI(g * 255.0), Mathx::roundI(b * 255.0));
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let hue : f64 = Avatar::hueOf(self.name);
+        let top : i32 = Avatar::hsv(hue, 0.48, 0.86);
+        let bottom : i32 = Avatar::hsv(hue, 0.62, 0.66);
+        let rr : RRect = a.round(a.h * 0.5);
+        p.fillRound(rr, Brush::linear(top, 255, bottom, 255, 0.0, a.y, 0.0, a.y + a.h));
+        let (cp, n) = Utf8::next(self.name, 0);
+        if (n > 0) {
+            let mut c : i32 = cp;
+            if (c >= 97 && c <= 122) {
+                c = c - 32;
+            }
+            let initial : string = Strings::ofCp(c);
+            let px : f64 = a.h * 0.42;
+            let w : f64 = ctx.textWidth(FaceKind::Bold, initial, px);
+            let base : f64 = ctx.baselineIn(FaceKind::Bold, px, a.y, a.h);
+            p.text(FaceKind::Bold, initial, a.x + (a.w - w) * 0.5, base, px, Tint::hex(0xFFFFFF));
+        }
+    }
+}

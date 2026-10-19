@@ -35,8 +35,14 @@ const THEME_KINDS : i32 = 5;
 
 /** A palette, metrics, and the style records built from them. */
 pub class Theme {
-    /** The colours. Call `rebuild` after changing them. */
+    /** The colours in use. Call `rebuild` after changing them. */
     pub palette : Palette;
+
+    /** The palette `setDark(true)` switches to. */
+    pub darkPalette : Palette;
+
+    /** The palette `setDark(false)` switches to. */
+    pub lightPalette : Palette;
 
     /** The measures. Call `rebuild` after changing them. */
     pub metrics : Metrics;
@@ -54,22 +60,45 @@ pub class Theme {
     pub items : ItemStyle[] = malloc<ItemStyle>(3 as i64);
     pub texts : TextStyle[] = malloc<TextStyle>(9 as i64);
 
-    /** A theme from its tokens. */
-    constructor(palette : Palette, metrics : Metrics, isDark : bool) {
-        self.palette = palette;
+    /** A theme that switches between two palettes, starting in the dark one when `startDark`. */
+    constructor(dark : Palette, light : Palette, metrics : Metrics, startDark : bool) {
+        self.darkPalette = dark;
+        self.lightPalette = light;
+        self.palette = light;
+        if (startDark) {
+            self.palette = dark;
+        }
         self.metrics = metrics;
-        self.isDark = isDark;
+        self.isDark = startDark;
         self.rebuild();
     }
 
-    /** The dark theme with the standard metrics. */
-    pub static fn dark() : Theme {
-        return new Theme(Palette::dark(), Metrics::standard(), true);
+    /** The standard themes — dark and light, with the standard metrics — starting in dark mode when `startDark`. */
+    pub static fn standard(startDark : bool) : Theme {
+        return new Theme(Palette::dark(), Palette::light(), Metrics::standard(), startDark);
     }
 
-    /** The light theme with the standard metrics. */
+    /** The standard themes, starting dark. */
+    pub static fn dark() : Theme {
+        return Theme::standard(true);
+    }
+
+    /** The standard themes, starting light. */
     pub static fn light() : Theme {
-        return new Theme(Palette::light(), Metrics::standard(), false);
+        return Theme::standard(false);
+    }
+
+    /** Switch to the dark palette (or the light one) and rebuild every style record. */
+    pub fn setDark(mut self, on : bool) : void {
+        if (on == self.isDark) {
+            return;
+        }
+        self.isDark = on;
+        self.palette = self.lightPalette;
+        if (on) {
+            self.palette = self.darkPalette;
+        }
+        self.rebuild();
     }
 
     // ─── Lookups ─────────────────────────────────────────────────
