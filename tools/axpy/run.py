@@ -28,7 +28,9 @@ def sources(extra=()):
 def translate(extra=()):
     em = Emitter()
     for p in sources(extra):
-        em.add_file(parse(open(p, encoding="utf-8").read()))
+        items = parse(open(p, encoding="utf-8").read())
+        # the window loop is not run here: the program's `main` and its flag test stay behind
+        em.add_file([it for it in items if not (it.kind == "fn" and it.name in ("main", "wantsSnap"))])
     return em.emit()
 
 

@@ -25,8 +25,11 @@ const WIDTH : i32 = 1040;
 /** The height of the window, and of the snapshot. */
 const HEIGHT : i32 = 700;
 
-fn main() : i32 {
+/** The whole page, as the view a window or a snapshot shows. */
+fn build() : View {
     let fonts : Shared<Fonts> = new shared Fonts();
+    // The monospace face is optional and read from a file; without it `Mono` text uses the sans.
+    fonts.withMono("assets/fonts/JetBrainsMono-Regular.ttf", "assets/fonts/JetBrainsMono-Bold.ttf");
 
     // The values the page shows. Each is held here, by the program, and read and written by the
     // widgets bound to it.
@@ -50,7 +53,7 @@ fn main() : i32 {
         new Switch("Dark mode", dark),
     ]);
 
-    let controls = new Panel(PanelProps { elevation: Elevation::Raised, width: Length::Fill }, new Column(FlexProps { gap: 18.0 }, [
+    let controls = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0 }, [
         new Label("Controls", TextRole::H3),
         new Row(FlexProps { gap: 10.0 }, [
             new Button(ButtonProps { label: "Save changes", kind: ButtonKind::Primary, icon: IconKind::Check }, () => notifications.set(true)),
@@ -74,7 +77,7 @@ fn main() : i32 {
         new Slider(SliderProps { label: "Brightness", min: 0.0, max: 100.0, step: 5.0, decimals: 0, width: Length::Fill }, brightness),
     ]));
 
-    let status = new Panel(PanelProps { elevation: Elevation::Raised, width: Length::Fill }, new Column(FlexProps { gap: 18.0 }, [
+    let status = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0 }, [
         new Label("Status", TextRole::H3),
         new Row(FlexProps { gap: 8.0, align: Align::Center }, [
             new Badge("Online", Tone::Ok),
@@ -100,7 +103,11 @@ fn main() : i32 {
         new Row(FlexProps { gap: 22.0, align: Align::Start }, [controls, status]),
     ]);
 
-    let view = new View(Theme::dark(), fonts, dark, page);
+    return new View(Theme::dark(), fonts, dark, page);
+}
+
+fn main() : i32 {
+    let view = build();
 
     if (wantsSnap()) {
         if (App::snapshot(view, WIDTH, HEIGHT, "gallery.bmp")) {
