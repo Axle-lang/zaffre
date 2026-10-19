@@ -8,7 +8,7 @@
 // under the field, follows the pointer and the arrow keys, and closes on a pick, on Escape, or on
 // a press anywhere else — which it swallows, so closing a menu never clicks the button behind it.
 //
-// `Menu` is public on its own: a program can open one at any place with `Menu::show`, for a
+// `Menu` is public on its own: a program can open one at any place with `openMenu`, for a
 // context menu or a split button's list.
 
 use crate::gfx::mathx::Mathx;
@@ -55,19 +55,17 @@ pub class Menu : Base, Widget {
      */
     constructor(anchor : Bounds, options : string[], model : Shared<Model<i32>>, onPick : (i32) => void, isOpen : Shared<Model<bool>>, size : ControlSize) {
         self.anchor = anchor;
-        self.options = options;
         self.count = options.length as i32;
+        // The menu keeps its own list: the field that opened it still owns `options`.
+        self.options = malloc<string>(self.count as i64);
+        for (i of 0..self.count) {
+            self.options[i as i64] = options[i as i64];
+        }
         self.model = model;
         self.onPick = onPick;
         self.isOpen = isOpen;
         self.size = size;
         self.hot = model.get();
-    }
-
-    /** Open a menu of `options` under `anchor`; false when the interface has no room for another overlay. */
-    pub static fn show(ctx : Context, anchor : Bounds, options : string[], model : Shared<Model<i32>>, onPick : (i32) => void) : bool {
-        let flag : Shared<Model<bool>> = new shared Model<bool>(true);
-        return ctx.openOverlay(new Menu(anchor, options, model, onPick, flag, ControlSize::Md));
     }
 
     /** Start closing: fade out, then finish. */
@@ -251,15 +249,25 @@ pub struct SelectProps {
     /** Whether it ignores input and draws dimmed. */
     pub disabled : bool = false;
 
-    /** The select's width: a default of 220 px, a fixed number, or as much as it is offered. */
-    pub width : Length = Length::Px(220.0);
+    /** The select's width: by default 220 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
 
     /** The share of a parent's spare room it asks for. */
     pub grow : f64 = 0.0;
 }
 
+/**
+ * Open a `Menu` of `options` under `anchor`; false when the interface has no room for another
+ * overlay. A free function, not a `static` of `Menu`: the compiler drops the type argument of a
+ * `Shared<Model<i32>>` parameter inside a class's static function.
+ */
+pub fn openMenu(ctx : Context, anchor : Bounds, options : string[], model : Shared<Model<i32>>, onPick : (i32) => void) : bool {
+    let flag = new shared Model<bool>(true);
+    return ctx.openOverlay(new Menu(anchor, options, model, onPick, flag, ControlSize::Md));
+}
+
 /** A field that picks one of several options from a menu. */
-pub class Select : Control {
+pub class Select : Control, Widget {
     options : string[];
     props : SelectProps;
     model : Shared<Model<i32>>;
@@ -275,14 +283,14 @@ pub class Select : Control {
     }
 
     /** A select set as `props` say. */
-    constructor(props : SelectProps, options : string[], model : Shared<Model<i32>>) {
+    constructor(own props : SelectProps, options : string[], model : Shared<Model<i32>>) {
         self.options = options;
         self.props = props;
         self.model = model;
     }
 
     /** A select that also tells `onChange` when the user picks. */
-    constructor(props : SelectProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+    constructor(own props : SelectProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
         self.options = options;
         self.props = props;
         self.model = model;

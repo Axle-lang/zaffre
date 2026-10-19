@@ -52,8 +52,8 @@ pub struct SliderProps {
     /** Whether it ignores input and draws dimmed. */
     pub disabled : bool = false;
 
-    /** The slider's width: a default of 200 px, a fixed number, or as much as it is offered. */
-    pub width : Length = Length::Px(200.0);
+    /** The slider's width: by default 200 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
 
     /** The share of a parent's spare room it asks for. */
     pub grow : f64 = 0.0;
@@ -70,14 +70,14 @@ pub class Slider : Control, Widget {
     onChange : (f64) => void;
 
     /** A slider set as `props` say showing `model`. */
-    constructor(props : SliderProps, model : Shared<Model<f64>>) {
+    constructor(own props : SliderProps, model : Shared<Model<f64>>) {
         self.props = props;
         self.model = model;
         self.onChange = ignoreNumber;
     }
 
     /** A slider set as `props` say showing `model`, calling `onChange` as the user moves it. */
-    constructor(props : SliderProps, model : Shared<Model<f64>>, onChange : (f64) => void) {
+    constructor(own props : SliderProps, model : Shared<Model<f64>>, onChange : (f64) => void) {
         self.props = props;
         self.model = model;
         self.onChange = onChange;

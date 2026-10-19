@@ -13,7 +13,7 @@ use zaffre::{
     View, Theme, Fonts, App, AppDesc, Model,
     Column, Row, Panel, Label, Button, Switch, Checkbox, Radio, Slider, TextField, Badge, Avatar,
     ProgressBar, Spinner, Spacer, Divider, Segmented, Tabs, Select, Alert, Scroll, ScrollProps,
-    FlexProps, PanelProps, LabelProps, ButtonProps, ToggleProps, SliderProps, FieldProps,
+    Widget, FlexProps, PanelProps, LabelProps, ButtonProps, ToggleProps, SliderProps, FieldProps,
     TextRole, ButtonKind, ControlSize, Tone, Elevation, IconKind, Insets, Align, Justify, Length,
 };
 use std::sys::process::{argc, argAt};
@@ -33,109 +33,132 @@ fn build() : View {
 
     // The values the page shows. Each is held here, by the program, and read and written by the
     // widgets bound to it.
-    let dark : Shared<Model<bool>> = new shared Model<bool>(true);
-    let notifications : Shared<Model<bool>> = new shared Model<bool>(true);
-    let newsletter : Shared<Model<bool>> = new shared Model<bool>(false);
-    let plan : Shared<Model<i32>> = new shared Model<i32>(1);
-    let volume : Shared<Model<f64>> = new shared Model<f64>(0.62);
-    let brightness : Shared<Model<f64>> = new shared Model<f64>(40.0);
-    let name : Shared<Model<string>> = new shared Model<string>("Ada Lovelace");
-    let search : Shared<Model<string>> = new shared Model<string>("");
-    let progress : Shared<Model<f64>> = new shared Model<f64>(0.68);
+    let dark = new shared Model<bool>(true);
+    let notifications = new shared Model<bool>(true);
+    let newsletter = new shared Model<bool>(false);
+    let plan = new shared Model<i32>(1);
+    let volume = new shared Model<f64>(0.62);
+    let brightness = new shared Model<f64>(40.0);
+    let name = new shared Model<string>("Ada Lovelace");
+    let search = new shared Model<string>("");
+    let progress = new shared Model<f64>(0.68);
 
-    let header = new Row(FlexProps { gap: 14.0, align: Align::Center }, [
+    // A container takes its children as a `dyn Widget[]`, and the compiler only turns an array
+    // literal into one through a `let` with the type written (smalt's LIMITATIONS, 2.15) — so each
+    // group of children is named here, innermost first.
+    let titles : dyn Widget[] = [
+        new Label("Preferences", TextRole::H2),
+        new Label("Make it yours — everything here is a token away.", TextRole::Dim),
+    ];
+    let headerKids : dyn Widget[] = [
         new Avatar("Ada Lovelace", 44.0),
-        new Column(FlexProps { gap: 2.0 }, [
-            new Label("Preferences", TextRole::H2),
-            new Label("Make it yours — everything here is a token away.", TextRole::Dim),
-        ]),
+        new Column(FlexProps { gap: 2.0 }, titles),
         new Spacer(),
         new Switch("Dark mode", dark),
-    ]);
+    ];
+    let header = new Row(FlexProps { gap: 14.0, align: Align::Center }, headerKids);
 
-    let controls = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0 }, [
+    let buttons : dyn Widget[] = [
+        new Button(ButtonProps { label: "Save changes", kind: ButtonKind::Primary, icon: IconKind::Check }, () => notifications.set(true)),
+        new Button("Cancel"),
+        new Button(ButtonProps { label: "Delete", kind: ButtonKind::Danger }),
+        new Button(ButtonProps { label: "Skip", kind: ButtonKind::Ghost }),
+        new Button(ButtonProps { label: "Learn more", kind: ButtonKind::Link }),
+    ];
+    let toggles : dyn Widget[] = [
+        new Switch("Notifications", notifications),
+        new Checkbox("Subscribe to the newsletter", newsletter),
+    ];
+    let plans : dyn Widget[] = [
+        new Radio("Free", plan, 0),
+        new Radio("Pro", plan, 1),
+        new Radio("Team", plan, 2),
+    ];
+    let controlKids : dyn Widget[] = [
         new Label("Controls", TextRole::H3),
-        new Row(FlexProps { gap: 10.0 }, [
-            new Button(ButtonProps { label: "Save changes", kind: ButtonKind::Primary, icon: IconKind::Check }, () => notifications.set(true)),
-            new Button("Cancel"),
-            new Button(ButtonProps { label: "Delete", kind: ButtonKind::Danger }),
-            new Button(ButtonProps { label: "Skip", kind: ButtonKind::Ghost }),
-            new Button(ButtonProps { label: "Learn more", kind: ButtonKind::Link }),
-        ]),
+        new Row(FlexProps { gap: 10.0 }, buttons),
         new TextField(FieldProps { placeholder: "Search anything…", icon: IconKind::Search, width: Length::Fill }, search),
         new TextField(FieldProps { width: Length::Fill }, name),
-        new Column(FlexProps { gap: 10.0 }, [
-            new Switch("Notifications", notifications),
-            new Checkbox("Subscribe to the newsletter", newsletter),
-        ]),
-        new Column(FlexProps { gap: 10.0 }, [
-            new Radio("Free", plan, 0),
-            new Radio("Pro", plan, 1),
-            new Radio("Team", plan, 2),
-        ]),
+        new Column(FlexProps { gap: 10.0 }, toggles),
+        new Column(FlexProps { gap: 10.0 }, plans),
         new Slider(SliderProps { label: "Volume", width: Length::Fill }, volume),
         new Slider(SliderProps { label: "Brightness", min: 0.0, max: 100.0, step: 5.0, decimals: 0, width: Length::Fill }, brightness),
-    ]));
+    ];
+    let controls = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0 }, controlKids));
 
-    let status = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0 }, [
+    let badges : dyn Widget[] = [
+        new Badge("Online", Tone::Ok),
+        new Badge("3 warnings", Tone::Warn),
+        new Badge("Beta", Tone::Accent),
+        new Badge("Offline", Tone::Danger),
+        new Badge("v0.1"),
+    ];
+    let working : dyn Widget[] = [
+        new Spinner(ControlSize::Md),
+        new Label("Working on it…", TextRole::Dim),
+    ];
+    let statusKids : dyn Widget[] = [
         new Label("Status", TextRole::H3),
-        new Row(FlexProps { gap: 8.0, align: Align::Center }, [
-            new Badge("Online", Tone::Ok),
-            new Badge("3 warnings", Tone::Warn),
-            new Badge("Beta", Tone::Accent),
-            new Badge("Offline", Tone::Danger),
-            new Badge("v0.1"),
-        ]),
+        new Row(FlexProps { gap: 8.0, align: Align::Center }, badges),
         new Divider(),
         new Label("Upload progress", TextRole::Label),
         new ProgressBar(progress),
-        new Row(FlexProps { gap: 12.0, align: Align::Center }, [
-            new Spinner(ControlSize::Md),
-            new Label("Working on it…", TextRole::Dim),
-        ]),
+        new Row(FlexProps { gap: 12.0, align: Align::Center }, working),
         new Divider(),
         new Label(LabelProps { role: TextRole::Dim, wrap: true }, "Text is set in a role, wraps to the width it is offered, and is drawn from a real font — outlines parsed from the file and rasterised here, with kerning and quarter-pixel positions."),
         new Label("let mut total = 42;", TextRole::Mono),
-    ]));
+    ];
+    let status = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0 }, statusKids));
 
-    let tab : Shared<Model<i32>> = new shared Model<i32>(0);
-    let layout : Shared<Model<i32>> = new shared Model<i32>(1);
-    let size : Shared<Model<i32>> = new shared Model<i32>(-1);
+    let tab = new shared Model<i32>(0);
+    let layout = new shared Model<i32>(1);
+    let size = new shared Model<i32>(-1);
 
-    let navigation = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, [
+    let tabNames : string[] = ["General", "Network", "About"];
+    let layoutNames : string[] = ["List", "Grid", "Board"];
+    let sizeNames : string[] = ["Small", "Medium", "Large"];
+    let generalKids : dyn Widget[] = [
+        new Segmented(layoutNames, layout),
+        new Select(sizeNames, size),
+    ];
+    let pages : dyn Widget[] = [
+        new Column(FlexProps { gap: 14.0, align: Align::Start }, generalKids),
+        new Label("Nothing to configure on the network.", TextRole::Dim),
+        new Label("zaffre 0.1 — native, themable, atomic.", TextRole::Dim),
+    ];
+    let navigationKids : dyn Widget[] = [
         new Label("Navigation", TextRole::H3),
-        new Tabs(["General", "Network", "About"], tab, [
-            new Column(FlexProps { gap: 14.0, align: Align::Start }, [
-                new Segmented(["List", "Grid", "Board"], layout),
-                new Select(["Small", "Medium", "Large"], size),
-            ]),
-            new Label("Nothing to configure on the network.", TextRole::Dim),
-            new Label("zaffre 0.1 — native, themable, atomic.", TextRole::Dim),
-        ]),
-    ]));
+        new Tabs(tabNames, tab, pages),
+    ];
+    let navigation = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, navigationKids));
 
-    let feedback = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, [
+    let lines : dyn Widget[] = [
+        new Label("Scrolling content, line 1", TextRole::Dim),
+        new Label("Scrolling content, line 2", TextRole::Dim),
+        new Label("Scrolling content, line 3", TextRole::Dim),
+        new Label("Scrolling content, line 4", TextRole::Dim),
+        new Label("Scrolling content, line 5", TextRole::Dim),
+        new Label("Scrolling content, line 6", TextRole::Dim),
+        new Label("Scrolling content, line 7", TextRole::Dim),
+        new Label("Scrolling content, line 8", TextRole::Dim),
+    ];
+    let feedbackKids : dyn Widget[] = [
         new Label("Feedback", TextRole::H3),
         new Alert(Tone::Ok, "Saved", "Your preferences were stored."),
         new Alert(Tone::Warn, "Disk almost full", "Only 2 GB are left on this volume, so downloads may fail."),
         new Alert(Tone::Danger, "Connection lost"),
-        new Scroll(ScrollProps { height: Length::Px(96.0), width: Length::Fill }, new Column(FlexProps { gap: 6.0 }, [
-            new Label("Scrolling content, line 1", TextRole::Dim),
-            new Label("Scrolling content, line 2", TextRole::Dim),
-            new Label("Scrolling content, line 3", TextRole::Dim),
-            new Label("Scrolling content, line 4", TextRole::Dim),
-            new Label("Scrolling content, line 5", TextRole::Dim),
-            new Label("Scrolling content, line 6", TextRole::Dim),
-            new Label("Scrolling content, line 7", TextRole::Dim),
-            new Label("Scrolling content, line 8", TextRole::Dim),
-        ])),
-    ]));
+        new Scroll(ScrollProps { height: Length::Px(96.0), width: Length::Fill }, new Column(FlexProps { gap: 6.0 }, lines)),
+    ];
+    let feedback = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, feedbackKids));
 
-    let page = new Column(FlexProps { gap: 22.0, padding: Insets::all(28.0) }, [
+    let cards : dyn Widget[] = [controls, status];
+    let lowerCards : dyn Widget[] = [navigation, feedback];
+    let pageKids : dyn Widget[] = [
         header,
-        new Row(FlexProps { gap: 22.0, align: Align::Start }, [controls, status]),
-        new Row(FlexProps { gap: 22.0, align: Align::Start }, [navigation, feedback]),
-    ]);
+        new Row(FlexProps { gap: 22.0, align: Align::Start }, cards),
+        new Row(FlexProps { gap: 22.0, align: Align::Start }, lowerCards),
+    ];
+    let page = new Column(FlexProps { gap: 22.0, padding: Insets::all(28.0) }, pageKids);
 
     return new View(Theme::dark(), fonts, dark, page);
 }

@@ -43,8 +43,8 @@ pub struct FieldProps {
     /** Whether it ignores input and draws dimmed. */
     pub disabled : bool = false;
 
-    /** The field's width: a default of 220 px, a fixed number, or as much as it is offered. */
-    pub width : Length = Length::Px(220.0);
+    /** The field's width: by default 220 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
 
     /** The most characters the field accepts; 0 for no limit. */
     pub maxChars : i32 = 0;
@@ -73,7 +73,7 @@ pub class TextField : Control, Widget {
     activeT : Eased = Eased::at(0.0);
 
     /** A field set as `props` say showing `model`. */
-    constructor(props : FieldProps, model : Shared<Model<string>>) {
+    constructor(own props : FieldProps, model : Shared<Model<string>>) {
         self.props = props;
         self.model = model;
         self.onChange = ignoreText;
@@ -81,7 +81,7 @@ pub class TextField : Control, Widget {
     }
 
     /** A field showing `model`, calling `onChange` with the new text after every edit. */
-    constructor(props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void) {
+    constructor(own props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void) {
         self.props = props;
         self.model = model;
         self.onChange = onChange;
@@ -89,7 +89,7 @@ pub class TextField : Control, Widget {
     }
 
     /** A field showing `model`, calling `onChange` after every edit and `onSubmit` when Enter is pressed. */
-    constructor(props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void, onSubmit : (string) => void) {
+    constructor(own props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void, onSubmit : (string) => void) {
         self.props = props;
         self.model = model;
         self.onChange = onChange;

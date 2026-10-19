@@ -183,8 +183,8 @@ pub class Tabs : Base, Widget {
     /** `titles` over `pages` (one each), reading and writing `model`; the tabs take the pages. */
     constructor(titles : string[], model : Shared<Model<i32>>, own pages : dyn Widget[]) {
         self.bar = new TabBar(titles, model);
-        self.pages = pages;
         self.count = pages.length as i32;
+        self.pages = pages;
         self.model = model;
     }
 

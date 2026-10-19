@@ -23,7 +23,7 @@ pub(crate) class SansRegular {
 
     /** The whole file's words: every chunk, in order. */
     pub(crate) static fn words() : i32[] {
-        let out : i32[] = malloc<i32>(SansRegular::count() as i64);
+        let mut out : i32[] = malloc<i32>(SansRegular::count() as i64);
         let mut at : i64 = 0;
         for (c of 0..SansRegular::chunks()) {
             let part : i32[] = SansRegular::chunk(c);

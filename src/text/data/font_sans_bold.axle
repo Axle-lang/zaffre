@@ -23,7 +23,7 @@ pub(crate) class SansBold {
 
     /** The whole file's words: every chunk, in order. */
     pub(crate) static fn words() : i32[] {
-        let out : i32[] = malloc<i32>(SansBold::count() as i64);
+        let mut out : i32[] = malloc<i32>(SansBold::count() as i64);
         let mut at : i64 = 0;
         for (c of 0..SansBold::chunks()) {
             let part : i32[] = SansBold::chunk(c);
