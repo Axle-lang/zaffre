@@ -39,9 +39,13 @@ def typed(view, s):
         view.input(ev(z.EventKind.Text, cp=ord(c)))
 
 
+_clock = [0.0]
+
+
 def settle(view, n=30):
     for _ in range(n):
-        view.update(0.016)
+        _clock[0] += 0.016
+        view.update(_clock[0])
 
 
 fonts = z.Fonts()
@@ -124,5 +128,78 @@ check("onChange fired", changes and changes[-1] == "okok", changes[-3:])
 settle(view)
 view.layout()
 view.render(rt.Surface(480, 400).frame())
+
+# ── molecules ─────────────────────────────────────────────────────────────────────
+seg_m, tab_m, sel_m = z.Model(0), z.Model(0), z.Model(-1)
+picked = []
+seg = z.Segmented(["List", "Grid", "Board"], seg_m)
+sel = z.Select(_rt_lit(z.SelectProps, None, width=z.Length.Px(200.0)), ["Small", "Medium", "Large"], sel_m, lambda i: picked.append(i))
+pg0 = z.Label("page zero"); pg1 = z.Label("page one")
+tabs = z.Tabs(["One", "Two"], tab_m, [pg0, pg1])
+rows = [z.Label("row %d" % i) for i in range(30)]
+scroll = z.Scroll(_rt_lit(z.ScrollProps, None, height=z.Length.Px(120.0)), z.Column(_rt_lit(z.FlexProps, None, gap=4.0), rows))
+alert = z.Alert(z.Tone.Warn, "Careful", "A rather long message that must wrap onto a second line when the box is narrow.")
+page2 = z.Column(_rt_lit(z.FlexProps, None, gap=12.0, padding=z.Insets.all(20.0), width=z.Length.Px(360.0), align=z.Align.Stretch), [seg, sel, tabs, scroll, alert])
+v2 = z.View(z.Theme.dark(), fonts, page2)
+v2.resize(480.0, 600.0)
+settle(v2); v2.layout()
+
+
+def cl(v, w, fx=0.5, fy=0.5):
+    b = w.bounds()
+    x, y = b.x + b.w * fx, b.y + b.h * fy
+    v.input(ev(z.EventKind.PointerMove, x, y)); v.input(ev(z.EventKind.PointerDown, x, y)); v.input(ev(z.EventKind.PointerUp, x, y))
+    return x, y
+
+
+cl(v2, seg, 0.9)
+check("segmented click on the third option", seg_m.get() == 2, seg_m.get())
+v2.ctx.setFocus(seg.token, True)
+key(v2, z.Key.Left)
+check("segmented Left moves the choice", seg_m.get() == 1, seg_m.get())
+key(v2, z.Key.Left); key(v2, z.Key.Left)
+check("segmented stops at the first option", seg_m.get() == 0, seg_m.get())
+settle(v2, 40)
+check("segmented thumb settles on the choice", abs(seg.thumb.value - 0.0) < 0.01, seg.thumb.value)
+
+check("tabs show page zero", tabs.current() is pg0)
+tb = tabs.bar; cl(v2, tb, ((tb.left[1] + tb.right[1]) / 2) / tb.bounds().w)
+check("tab click chooses the second page", tab_m.get() == 1 and tabs.current() is pg1, tab_m.get())
+v2.layout()
+check("the page on show is laid out", pg1.bounds().w > 0 and pg1.bounds().h > 0, (pg1.bounds().w, pg1.bounds().h))
+
+cl(v2, sel)
+check("select click opens a menu overlay", v2.used == 1 and sel.isOpen.get() is True, v2.used)
+v2.layout(); settle(v2, 20)
+menu = v2.overlays[0]
+mb = menu.sheet
+check("menu sits under the field", mb.y >= sel.bounds().bottom(), (mb.y, sel.bounds().bottom()))
+click_x, click_y = mb.x + 30, mb.y + 4 + 36 * 1.5
+v2.input(ev(z.EventKind.PointerMove, click_x, click_y))
+v2.input(ev(z.EventKind.PointerDown, click_x, click_y))
+v2.input(ev(z.EventKind.PointerUp, click_x, click_y))
+settle(v2, 40)
+check("picking a row sets the model and tells the handler", sel_m.get() == 1 and picked == [1], (sel_m.get(), picked))
+check("menu closes and is dropped", sel.isOpen.get() is False and menu.done(), (sel.isOpen.get(), menu.done()))
+before = seg_m.get()
+cl(v2, sel); v2.layout(); settle(v2, 20)
+sb = seg.bounds()
+v2.input(ev(z.EventKind.PointerDown, sb.x + sb.w * 0.9, sb.y + 5)); v2.input(ev(z.EventKind.PointerUp, sb.x + sb.w * 0.9, sb.y + 5))
+settle(v2, 40)
+check("a press outside closes the menu and is swallowed", sel.isOpen.get() is False and seg_m.get() == before, (sel.isOpen.get(), seg_m.get()))
+cl(v2, sel); v2.layout(); settle(v2, 20)
+key(v2, z.Key.Escape); settle(v2, 40)
+check("Escape closes the menu", sel.isOpen.get() is False)
+
+sbx = scroll.bounds()
+v2.input(ev(z.EventKind.PointerMove, sbx.x + 20, sbx.y + 20))
+v2.input(ev(z.EventKind.Wheel, sbx.x + 20, sbx.y + 20, wheel=2.0))
+settle(v2, 60); v2.layout()
+check("wheel scrolls the content", scroll.position() > 100.0, scroll.position())
+check("scrolled rows moved up", rows[0].bounds().y < sbx.y - 50, rows[0].bounds().y)
+v2.input(ev(z.EventKind.Wheel, sbx.x + 20, sbx.y + 20, wheel=1000.0)); settle(v2, 200); v2.layout()
+check("scroll stops at the end", abs(scroll.position() - (scroll.contentH - sbx.h)) < 0.5, (scroll.position(), scroll.contentH - sbx.h))
+check("alert wraps to the width offered", alert.bounds().h > 60.0, alert.bounds().h)
+v2.render(rt.Surface(480, 600).frame())
 print("FAIL %d" % len(fails) if fails else "all ok")
 sys.exit(1 if fails else 0)

@@ -11,8 +11,8 @@ if len(sys.argv) > 2 and sys.argv[2] == "light":
 W, H = 1040, 1080
 screen = rt.Surface(W, H)
 view.resize(float(W), float(H))
-for _ in range(40):
-    view.update(0.016)
+for i in range(1, 61):
+    view.update(0.016 * i)
 view.render(screen.frame())
 from PIL import Image
 Image.fromarray(screen.pixels_rgb()).save(sys.argv[1] if len(sys.argv) > 1 else "gallery.png")
