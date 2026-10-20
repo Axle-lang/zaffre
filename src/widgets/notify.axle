@@ -75,6 +75,16 @@ pub class Notifier {
         self.dialogCount = self.dialogCount + 1;
     }
 
+    /** Forget the toasts, once they have been shown. */
+    pub fn clearToasts(mut self) : void {
+        self.toastCount = 0;
+    }
+
+    /** Forget the dialogs, once they have been shown. */
+    pub fn clearDialogs(mut self) : void {
+        self.dialogCount = 0;
+    }
+
     /** Whether anything is waiting. */
     pub fn pending(self) : bool {
         return self.toastCount > 0 || self.dialogCount > 0;
@@ -127,12 +137,12 @@ pub class Notifications : Base, Widget {
             let r : ToastRequest = n.toasts[i as i64];
             ctx.openOverlay(new Toast(r.text, r.tone));
         }
-        n.toastCount = 0;
+        n.clearToasts();
         for (i of 0..n.dialogCount) {
             let r : DialogRequest = n.dialogs[i as i64];
             ctx.openOverlay(new Dialog(r.props, r.onConfirm, r.onCancel));
         }
-        n.dialogCount = 0;
+        n.clearDialogs();
         return moving;
     }
 }
