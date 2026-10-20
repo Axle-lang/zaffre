@@ -1,0 +1,106 @@
+// usermenu — the signed-in person at the corner of an application: an avatar, a name, a menu.
+//
+//     new UserMenu(UserProps { name: "Ada Lovelace", email: "ada@analytical.org" }, entries, (i) => act(i))
+//
+// A button with the person's avatar, name and a chevron; pressing it opens a menu whose first row
+// is the person's name and address, then the entries (`MenuEntry`, as in a dropdown), right-aligned
+// under the button. The handler is told the index of the entry in the array.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::badge::Avatar;
+use crate::widgets::dropdown::{ActionMenu, MenuEntry};
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Who the menu is for. */
+pub struct UserProps {
+    /** The person's name. */
+    pub name : string = "";
+
+    /** Their address, or any second line. */
+    pub email : string = "";
+
+    /** Whether the name shows beside the avatar (off for a narrow bar). */
+    pub showName : bool = true;
+}
+
+/** An avatar button that opens a menu. */
+pub class UserMenu : Control, Widget {
+    props : UserProps;
+    entries : MenuEntry[];
+    onPick : (i32) => void;
+    isOpen : Shared<Model<bool>>;
+
+    /** A menu for the person `props` name, with `entries` after the heading. */
+    constructor(own props : UserProps, entries : MenuEntry[], onPick : (i32) => void) {
+        super();
+        self.props = props;
+        self.onPick = onPick;
+        self.isOpen = new shared Model<bool>(false);
+        // The heading row is the first entry: the name, disabled so it cannot be chosen.
+        let n : i32 = entries.length as i32;
+        self.entries = malloc<MenuEntry>((n + 2) as i64);
+        self.entries[0] = MenuEntry { label: self.props.name, icon: IconKind::User, disabled: true };
+        self.entries[1] = MenuEntry { separator: true };
+        for (i of 0..n) {
+            self.entries[(i + 2) as i64] = entries[i as i64];
+        }
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut w : f64 = 52.0;
+        if (self.props.showName) {
+            w = w + ctx.textWidth(FaceKind::Bold, self.props.name, 14.0) + 22.0;
+        }
+        return limits.constrain(Size { w: w, h: 44.0 });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click && !self.isOpen.get()) {
+            self.isOpen.set(true);
+            let menu = new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, true);
+            menu.shift = 2;
+            let ok : bool = ctx.openOverlay(menu);
+            if (!ok) {
+                self.isOpen.set(false);
+            }
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        if (self.hoverT.value > 0.01 || self.isOpen.get()) {
+            let wash : Tint = pal.hover.faded(self.isOpen.get() ? 255 : self.hoverT.alpha());
+            p.fillRound(a.round(ctx.theme.metrics.radiusControl), Brush::solid(wash.rgb, wash.a));
+        }
+        Avatar::draw(ctx, p, self.props.name, a.x + 6.0, a.y + 6.0, 32.0);
+        if (self.props.showName) {
+            p.text(FaceKind::Bold, self.props.name, a.x + 46.0, ctx.baselineIn(FaceKind::Bold, 14.0, a.y, a.h), 14.0, pal.text);
+            Icons::draw(p, IconKind::ChevronDown, a.right() - 24.0, a.midY() - 8.0, 16.0, pal.textFaint);
+        }
+        if (self.ringShown(ctx)) {
+            let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+            p.strokeRound(a.grown(4.0).round(ctx.theme.metrics.radiusControl + 4.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

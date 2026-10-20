@@ -1,0 +1,94 @@
+// badgeover — a count or a status dot pinned to the corner of another widget: an unread number on a
+// bell, "online" on an avatar.
+//
+//     new OverlayBadge(OverlayProps { count: 3 }, new Button(ButtonProps { icon: IconKind::Bell, kind: ButtonKind::Outline }))
+//     new OverlayBadge(OverlayProps { dot: true, tone: Tone::Ok }, new Avatar("Ada", 40.0))
+//
+// The badge is drawn over the widget, ringed in the surface colour so it separates from what is
+// under it, and the widget keeps its own box and its own events.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** What an overlay badge shows. */
+pub struct OverlayProps {
+    /** The number shown; nothing when 0 and not a dot. */
+    pub count : i32 = 0;
+
+    /** Whether it is a plain dot instead of a number. */
+    pub dot : bool = false;
+
+    /** The colour of a dot (a count is always red). */
+    pub tone : Tone = Tone::Danger;
+}
+
+/** A badge over a widget. */
+pub class OverlayBadge : Base, Widget {
+    props : OverlayProps;
+    kid : dyn Widget[];
+
+    /** A badge as `props` say over `child`, which it takes. */
+    constructor(own props : OverlayProps, own child : dyn Widget) {
+        self.props = props;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = child;
+    }
+
+    pub fn flex(self) : f64 {
+        let c : dyn Widget = self.kid[0];
+        return c.flex();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        if (self.props.dot) {
+            let cx : f64 = a.right() - 3.0;
+            let cy : f64 = a.bottom() - 3.0;
+            p.line(cx, cy, cx, cy, 14.0, pal.surface);
+            p.line(cx, cy, cx, cy, 10.0, ctx.theme.hue(self.props.tone).s500);
+            return;
+        }
+        if (self.props.count <= 0) {
+            return;
+        }
+        let text : string = self.props.count > 99 ? "99+" : Format::whole(self.props.count as f64);
+        let w : f64 = Mathx::fmax(20.0, ctx.textWidth(FaceKind::Bold, text, 11.0) + 12.0);
+        let box : Bounds = Bounds::make(a.right() - w * 0.6, a.y - 8.0, w, 20.0);
+        p.fillRound(box.grown(2.0).round(12.0), Brush::solid(pal.surface.rgb, pal.surface.a));
+        p.fillRound(box.round(10.0), Brush::solid(pal.danger.s600.rgb, 255));
+        let tw : f64 = ctx.textWidth(FaceKind::Bold, text, 11.0);
+        p.text(FaceKind::Bold, text, box.midX() - tw * 0.5, ctx.baselineIn(FaceKind::Bold, 11.0, box.y, box.h), 11.0, pal.onAccent);
+    }
+}

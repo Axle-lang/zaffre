@@ -85,6 +85,9 @@ pub class ActionMenu : Base, Widget {
     sheet : Bounds = Bounds::zero();
     above : bool = false;
 
+    /** What is taken from an entry's index before the handler hears it: a menu with rows of its own in front of the caller's. */
+    pub shift : i32 = 0;
+
     /** A menu of `entries` under `anchor`, telling `onPick` the index chosen; `isOpen` is cleared when it goes away. */
     constructor(anchor : Bounds, entries : MenuEntry[], onPick : (i32) => void, isOpen : Shared<Model<bool>>, alignEnd : bool) {
         self.anchor = anchor;
@@ -190,7 +193,7 @@ pub class ActionMenu : Base, Widget {
             return;
         }
         let h : (i32) => void = self.onPick;
-        h(i);
+        h(i - self.shift);
         self.close(ctx);
     }
 

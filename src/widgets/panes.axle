@@ -1,0 +1,366 @@
+// panes — layouts beyond the row and the column: two panes with a draggable divider, a grid of equal
+// columns, and one section that opens and closes.
+//
+//     let share : Shared<Model<f64>> = new shared Model<f64>(0.3);
+//     new Split(SplitProps { horizontal: true }, share, sidebar, content)
+//     new Grid(GridProps { columns: 3 }, tiles)
+//     new Collapsible("Advanced options", open, options)
+//
+// A `Split` holds the share of its first pane (0 to 1) in a model, so the program can save where
+// the user left the divider and restore it. A `Grid` gives every column the same width and every
+// row the height of its tallest cell. A `Collapsible` is one accordion section, switched by a bool.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a split lays its panes out. */
+pub struct SplitProps {
+    /** Whether the panes sit side by side (the divider is vertical) rather than one over the other. */
+    pub horizontal : bool = true;
+
+    /** The least share either pane keeps. */
+    pub least : f64 = 0.15;
+}
+
+/** Width of the divider's grab area. */
+const SPLIT_GRAB : f64 = 12.0;
+
+/** Two panes and the divider between them. */
+pub class Split : Control, Widget {
+    props : SplitProps;
+    share : Shared<Model<f64>>;
+    panes : dyn Widget[];
+    dragging : bool = false;
+
+    /** Panes `first` and `second` (which the split takes) at the share held in `share`. */
+    constructor(own props : SplitProps, share : Shared<Model<f64>>, own first : dyn Widget, own second : dyn Widget) {
+        super();
+        self.props = props;
+        self.share = share;
+        self.panes = malloc<dyn Widget>(2 as i64);
+        self.panes[0] = first;
+        self.panes[1] = second;
+        self.focusable = false;
+    }
+
+    pub fn flex(self) : f64 {
+        return 1.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = limits.boundedW() ? limits.maxW : 640.0;
+        let h : f64 = limits.boundedH() ? limits.maxH : 360.0;
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    /** The extent of the first pane along the split's axis. */
+    pub(file) fn firstExtent(self) : f64 {
+        let total : f64 = self.props.horizontal ? self.area.w : self.area.h;
+        return Mathx::clampF(self.share.get(), self.props.least, 1.0 - self.props.least) * total;
+    }
+
+    /** The box of the divider's grab area. */
+    pub(file) fn grabBox(self) : Bounds {
+        let a : Bounds = self.area;
+        if (self.props.horizontal) {
+            return Bounds::make(a.x + self.firstExtent() - SPLIT_GRAB * 0.5, a.y, SPLIT_GRAB, a.h);
+        }
+        return Bounds::make(a.x, a.y + self.firstExtent() - SPLIT_GRAB * 0.5, a.w, SPLIT_GRAB);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let first : dyn Widget = self.panes[0];
+        let second : dyn Widget = self.panes[1];
+        let e : f64 = self.firstExtent();
+        let half : f64 = 0.5;
+        if (self.props.horizontal) {
+            let a : Bounds = Bounds::make(area.x, area.y, e - half, area.h);
+            let b : Bounds = Bounds::make(area.x + e + half, area.y, area.w - e - half, area.h);
+            first.measure(ctx, Limits::tight(a.w, a.h));
+            first.arrange(ctx, a);
+            second.measure(ctx, Limits::tight(b.w, b.h));
+            second.arrange(ctx, b);
+        } else {
+            let a : Bounds = Bounds::make(area.x, area.y, area.w, e - half);
+            let b : Bounds = Bounds::make(area.x, area.y + e + half, area.w, area.h - e - half);
+            first.measure(ctx, Limits::tight(a.w, a.h));
+            first.arrange(ctx, a);
+            second.measure(ctx, Limits::tight(b.w, b.h));
+            second.arrange(ctx, b);
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let over : bool = self.grabBox().contains(e.x, e.y) && !ctx.blocked;
+        if (e.kind == EventKind::PointerMove) {
+            if (self.dragging) {
+                let total : f64 = self.props.horizontal ? self.area.w : self.area.h;
+                let at : f64 = self.props.horizontal ? e.x - self.area.x : e.y - self.area.y;
+                self.share.set(Mathx::clampF(at / total, self.props.least, 1.0 - self.props.least));
+                ctx.wantCursor(self.props.horizontal ? Cursor::ResizeH : Cursor::ResizeV);
+                ctx.invalidate();
+                return true;
+            }
+            if (over) {
+                ctx.wantCursor(self.props.horizontal ? Cursor::ResizeH : Cursor::ResizeV);
+                self.hovered = true;
+            } else {
+                self.hovered = false;
+            }
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0 && over) {
+            self.dragging = true;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::PointerUp && self.dragging) {
+            self.dragging = false;
+            ctx.invalidate();
+            return true;
+        }
+        let first : dyn Widget = self.panes[0];
+        let second : dyn Widget = self.panes[1];
+        if (first.event(ctx, e)) {
+            return true;
+        }
+        return second.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let first : dyn Widget = self.panes[0];
+        let second : dyn Widget = self.panes[1];
+        let a : bool = first.tick(ctx, dt);
+        let b : bool = second.tick(ctx, dt);
+        let c : bool = self.animate(ctx, dt);
+        return a || b || c;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let first : dyn Widget = self.panes[0];
+        let second : dyn Widget = self.panes[1];
+        first.paint(ctx, p);
+        second.paint(ctx, p);
+        let g : Bounds = self.grabBox();
+        let live : bool = self.dragging || self.hovered;
+        let ink : Tint = live ? ctx.theme.palette.primary.s500 : pal.line;
+        if (self.props.horizontal) {
+            p.line(g.midX(), g.y, g.midX(), g.bottom(), live ? 2.0 : 1.0, ink);
+            // A grip of three dots in the middle.
+            for (i of 0..3) {
+                let y : f64 = g.midY() + ((i - 1) as f64) * 7.0;
+                p.line(g.midX(), y, g.midX(), y, 3.0, live ? Tint::hex(0xFFFFFF) : pal.textOff);
+            }
+        } else {
+            p.line(g.x, g.midY(), g.right(), g.midY(), live ? 2.0 : 1.0, ink);
+            for (i of 0..3) {
+                let x : f64 = g.midX() + ((i - 1) as f64) * 7.0;
+                p.line(x, g.midY(), x, g.midY(), 3.0, live ? Tint::hex(0xFFFFFF) : pal.textOff);
+            }
+        }
+    }
+}
+
+/** How a grid is set. */
+pub struct GridProps {
+    /** How many columns. */
+    pub columns : i32 = 3;
+
+    /** Space between cells, across and down. */
+    pub gap : f64 = 16.0;
+}
+
+/** Cells in equal columns. */
+pub class Grid : Base, Widget {
+    props : GridProps;
+    cells : dyn Widget[];
+    count : i32;
+    heights : f64[];
+    cellW : f64 = 0.0;
+
+    /** A grid of `cells`, which it takes, filled row by row. */
+    constructor(own props : GridProps, own cells : dyn Widget[]) {
+        self.props = props;
+        self.cells = cells;
+        self.count = self.cells.length as i32;
+        self.heights = malloc<f64>(((self.count / Mathx::clampI(self.props.columns, 1, 64)) + 2) as i64);
+    }
+
+    /** The number of rows. */
+    pub(file) fn rows(self) : i32 {
+        let c : i32 = Mathx::clampI(self.props.columns, 1, 64);
+        return (self.count + c - 1) / c;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : i32 = Mathx::clampI(self.props.columns, 1, 64);
+        let w : f64 = limits.boundedW() ? limits.maxW : 720.0;
+        self.cellW = (w - self.props.gap * ((c - 1) as f64)) / (c as f64);
+        let mut h : f64 = 0.0;
+        for (r of 0..self.rows()) {
+            let mut rowH : f64 = 0.0;
+            for (k of 0..c) {
+                let i : i32 = r * c + k;
+                if (i >= self.count) {
+                    break;
+                }
+                let cell : dyn Widget = self.cells[i as i64];
+                let s : Size = cell.measure(ctx, Limits { minW: self.cellW, maxW: self.cellW, minH: 0.0, maxH: UNBOUNDED });
+                rowH = Mathx::fmax(rowH, s.h);
+            }
+            self.heights[r as i64] = rowH;
+            h = h + rowH;
+            if (r < self.rows() - 1) {
+                h = h + self.props.gap;
+            }
+        }
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : i32 = Mathx::clampI(self.props.columns, 1, 64);
+        let mut y : f64 = area.y;
+        for (r of 0..self.rows()) {
+            for (k of 0..c) {
+                let i : i32 = r * c + k;
+                if (i >= self.count) {
+                    break;
+                }
+                let cell : dyn Widget = self.cells[i as i64];
+                let x : f64 = area.x + (self.cellW + self.props.gap) * (k as f64);
+                cell.measure(ctx, Limits::tight(self.cellW, self.heights[r as i64]));
+                cell.arrange(ctx, Bounds::make(x, y, self.cellW, self.heights[r as i64]));
+            }
+            y = y + self.heights[r as i64] + self.props.gap;
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        for (i of 0..self.cells.length) {
+            let cell : dyn Widget = self.cells[i];
+            if (cell.event(ctx, e)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut moving : bool = false;
+        for (i of 0..self.cells.length) {
+            let cell : dyn Widget = self.cells[i];
+            if (cell.tick(ctx, dt)) {
+                moving = true;
+            }
+        }
+        return moving;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        for (i of 0..self.cells.length) {
+            let cell : dyn Widget = self.cells[i];
+            cell.paint(ctx, p);
+        }
+    }
+}
+
+/** Height of a collapsible's title bar. */
+const COLLAPSE_HEAD : f64 = 44.0;
+
+/** One section that opens and closes. */
+pub class Collapsible : Control, Widget {
+    title : string;
+    open : Shared<Model<bool>>;
+    kid : dyn Widget[];
+    openT : Eased;
+    bodyH : f64 = 0.0;
+    hot : bool = false;
+
+    /** A section titled `title` around `body` (which it takes), open when `open` holds true. */
+    constructor(title : string, open : Shared<Model<bool>>, own body : dyn Widget) {
+        super();
+        self.title = title;
+        self.open = open;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = body;
+        self.openT = Eased::at(open.get() ? 1.0 : 0.0);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = limits.boundedW() ? limits.maxW : 360.0;
+        let c : dyn Widget = self.kid[0];
+        self.bodyH = c.measure(ctx, Limits { minW: 0.0, maxW: w, minH: 0.0, maxH: UNBOUNDED }).h;
+        return limits.constrain(Size { w: w, h: COLLAPSE_HEAD + (self.bodyH + 8.0) * Mathx::smooth(self.openT.value) });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.focusable) {
+            if (self.token == 0) {
+                self.token = ctx.mint();
+            }
+            ctx.announce(self.token);
+        }
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, Bounds::make(area.x, area.y + COLLAPSE_HEAD, area.w, self.bodyH));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        let head : Bounds = Bounds::make(self.area.x, self.area.y, self.area.w, COLLAPSE_HEAD);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = self.hovered && head.contains(e.x, e.y);
+            if (self.hot) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (g == Gesture::Click && head.contains(e.x, e.y)) {
+            self.open.set(!self.open.get());
+            ctx.invalidate();
+            return true;
+        }
+        if (self.openT.value > 0.5) {
+            let c : dyn Widget = self.kid[0];
+            if (c.event(ctx, e)) {
+                return true;
+            }
+        }
+        return g == Gesture::Press && head.contains(e.x, e.y);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.openT = self.openT.toward(self.open.get() ? 1.0 : 0.0).step(dt, Rate::OPEN);
+        let c : dyn Widget = self.kid[0];
+        let inner : bool = self.openT.value > 0.5 && c.tick(ctx, dt);
+        return self.animate(ctx, dt) || !self.openT.settled() || inner;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        if (self.hot) {
+            p.fillRound(Bounds::make(a.x, a.y, a.w, COLLAPSE_HEAD).round(ctx.theme.metrics.radiusInline), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        p.text(FaceKind::Bold, self.title, a.x + 12.0, ctx.baselineIn(FaceKind::Bold, 14.0, a.y, COLLAPSE_HEAD), 14.0, pal.text);
+        let chevron : IconKind = self.openT.value > 0.5 ? IconKind::ChevronUp : IconKind::ChevronDown;
+        Icons::draw(p, chevron, a.right() - 28.0, a.y + (COLLAPSE_HEAD - 16.0) * 0.5, 16.0, pal.textFaint);
+        if (self.openT.value > 0.02) {
+            p.pushClip(a.x, a.y + COLLAPSE_HEAD, a.w, a.h - COLLAPSE_HEAD);
+            let c : dyn Widget = self.kid[0];
+            c.paint(ctx, p);
+            p.popClip();
+        }
+    }
+}

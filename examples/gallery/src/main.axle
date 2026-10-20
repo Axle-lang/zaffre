@@ -9,8 +9,10 @@
 // `page_*` module per section, each a function from the `Demo` to a column of cards.
 
 use zaffre::{
-    View, Theme, Fonts, App, AppDesc, Notifications, AppShell, Sidebar, SidebarItem, SidebarProps, TopBar,
-    PageStack, Switch, Spacer, Widget, FlexProps, IconKind, Align, Insets, Justify, Length,
+    View, Theme, Fonts, App, AppDesc, Notifier, Notifications, AppShell, Sidebar, SidebarItem, SidebarProps,
+    TopBar, PageStack, Switch, Spacer, Widget, Row, FlexProps, UserMenu, UserProps, MenuEntry, OverlayBadge,
+    OverlayProps, Button, ButtonProps, Model, IconKind, ButtonKind, ControlSize, Tone, Align, Insets, Justify,
+    Length,
 };
 use demo::Demo;
 use page_overview::overviewPage;
@@ -19,6 +21,7 @@ use page_forms::formsPage;
 use page_feedback::feedbackPage;
 use page_navigation::navigationPage;
 use page_data::dataPage;
+use page_layout::layoutPage;
 use page_overlays::overlaysPage;
 use std::sys::process::{argc, argAt};
 use std::lang::IndexOutOfBoundsException;
@@ -39,6 +42,7 @@ fn entries() : SidebarItem[] {
         SidebarItem { label: "Feedback", icon: IconKind::Bell },
         SidebarItem { label: "Navigation", icon: IconKind::Menu },
         SidebarItem { label: "Data", icon: IconKind::Chart },
+        SidebarItem { label: "Layout", icon: IconKind::Grid },
         SidebarItem { label: "Overlays", icon: IconKind::Copy },
     ];
     return items;
@@ -46,8 +50,45 @@ fn entries() : SidebarItem[] {
 
 /** The title of each entry, for the top bar. */
 fn names() : string[] {
-    let titles : string[] = ["Components", "Overview", "Buttons", "Forms", "Feedback", "Navigation", "Data", "Overlays"];
+    let titles : string[] = ["Components", "Overview", "Buttons", "Forms", "Feedback", "Navigation", "Data", "Layout", "Overlays"];
     return titles;
+}
+
+/** The widgets at the right end of the top bar: the bell, the person, the theme switch. */
+fn topActions(notes : Shared<Notifier>, dark : Shared<Model<bool>>) : Row {
+    let entries : MenuEntry[] = [
+        MenuEntry { label: "Profile", icon: IconKind::User },
+        MenuEntry { label: "Settings", icon: IconKind::Settings },
+        MenuEntry { separator: true },
+        MenuEntry { label: "Sign out", icon: IconKind::ArrowRight, danger: true },
+    ];
+    let bell = new OverlayBadge(
+        OverlayProps { count: 3 },
+        new Button(
+            ButtonProps {
+                icon: IconKind::Bell,
+                kind: ButtonKind::Ghost,
+                size: ControlSize::Sm,
+            },
+            () => notes.toast("You have 3 notifications", Tone::Info)
+        )
+    );
+    let person = new UserMenu(
+        UserProps {
+            name: "Ada Lovelace",
+            email: "ada@analytical.org",
+        },
+        entries,
+        (i : i32) => notes.toast("Chose an entry of the user menu", Tone::Info)
+    );
+    let kids : dyn Widget[] = [bell, new Switch("Dark mode", dark), person];
+    return new Row(
+        FlexProps {
+            gap: 16.0,
+            align: Align::Center,
+        },
+        kids
+    );
 }
 
 /** The whole application, opened on page `start`. */
@@ -69,10 +110,11 @@ fn buildOn(start : i32) : View {
         feedbackPage(demo),
         navigationPage(demo),
         dataPage(demo),
+        layoutPage(demo),
         overlaysPage(demo),
     ];
     let side = new Sidebar(SidebarProps { title: "Zaffre" }, entries(), page);
-    let top = new TopBar(names(), page, new Switch("Dark mode", dark));
+    let top = new TopBar(names(), page, topActions(notes, dark));
     let shell = new AppShell(side, top, new PageStack(page, stack));
     return new View(Theme::dark(), fonts, dark, new Notifications(notes, shell));
 }

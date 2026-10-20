@@ -6,7 +6,7 @@
 // A handler (a lambda) cannot capture the `Demo` itself, only handles, so pages copy the handle
 // they need into a local before they build a handler around it.
 
-use zaffre::{Model, Notifier};
+use zaffre::{Model, Notifier, Dates};
 
 /** The values of the gallery. */
 pub class Demo {
@@ -52,6 +52,20 @@ pub class Demo {
     /** Progress. */
     pub progress : Shared<Model<f64>> = new shared Model<f64>(0.68);
     pub quota : Shared<Model<f64>> = new shared Model<f64>(0.42);
+
+    /** Pickers and special inputs. */
+    pub birthday : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+    pub arrival : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+    pub departure : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+    pub country : Shared<Model<i32>> = new shared Model<i32>(-1);
+    pub skills : Shared<Model<i32>> = new shared Model<i32>(5);
+    pub tags : Shared<Model<string>> = new shared Model<string>("design,ui,axle");
+    pub code : Shared<Model<string>> = new shared Model<string>("48");
+
+    /** Layout. */
+    pub share : Shared<Model<f64>> = new shared Model<f64>(0.35);
+    pub advanced : Shared<Model<bool>> = new shared Model<bool>(false);
+    pub marks : Shared<Model<i32>> = new shared Model<i32>(2);
 
     /** The row picked in the table and in the list. */
     pub picked : Shared<Model<i32>> = new shared Model<i32>(-1);

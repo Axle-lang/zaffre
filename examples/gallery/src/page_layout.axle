@@ -1,0 +1,159 @@
+// layout — panes you can drag, grids, sections that fold, toolbars, badges on things, and code.
+
+use zaffre::{
+    Model, Notifier, Split, SplitProps, Grid, GridProps, Collapsible, Card, CardProps, Toolbar, ToolbarItem,
+    OverlayBadge, OverlayProps, HoverCard, Avatar, AvatarGroup, Button, ButtonProps, Label, CodeBlock, CodeProps,
+    CodeWindow, CopyCommand, IconDisc, InlineCode, TextLink, Stat, StatProps, StatLook, Column, Row, Widget, FlexProps,
+    LabelProps, Tone, TextRole, ButtonKind, ControlSize, IconKind, Elevation, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+
+/** The source the code blocks show. */
+fn source() : string {
+    return "use zaffre::{View, Theme, Model};\n\n// A counter that remembers its value.\nfn build() : View {\n    let count = new shared Model<i32>(0);\n    let label = \"Clicked 0 times\";\n    return new View(Theme::dark(), fonts, dark, page(count, label));\n}";
+}
+
+/** A pane with a title and a sentence. */
+fn pane(title : string, text : string) : Column {
+    let kids : dyn Widget[] = [new Label(title, TextRole::H3), note(text)];
+    return new Column(
+        FlexProps {
+            gap: 8.0,
+            padding: Insets::all(20.0),
+        },
+        kids
+    );
+}
+
+/** Two panes with a divider to drag, and the share it holds. */
+fn panes(demo : Demo) : Column {
+    let share = demo.share;
+    let split = new Split(
+        SplitProps { horizontal: true },
+        share,
+        pane("Files", "Drag the divider; the share is a model, so a program can save it."),
+        pane("Preview", "The panes take whatever room the divider leaves.")
+    );
+    let only : dyn Widget[] = [split];
+    let frame = new Column(
+        FlexProps {
+            height: Length::Px(200.0),
+            align: Align::Stretch,
+        },
+        only
+    );
+    let kids : dyn Widget[] = [frame];
+    return stacked(kids);
+}
+
+/** A grid of small cards. */
+fn tiles() : Grid {
+    let cells : dyn Widget[] = [
+        tile("Documents", "128 files", IconKind::File),
+        tile("Pictures", "2,310 files", IconKind::Eye),
+        tile("Music", "894 files", IconKind::Heart),
+        tile("Downloads", "41 files", IconKind::Download),
+        tile("Projects", "17 folders", IconKind::Folder),
+        tile("Archive", "3 folders", IconKind::Clock),
+    ];
+    return new Grid(GridProps { columns: 3 }, cells);
+}
+
+/** One tile: a pressable card with an icon, a title and a count. */
+fn tile(title : string, count : string, icon : IconKind) : Card {
+    let text : dyn Widget[] = [
+        new Label(title, TextRole::Strong),
+        new Label(count, TextRole::Faint),
+    ];
+    let kids : dyn Widget[] = [
+        new IconDisc(icon, Tone::Accent, 40.0),
+        new Column(FlexProps { gap: 2.0 }, text),
+    ];
+    let body = new Row(FlexProps { gap: 14.0, align: Align::Center }, kids);
+    return new Card(CardProps { pressable: true }, body);
+}
+
+/** Sections that fold. */
+fn folds(demo : Demo) : Column {
+    let advanced = demo.advanced;
+    let more = new Collapsible("Advanced options", advanced, note("These settings rarely need changing: caching, retries, and the timeout in seconds."));
+    let kids : dyn Widget[] = [more, new Collapsible("Always open", new shared Model<bool>(true), note("A collapsible that starts open."))];
+    return stacked(kids);
+}
+
+/** A toolbar, and badges pinned to things. */
+fn tools(demo : Demo) : Column {
+    let marks = demo.marks;
+    let notes = demo.notes;
+    let items : ToolbarItem[] = [
+        ToolbarItem { icon: IconKind::Edit, tip: "Edit" },
+        ToolbarItem { icon: IconKind::Copy, tip: "Copy" },
+        ToolbarItem { icon: IconKind::Trash, tip: "Delete" },
+        ToolbarItem { separator: true },
+        ToolbarItem { icon: IconKind::Star, tip: "Favourite", toggle: true },
+        ToolbarItem { icon: IconKind::Bell, tip: "Mute", toggle: true },
+        ToolbarItem { icon: IconKind::Lock, tip: "Locked", disabled: true },
+    ];
+    let bar = new Toolbar(items, marks, (i : i32) => notes.toast("A tool was pressed", Tone::Info));
+    let bell = new OverlayBadge(
+        OverlayProps { count: 3 },
+        new Button(ButtonProps { icon: IconKind::Bell, kind: ButtonKind::Outline })
+    );
+    let presence = new OverlayBadge(OverlayProps { dot: true, tone: Tone::Ok }, new Avatar("Ada Lovelace", 40.0));
+    let names : string[] = ["Ada", "Grace", "Alan", "Margaret"];
+    let row : dyn Widget[] = [bell, presence, new AvatarGroup(names, 36.0)];
+    let kids : dyn Widget[] = [bar, lineup(row)];
+    return stacked(kids);
+}
+
+/** What the hover card holds. */
+fn profile() : dyn Widget {
+    let head : dyn Widget[] = [new Avatar("Ada Lovelace", 44.0), new Label("Ada Lovelace", TextRole::H3)];
+    let kids : dyn Widget[] = [
+        lineup(head),
+        note("Wrote the first program, for the Analytical Engine, in 1843."),
+    ];
+    return new Column(FlexProps { gap: 12.0, align: Align::Stretch }, kids);
+}
+
+/** Hovering, links and inline code. */
+fn prose() : Column {
+    let trigger = new Label("Hover over @ada for a moment", TextRole::Strong);
+    let line : dyn Widget[] = [
+        new HoverCard(trigger, () => profile()),
+        new TextLink("a link"),
+        new InlineCode("Model<i32>"),
+    ];
+    let kids : dyn Widget[] = [lineup(line), note("Links underline under the pointer; inline code sits on a tint.")];
+    return stacked(kids);
+}
+
+/** Code: a block, a window, and a command to copy. */
+fn code() : Column {
+    let kids : dyn Widget[] = [
+        new CodeBlock(CodeProps { numbers: true, language: "axle" }, source()),
+        new CodeWindow("main.axle", source()),
+        new CopyCommand("axle add zaffre --path ../zaffre"),
+    ];
+    return stacked(kids);
+}
+
+/** The page. */
+pub fn layoutPage(demo : Demo) : Column {
+    let upper : dyn Widget[] = [
+        half("Split panes", "A divider you drag; the cursor changes over it.", panes(demo)),
+        half("Folding sections", "One accordion section on its own.", folds(demo)),
+    ];
+    let lower : dyn Widget[] = [
+        half("Toolbar and badges", "Icon buttons with toggles and tips; counts and dots on other widgets.", tools(demo)),
+        half("Hover cards and prose", "A card of detail that follows the pointer's rest.", prose()),
+    ];
+    let rows : dyn Widget[] = [
+        side(upper),
+        section("Grid of cards", "Equal columns; each card is pressable and lifts under the pointer.", tiles()),
+        side(lower),
+        section("Code", "Highlighted, with line numbers and a copy button that appears under the pointer.", code()),
+    ];
+    return pageOf(rows);
+}

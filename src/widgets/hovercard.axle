@@ -1,0 +1,197 @@
+// hovercard — a card of detail that appears when the pointer rests on something, and goes when it leaves.
+//
+//     fn profile(name : string) : dyn Widget { … }
+//
+//     new HoverCard(new Label("@ada"), () => profile("Ada"))
+//
+// Like a tooltip, but holding whatever the program builds — a profile, a preview, a few facts — and
+// like a popover, built by a function each time it opens. It shows after the pointer has rested
+// for half a second and stays while the pointer is over the trigger or the card, so its own
+// buttons can be reached; it leaves a moment after the pointer has gone from both.
+
+use crate::gfx::mathx::Mathx;
+use crate::style::ease::{Eased, Rate};
+use crate::style::variants::Elevation;
+use crate::core::geometry::{Size, Bounds, Limits, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::panel::Surfaces;
+
+/** Seconds the pointer rests before the card shows. */
+const HOVER_DELAY : f64 = 0.5;
+
+/** Seconds the card waits after the pointer has left. */
+const HOVER_GRACE : f64 = 0.25;
+
+/** Width of the card's content. */
+const HOVER_WIDTH : f64 = 288.0;
+
+/** The card itself, as an overlay. */
+pub class HoverSheet : Base, Widget {
+    anchor : Bounds;
+    kid : dyn Widget[];
+    isOpen : Shared<Model<bool>>;
+    left : f64 = -1.0;
+    openT : Eased = Eased::at(0.0);
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+
+    /** A card under `anchor` holding what `content` builds; `isOpen` is cleared when it goes. */
+    constructor(anchor : Bounds, content : () => dyn Widget, isOpen : Shared<Model<bool>>) {
+        self.anchor = anchor;
+        self.isOpen = isOpen;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        let build : () => dyn Widget = content;
+        self.kid[0] = build();
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished && self.sheet.contains(x, y);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, Limits { minW: 0.0, maxW: HOVER_WIDTH, minH: 0.0, maxH: UNBOUNDED });
+        let w : f64 = s.w + 32.0;
+        let h : f64 = s.h + 32.0;
+        let mut y : f64 = self.anchor.bottom() + 6.0;
+        if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
+            y = self.anchor.y - 6.0 - h;
+        }
+        let x : f64 = Mathx::clampF(self.anchor.midX() - w * 0.5, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - w));
+        let k : f64 = 1.0 - Mathx::smooth(self.openT.value);
+        self.sheet = Bounds::make(x, y, w, h);
+        c.arrange(ctx, Bounds::make(x + 16.0, y + 16.0 + 4.0 * k, s.w, s.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        let covered : bool = ctx.blocked;
+        ctx.blocked = false;
+        let used : bool = c.event(ctx, e);
+        ctx.blocked = covered;
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        let near : bool = self.sheet.contains(ctx.pointerX, ctx.pointerY) || self.anchor.grown(2.0).contains(ctx.pointerX, ctx.pointerY);
+        if (near) {
+            self.left = -1.0;
+        } else if (self.left < 0.0) {
+            self.left = ctx.now;
+        }
+        let gone : bool = self.left >= 0.0 && ctx.now - self.left > HOVER_GRACE;
+        if (self.left >= 0.0 && !gone) {
+            ctx.wakeIn(HOVER_GRACE);
+        }
+        self.openT = self.openT.toward(gone ? 0.0 : 1.0).step(dt, Rate::OPEN * 1.5);
+        if (gone && self.openT.settled()) {
+            self.finished = true;
+            self.isOpen.set(false);
+            ctx.invalidate();
+            return false;
+        }
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let b : Bounds = self.sheet;
+        Surfaces::draw(p, b.round(ctx.theme.metrics.radiusSurface), b, ctx.theme.panel(Elevation::Overlay));
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+        p.setOpacity(prev);
+    }
+}
+
+/** A widget that shows a card when the pointer rests on it. */
+pub class HoverCard : Base, Widget {
+    kid : dyn Widget[];
+    content : () => dyn Widget;
+    isOpen : Shared<Model<bool>>;
+    since : f64 = -1.0;
+
+    /** `trigger`, which the wrapper takes, with a card of what `content` builds. */
+    constructor(own trigger : dyn Widget, content : () => dyn Widget) {
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = trigger;
+        self.content = content;
+        self.isOpen = new shared Model<bool>(false);
+    }
+
+    pub fn flex(self) : f64 {
+        let c : dyn Widget = self.kid[0];
+        return c.flex();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        let used : bool = c.event(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            if (self.area.contains(e.x, e.y) && !ctx.blocked) {
+                if (self.since < 0.0) {
+                    self.since = ctx.now;
+                    ctx.wakeIn(HOVER_DELAY + 0.02);
+                }
+            } else {
+                self.since = -1.0;
+            }
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.since = -1.0;
+        }
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        if (self.since >= 0.0 && !self.isOpen.get()) {
+            if (ctx.now - self.since >= HOVER_DELAY) {
+                self.isOpen.set(true);
+                let ok : bool = ctx.openOverlay(new HoverSheet(self.area, self.content, self.isOpen));
+                if (!ok) {
+                    self.isOpen.set(false);
+                }
+                self.since = -1.0;
+            } else {
+                ctx.wakeIn(HOVER_DELAY - (ctx.now - self.since) + 0.02);
+            }
+        }
+        return moving;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+}

@@ -1,7 +1,8 @@
 // forms — text fields, choices, sliders, and the small inputs.
 
 use zaffre::{
-    Model, TextField, FieldProps, Textarea, TextareaProps, Select, Checkbox, ToggleProps, Radio, Switch,
+    Model, Dates, DatePicker, DateProps, Calendar, Combobox, MultiSelect, ComboboxProps, TagsInput, TagsProps,
+    InputOTP, OtpProps, TextField, FieldProps, Textarea, TextareaProps, Select, Checkbox, ToggleProps, Radio, Switch,
     Slider, SliderProps, Segmented, Rating, RatingProps, QuantityInput, QuantityProps, ToggleGroup,
     FormField, FieldLabel, Column, Row, Widget, FlexProps,
     ControlSize, IconKind, Length, Align, Insets, Justify,
@@ -143,6 +144,53 @@ fn dials(demo : Demo) : Column {
     return stacked(kids);
 }
 
+/** Pickers and special inputs: dates, searchable selects, tags, a one-time code. */
+fn pickers(demo : Demo) : Column {
+    let birthday = demo.birthday;
+    let arrival = demo.arrival;
+    let departure = demo.departure;
+    let country = demo.country;
+    let skills = demo.skills;
+    let tags = demo.tags;
+    let code = demo.code;
+    let today = Dates::ymd(2026, 10, 20);
+    let countries : string[] = ["France", "Germany", "Japan", "Brazil", "Canada", "Kenya", "Norway", "Peru", "Spain", "Vietnam"];
+    let abilities : string[] = ["Rust", "Axle", "C", "Zig", "Go", "Python"];
+    let dateField = new FormField(
+        FieldLabel { label: "Date of birth" },
+        new DatePicker(DateProps { today: today, width: Length::Fill }, birthday)
+    );
+    let countryField = new FormField(
+        FieldLabel { label: "Country", hint: "Type to search." },
+        new Combobox(ComboboxProps { placeholder: "Pick a country", width: Length::Fill }, countries, country)
+    );
+    let skillField = new FormField(
+        FieldLabel { label: "Skills" },
+        new MultiSelect(ComboboxProps { placeholder: "Pick some skills", width: Length::Fill }, abilities, skills)
+    );
+    let tagField = new FormField(
+        FieldLabel { label: "Tags", hint: "Enter or a comma makes a chip." },
+        new TagsInput(TagsProps { width: Length::Fill }, tags)
+    );
+    let codeField = new FormField(
+        FieldLabel { label: "Verification code" },
+        new InputOTP(OtpProps { }, code)
+    );
+    let kids : dyn Widget[] = [dateField, countryField, skillField, tagField, codeField];
+    return stacked(kids);
+}
+
+/** A calendar choosing a range. */
+fn range(demo : Demo) : Column {
+    let arrival = demo.arrival;
+    let departure = demo.departure;
+    let today = Dates::ymd(2026, 10, 20);
+    let kids : dyn Widget[] = [
+        new Calendar(DateProps { today: today }, arrival, departure),
+    ];
+    return stacked(kids);
+}
+
 /** The page. */
 pub fn formsPage(demo : Demo) : Column {
     let upper : dyn Widget[] = [
@@ -153,6 +201,10 @@ pub fn formsPage(demo : Demo) : Column {
         half("Labelled fields", "A hint under a field, or an error that turns its outline red.", labelled(demo)),
         half("Sliders and small inputs", "Sliders, a rating, a quantity and a toggle group.", dials(demo)),
     ];
-    let rows : dyn Widget[] = [side(upper), side(lower)];
+    let third : dyn Widget[] = [
+        half("Pickers and special inputs", "A date picker, a searchable select, a multi-select, tags, a code.", pickers(demo)),
+        half("A range of dates", "The first click is the start, the second the end.", range(demo)),
+    ];
+    let rows : dyn Widget[] = [side(upper), side(lower), side(third)];
     return pageOf(rows);
 }
