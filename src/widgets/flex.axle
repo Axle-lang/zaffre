@@ -154,14 +154,14 @@ pub class Flex : Base, Widget {
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let pad : Insets = self.props.padding;
         // A container with a size of its own offers its children that size, not its parent's.
-        let mut own : Limits = limits;
+        let mut room : Limits = limits;
         if (!self.props.width.isAuto()) {
-            own = Limits { minW: own.minW, maxW: Mathx::fmin(own.maxW, self.props.width.resolve(limits.maxW, limits.maxW)), minH: own.minH, maxH: own.maxH };
+            room = Limits { minW: room.minW, maxW: Mathx::fmin(room.maxW, self.props.width.resolve(limits.maxW, limits.maxW)), minH: room.minH, maxH: room.maxH };
         }
         if (!self.props.height.isAuto()) {
-            own = Limits { minW: own.minW, maxW: own.maxW, minH: own.minH, maxH: Mathx::fmin(own.maxH, self.props.height.resolve(limits.maxH, limits.maxH)) };
+            room = Limits { minW: room.minW, maxW: room.maxW, minH: room.minH, maxH: Mathx::fmin(room.maxH, self.props.height.resolve(limits.maxH, limits.maxH)) };
         }
-        let inner : Limits = own.deflate(pad);
+        let inner : Limits = room.deflate(pad);
         let horizontal : bool = self.axis == Axis::Horizontal;
         let mut availMain : f64 = inner.maxH;
         let mut availCross : f64 = inner.maxW;

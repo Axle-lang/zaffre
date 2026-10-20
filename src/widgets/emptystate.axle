@@ -1,0 +1,161 @@
+// emptystate — what to show where there is nothing yet: a picture, a sentence, and a way forward.
+//
+//     new EmptyState(EmptyProps { icon: IconKind::Folder, title: "No projects yet", description: "Create one to get started." }, new Button("New project"))
+//
+// Also in this file: `IconDisc`, the soft round badge an icon sits in (empty states, lists,
+// alerts), `LabeledDivider`, a rule with a word in the middle, and `pageHeader`, the title row of
+// a page — a heading, a line under it, and actions at the far end.
+
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::{Tone, TextRole};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Align, Justify, Length, Insets};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::flex::{Column, Row, FlexProps};
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::label::{Label, LabelProps};
+use crate::widgets::spacer::Spacer;
+
+/** An icon in a soft disc of a tone. */
+pub class IconDisc : Base, Widget {
+    icon : IconKind;
+    tone : Tone;
+    size : f64;
+
+    /** A disc `size` pixels across holding `icon`, tinted for `tone`. */
+    constructor(icon : IconKind, tone : Tone, size : f64) {
+        self.icon = icon;
+        self.tone = tone;
+        self.size = size;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.size, h: self.size });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let soft = ctx.theme.soft(self.tone);
+        let a : Bounds = self.area;
+        p.fillRound(RRect::uniform(a.x, a.y, a.w, a.h, a.h * 0.5), Brush::solid(soft.fill.rgb, soft.fill.a));
+        let g : f64 = self.size * 0.46;
+        Icons::draw(p, self.icon, a.x + (a.w - g) * 0.5, a.y + (a.h - g) * 0.5, g, soft.fg);
+    }
+}
+
+/** What an empty state says. */
+pub struct EmptyProps {
+    /** The picture in the disc. */
+    pub icon : IconKind = IconKind::Folder;
+
+    /** The colour of the disc. */
+    pub tone : Tone = Tone::Neutral;
+
+    /** The headline. */
+    pub title : string = "";
+
+    /** A sentence under it, wrapped. */
+    pub description : string = "";
+
+    /** The widest the text gets. */
+    pub width : f64 = 360.0;
+}
+
+/** A centred note for where there is nothing to show. */
+pub class EmptyState : Base, Widget {
+    kid : dyn Widget[];
+
+    /** An empty state with nothing to do about it. */
+    constructor(own props : EmptyProps) {
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = EmptyState::build(props, new Spacer(0.0, 0.0), false);
+    }
+
+    /** An empty state with `action` — usually a button — under the text. */
+    constructor(own props : EmptyProps, own action : dyn Widget) {
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = EmptyState::build(props, action, true);
+    }
+
+    /** The column of disc, headline, sentence and action. */
+    pub(file) static fn build(props : EmptyProps, own action : dyn Widget, hasAction : bool) : dyn Widget {
+        let mut column : Column = new Column(FlexProps { gap: 8.0, align: Align::Center, capacity: 5, padding: Insets::all(24.0) });
+        column.add(new IconDisc(props.icon, props.tone, 56.0));
+        column.add(new Spacer(0.0, 8.0));
+        column.add(new Label(props.title, TextRole::H3));
+        column.add(new Label(LabelProps { role: TextRole::Dim, wrap: true, align: Align::Center, width: Length::Px(props.width) }, props.description));
+        if (hasAction) {
+            column.add(new Spacer(0.0, 8.0));
+            column.add(action);
+        }
+        return column;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, limits.loosened());
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : s.w, h: s.h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, Limits::loose(area.w, area.h));
+        c.arrange(ctx, Bounds::make(area.x + (area.w - s.w) * 0.5, area.y, s.w, s.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+}
+
+/** A rule with a word in the middle: ── or continue with ──. */
+pub class LabeledDivider : Base, Widget {
+    text : string;
+
+    /** A rule across the width it is offered, saying `text`. */
+    constructor(text : string) {
+        self.text = text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : 240.0, h: 20.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let w : f64 = ctx.textWidth(FaceKind::Sans, self.text, 12.0);
+        let mid : f64 = a.x + a.w * 0.5;
+        p.line(a.x, a.midY(), mid - w * 0.5 - 12.0, a.midY(), 1.0, pal.line);
+        p.line(mid + w * 0.5 + 12.0, a.midY(), a.right(), a.midY(), 1.0, pal.line);
+        p.text(FaceKind::Sans, self.text, mid - w * 0.5, ctx.baselineIn(FaceKind::Sans, 12.0, a.y, a.h), 12.0, pal.textFaint);
+    }
+}
+
+/** The title row of a page: a heading, a line under it, and `actions` at the far end. */
+pub fn pageHeader(title : string, description : string, own actions : dyn Widget) : Row {
+    let titles : dyn Widget[] = [
+        new Label(title, TextRole::H2),
+        new Label(description, TextRole::Dim),
+    ];
+    let kids : dyn Widget[] = [
+        new Column(FlexProps { gap: 2.0 }, titles),
+        new Spacer(),
+        actions,
+    ];
+    return new Row(FlexProps { gap: 16.0, align: Align::Center }, kids);
+}

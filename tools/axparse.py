@@ -234,9 +234,14 @@ class Parser:
             raise ParseError("expected %r, found %r" % (v, self.tok.v), self.tok.line)
         return self.next()
 
+    RESERVED = ("own", "let", "fn", "pub", "class", "struct", "enum", "trait", "static", "const", "match",
+                "if", "else", "for", "while", "return", "new", "shared", "super", "as", "use", "try", "catch", "throw")
+
     def ident(self):
         if self.tok.t != "id":
             raise ParseError("expected an identifier, found %r" % (self.tok.v,), self.tok.line)
+        if self.tok.v in self.RESERVED:
+            raise ParseError("expected an identifier, found the keyword `%s`" % (self.tok.v,), self.tok.line)
         return self.next().v
 
     def fail(self, msg):

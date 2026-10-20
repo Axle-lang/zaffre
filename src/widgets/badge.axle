@@ -16,6 +16,7 @@ use crate::core::geometry::{Size, Bounds, Limits};
 use crate::core::context::Context;
 use crate::core::widget::{Widget, Base};
 use crate::paint::painter::Painter;
+use crate::widgets::chips::Dot;
 
 /** How a badge looks. */
 pub struct BadgeProps {
@@ -96,11 +97,23 @@ pub class Badge : Base, Widget {
 pub class Avatar : Base, Widget {
     name : string;
     size : f64;
+    presence : bool;
+    status : Tone;
 
     /** An avatar for `name`, `size` pixels across. */
     constructor(name : string, size : f64) {
         self.name = name;
         self.size = size;
+        self.presence = false;
+        self.status = Tone::Neutral;
+    }
+
+    /** An avatar with a presence dot of `status` at its corner: green online, amber away, red busy, grey offline. */
+    constructor(name : string, size : f64, status : Tone) {
+        self.name = name;
+        self.size = size;
+        self.presence = true;
+        self.status = status;
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
@@ -155,22 +168,66 @@ pub class Avatar : Base, Widget {
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let a : Bounds = self.area;
-        let hue : f64 = Avatar::hueOf(self.name);
+        Avatar::draw(ctx, p, self.name, a.x, a.y, a.h);
+        if (self.presence) {
+            let d : f64 = Mathx::fmax(8.0, self.size * 0.3);
+            let cx : f64 = a.right() - d * 0.5;
+            let cy : f64 = a.bottom() - d * 0.5;
+            let pal = ctx.theme.palette;
+            p.line(cx, cy, cx, cy, d + 4.0, pal.surface);
+            Dot::draw(ctx, p, self.status, cx, cy, d, 0.0);
+        }
+    }
+
+    /** Draw the avatar of `name` in the square at (`x`, `y`), `size` wide. */
+    pub static fn draw(ctx : Context, p : Painter, name : string, x : f64, y : f64, size : f64) : void {
+        let hue : f64 = Avatar::hueOf(name);
         let top : i32 = Avatar::hsv(hue, 0.48, 0.86);
         let bottom : i32 = Avatar::hsv(hue, 0.62, 0.66);
-        let rr : RRect = a.round(a.h * 0.5);
-        p.fillRound(rr, Brush::linear(top, 255, bottom, 255, 0.0, a.y, 0.0, a.y + a.h));
-        let (cp, n) = Utf8::next(self.name, 0);
+        let rr : RRect = RRect::uniform(x, y, size, size, size * 0.5);
+        p.fillRound(rr, Brush::linear(top, 255, bottom, 255, 0.0, y, 0.0, y + size));
+        let (cp, n) = Utf8::next(name, 0);
         if (n > 0) {
             let mut c : i32 = cp;
             if (c >= 97 && c <= 122) {
                 c = c - 32;
             }
             let initial : string = Strings::ofCp(c);
-            let px : f64 = a.h * 0.42;
+            let px : f64 = size * 0.42;
             let w : f64 = ctx.textWidth(FaceKind::Bold, initial, px);
-            let base : f64 = ctx.baselineIn(FaceKind::Bold, px, a.y, a.h);
-            p.text(FaceKind::Bold, initial, a.x + (a.w - w) * 0.5, base, px, Tint::hex(0xFFFFFF));
+            let base : f64 = ctx.baselineIn(FaceKind::Bold, px, y, size);
+            p.text(FaceKind::Bold, initial, x + (size - w) * 0.5, base, px, Tint::hex(0xFFFFFF));
+        }
+    }
+}
+
+/** Avatars side by side, each overlapping the one before and ringed in the surface colour. */
+pub class AvatarGroup : Base, Widget {
+    names : string[];
+    count : i32;
+    size : f64;
+
+    /** A group of the avatars of `names`, each `size` pixels across. */
+    constructor(names : string[], size : f64) {
+        self.names = names;
+        self.count = names.length as i32;
+        self.size = size;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let step : f64 = self.size * 0.72;
+        return limits.constrain(Size { w: self.size + step * ((self.count - 1) as f64), h: self.size });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let step : f64 = self.size * 0.72;
+        let pal = ctx.theme.palette;
+        for (i of 0..self.count) {
+            let x : f64 = a.x + step * (i as f64);
+            let c : f64 = self.size * 0.5;
+            p.line(x + c, a.y + c, x + c, a.y + c, self.size + 4.0, pal.surface);
+            Avatar::draw(ctx, p, self.names[i as i64], x, a.y, self.size);
         }
     }
 }

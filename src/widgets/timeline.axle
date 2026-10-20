@@ -77,9 +77,9 @@ pub class Timeline : Base, Widget {
         let w : f64 = limits.boundedW() ? limits.maxW : 420.0;
         let mut h : f64 = 0.0;
         for (i of 0..self.count) {
-            let own : f64 = Mathx::fmax(TL_DISC, self.textHeight(ctx, i, w - TL_DISC - TL_GAP));
-            self.heights[i as i64] = own;
-            h = h + own;
+            let need : f64 = Mathx::fmax(TL_DISC, self.textHeight(ctx, i, w - TL_DISC - TL_GAP));
+            self.heights[i as i64] = need;
+            h = h + need;
             if (i < self.count - 1) {
                 h = h + TL_AFTER;
             }

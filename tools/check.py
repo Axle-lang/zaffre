@@ -257,6 +257,17 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
             break
 
     # --- syntax ------------------------------------------------------------------
+    keywords = ("own", "mut", "let", "fn", "pub", "class", "struct", "enum", "trait", "static", "const", "match",
+                "if", "else", "for", "while", "return", "new", "shared", "self", "super", "as", "use", "try",
+                "catch", "throw", "break", "continue", "in", "where", "impl", "type", "mod", "loop")
+    for kw in keywords:
+        for m in re.finditer(r"\blet\s+(?:mut\s+)?%s\b(?!\s*\()|[(,]\s*%s\s*:\s*[A-Za-z(\[]|\b%s\s*(?:=(?!=)|\.(?=\w))" % (kw, kw, kw), text):
+            if kw in ("self", "super") and "let" not in m.group(0):
+                continue
+            if kw == "mut" and re.match(r"\s*let\s+mut\b", m.group(0)):
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            err("line %d: `%s` is a keyword and cannot name a variable or a parameter" % (line, kw))
     for m in re.finditer(r"\bfn\s+(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|string|void)\s*\(", text):
         err("`fn %s` — a primitive type's name cannot name a method" % m.group(1))
     for i, line in enumerate(text.split("\n"), 1):
@@ -323,6 +334,7 @@ def selftest():
         ("a non-literal const", "const A : i32 = B + 1;\n"),
         ("extern C", 'extern "C" from "c" { fn puts(s : ptr) : i32; }\n'),
         ("an unknown member", "fn f() : void { Tint::nonesuch(1); }\n"),
+        ("a keyword as a name", "fn f() : void { let mut own : i32 = 1; own = 2; }\n"),
         ("a wrong arity", "fn f() : void { let t : Tint = Tint::hex(1, 2); }\n"),
     ]
     bad = 0
