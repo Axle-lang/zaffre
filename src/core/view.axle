@@ -229,6 +229,14 @@ pub class View {
                 moving = true;
             }
         }
+        // An overlay that covered the pointer is gone: the tree last saw the pointer blocked, so it is
+        // told where the pointer is now, and what lies under it lights up without a move.
+        if (self.ctx.blocked && !self.overlayAt(self.ctx.pointerX, self.ctx.pointerY)) {
+            self.ctx.blocked = false;
+            self.ctx.cursor = Cursor::Arrow;
+            root.event(self.ctx, UiEvent { kind: EventKind::PointerMove, x: self.ctx.pointerX, y: self.ctx.pointerY });
+            moving = true;
+        }
         self.adopt();
         self.animating = moving;
         if (self.ctx.wake < 1000000.0) {
