@@ -1,0 +1,266 @@
+// command — a palette of commands: type to filter, arrows to move, Enter to run.
+//
+//     notes.openCommands(entries, (i) => run(i))
+//
+// The palette is an overlay near the top of the window, over a dimmed page. It lists the entries
+// (`MenuEntry`, the same record a dropdown uses: a label, an icon, a shortcut), keeps those whose
+// label holds what was typed — case aside — and runs the chosen one, handing the handler its index
+// in the original array. Up and Down move the highlight, Enter runs it, Escape or a click outside
+// closes the palette.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::variants::Elevation;
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::dropdown::MenuEntry;
+use crate::widgets::field::{TextField, FieldProps};
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
+
+/** Width of the palette. */
+const PAL_WIDTH : f64 = 560.0;
+
+/** Height of the search row. */
+const PAL_HEAD : f64 = 60.0;
+
+/** Height of a result row. */
+const PAL_ROW : f64 = 42.0;
+
+/** The most results shown at once. */
+const PAL_ROWS : i32 = 8;
+
+/** The overlay. */
+pub class CommandPalette : Base, Widget {
+    entries : MenuEntry[];
+    count : i32;
+    onPick : (i32) => void;
+    query : Shared<Model<string>>;
+    field : TextField;
+    shown : i32[];
+    shownCount : i32 = 0;
+    seen : string = "";
+    fresh : bool = true;
+    hot : i32 = 0;
+    focused : bool = false;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+
+    /** A palette of `entries` that tells `onPick` the index of the one chosen. */
+    constructor(entries : MenuEntry[], onPick : (i32) => void) {
+        self.count = entries.length as i32;
+        self.entries = malloc<MenuEntry>(self.count as i64);
+        for (i of 0..self.count) {
+            self.entries[i as i64] = entries[i as i64];
+        }
+        self.shown = malloc<i32>(self.count as i64);
+        self.onPick = onPick;
+        let q : Shared<Model<string>> = new shared Model<string>("");
+        self.query = q;
+        self.field = new TextField(FieldProps { placeholder: "Type a command…", icon: IconKind::Search, width: Length::Fill }, q);
+    }
+
+    pub fn modal(self) : bool {
+        return true;
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished;
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    pub fn close(mut self, ctx : Context) : void {
+        self.closing = true;
+        ctx.invalidate();
+    }
+
+    /** Keep the entries whose label holds the query. */
+    pub(file) fn refilter(mut self) : void {
+        let q : string = self.query.get();
+        if (!self.fresh && q == self.seen) {
+            return;
+        }
+        self.fresh = false;
+        self.seen = q;
+        self.shownCount = 0;
+        for (i of 0..self.count) {
+            let e : MenuEntry = self.entries[i as i64];
+            if (!e.separator && Strings::holds(e.label, q)) {
+                self.shown[self.shownCount as i64] = i;
+                self.shownCount = self.shownCount + 1;
+            }
+        }
+        self.hot = 0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.refilter();
+        let rows : i32 = Mathx::clampI(self.shownCount, 1, PAL_ROWS);
+        let w : f64 = Mathx::fmin(PAL_WIDTH, area.w - 32.0);
+        let h : f64 = PAL_HEAD + PAL_ROW * (rows as f64) + 8.0;
+        self.sheet = Bounds::make(area.midX() - w * 0.5, area.y + Mathx::fmin(96.0, area.h * 0.14), w, h);
+        self.field.measure(ctx, Limits::tight(w - 24.0, 40.0));
+        self.field.arrange(ctx, Bounds::make(self.sheet.x + 12.0, self.sheet.y + 10.0, w - 24.0, 40.0));
+        if (!self.focused) {
+            self.focused = true;
+            ctx.setFocus(self.field.token, false);
+        }
+    }
+
+    /** The visible result under (`x`, `y`), or -1. */
+    pub(file) fn rowAt(self, x : f64, y : f64) : i32 {
+        if (!self.sheet.contains(x, y)) {
+            return -1;
+        }
+        let i : i32 = Mathx::floorI((y - self.sheet.y - PAL_HEAD) / PAL_ROW);
+        if (i < 0 || i >= self.shownCount || i >= PAL_ROWS) {
+            return -1;
+        }
+        return i;
+    }
+
+    /** Run the entry shown at row `i`. */
+    pub(file) fn run(mut self, ctx : Context, i : i32) : void {
+        if (i < 0 || i >= self.shownCount) {
+            return;
+        }
+        let at : i32 = self.shown[i as i64];
+        if (self.entries[at as i64].disabled) {
+            return;
+        }
+        let h : (i32) => void = self.onPick;
+        h(at);
+        self.close(ctx);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return true;
+        }
+        let covered : bool = ctx.blocked;
+        ctx.blocked = false;
+        if (e.kind == EventKind::PointerMove) {
+            let r : i32 = self.rowAt(e.x, e.y);
+            if (r >= 0 && r != self.hot) {
+                self.hot = r;
+                ctx.invalidate();
+            }
+            if (r >= 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0) {
+            if (!self.sheet.contains(e.x, e.y)) {
+                self.close(ctx);
+                ctx.blocked = covered;
+                return true;
+            }
+            let r : i32 = self.rowAt(e.x, e.y);
+            if (r >= 0) {
+                self.run(ctx, r);
+                ctx.blocked = covered;
+                return true;
+            }
+        }
+        if (e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Escape) {
+                self.close(ctx);
+                ctx.blocked = covered;
+                return true;
+            }
+            if (e.key == Key::Down) {
+                self.hot = Mathx::clampI(self.hot + 1, 0, Mathx::clampI(self.shownCount - 1, 0, PAL_ROWS - 1));
+                ctx.invalidate();
+                ctx.blocked = covered;
+                return true;
+            }
+            if (e.key == Key::Up) {
+                self.hot = Mathx::clampI(self.hot - 1, 0, PAL_ROWS - 1);
+                ctx.invalidate();
+                ctx.blocked = covered;
+                return true;
+            }
+            if (e.key == Key::Enter) {
+                self.run(ctx, self.hot);
+                ctx.blocked = covered;
+                return true;
+            }
+        }
+        self.field.event(ctx, e);
+        ctx.blocked = covered;
+        return true;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let moving : bool = self.field.tick(ctx, dt);
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.4);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        p.fillRound(self.area.round(0.0), Brush::solid(pal.scrim.rgb, Mathx::roundI((pal.scrim.a as f64) * k)));
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let b : Bounds = self.sheet.moved(0.0, (1.0 - k) * -8.0);
+        Surfaces::draw(p, b.round(ctx.theme.metrics.radiusOverlay), b, ctx.theme.panel(Elevation::Floating));
+        self.field.paint(ctx, p);
+        p.line(b.x, b.y + PAL_HEAD - 0.5, b.right(), b.y + PAL_HEAD - 0.5, 1.0, pal.line);
+        if (self.shownCount == 0) {
+            let w : f64 = ctx.textWidth(FaceKind::Sans, "No results", 14.0);
+            p.text(FaceKind::Sans, "No results", b.midX() - w * 0.5, ctx.baselineIn(FaceKind::Sans, 14.0, b.y + PAL_HEAD, PAL_ROW), 14.0, pal.textFaint);
+        }
+        for (i of 0..Mathx::clampI(self.shownCount, 0, PAL_ROWS)) {
+            let entry : MenuEntry = self.entries[self.shown[i as i64] as i64];
+            let row : Bounds = Bounds::make(b.x + 8.0, b.y + PAL_HEAD + 4.0 + PAL_ROW * (i as f64), b.w - 16.0, PAL_ROW);
+            let mut ink : Tint = pal.text;
+            if (entry.disabled) {
+                ink = pal.textOff;
+            }
+            if (i == self.hot) {
+                p.fillRound(row.round(ctx.theme.metrics.radiusControl), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            let mut x : f64 = row.x + 12.0;
+            if (entry.icon != IconKind::None) {
+                Icons::draw(p, entry.icon, x, row.midY() - 9.0, 18.0, pal.textFaint);
+                x = x + 30.0;
+            }
+            p.text(FaceKind::Sans, entry.label, x, ctx.baselineIn(FaceKind::Sans, 14.0, row.y, row.h), 14.0, ink);
+            if (entry.shortcut.byteLength > 0) {
+                let w : f64 = ctx.textWidth(FaceKind::Mono, entry.shortcut, 11.0);
+                p.text(FaceKind::Mono, entry.shortcut, row.right() - 12.0 - w, ctx.baselineIn(FaceKind::Mono, 11.0, row.y, row.h), 11.0, pal.textFaint);
+            }
+        }
+        p.setOpacity(prev);
+    }
+}

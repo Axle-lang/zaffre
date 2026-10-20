@@ -204,5 +204,19 @@ check("a field has no error at first", not ff.hasError())
 ff.setError("Required")
 check("setError shows an error", ff.hasError())
 
+# --- Command palette ------------------------------------------------------------------------
+ran = []
+cmds = [lit(z.MenuEntry, label="Open file"), lit(z.MenuEntry, label="Save all"), lit(z.MenuEntry, label="Close window")]
+notes.openCommands(cmds, lambda i: ran.append(i))
+settle(shv, 5); shv.layout(); settle(shv, 20); shv.layout()
+pals = [o for o in shv.overlays[:shv.used] if isinstance(o, z.CommandPalette) and not o.done()]
+check("a request opens a command palette", len(pals) == 1)
+check("it lists every command at first", pals[0].shownCount == 3, pals[0].shownCount)
+typed(shv, "SAVE")
+shv.layout()
+check("typing filters, ignoring case", pals[0].shownCount == 1 and pals[0].shown[0] == 1, (pals[0].shownCount, pals[0].shown[0]))
+key(shv, z.Key.Enter); settle(shv, 40)
+check("Enter runs the highlighted command with its original index", ran == [1], ran)
+
 print("FAIL %d" % len(fails) if fails else "all ok")
 sys.exit(1 if fails else 0)

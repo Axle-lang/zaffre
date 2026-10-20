@@ -129,6 +129,48 @@ pub class Strings {
         return p;
     }
 
+    /** `s` with its ASCII letters in lower case: for comparing without regard to case. */
+    pub static fn lower(s : string) : string {
+        let sb : StringBuilder = new StringBuilder();
+        let mut i : i64 = 0;
+        let len : i64 = s.byteLength;
+        while (i < len) {
+            let (cp, n) = Utf8::next(s, i);
+            if (n <= 0) {
+                break;
+            }
+            if (cp >= 65 && cp <= 90) {
+                sb.appendChar(cp + 32);
+            } else {
+                sb.appendChar(cp);
+            }
+            i = i + (n as i64);
+        }
+        return sb.toString();
+    }
+
+    /** Whether `hay` holds `needle`, ignoring the case of ASCII letters; an empty `needle` is in everything. */
+    pub static fn holds(hay : string, needle : string) : bool {
+        if (needle.byteLength == 0) {
+            return true;
+        }
+        let h : string = Strings::lower(hay);
+        let n : string = Strings::lower(needle);
+        let last : i64 = h.byteLength - n.byteLength;
+        let mut i : i64 = 0;
+        while (i <= last) {
+            let mut k : i64 = 0;
+            while (k < n.byteLength && h.byteAt(i + k) == n.byteAt(k)) {
+                k = k + 1;
+            }
+            if (k == n.byteLength) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
     /** `s` with its ASCII letters in capitals: the small labels over a group of items. */
     pub static fn upper(s : string) : string {
         let sb : StringBuilder = new StringBuilder();
