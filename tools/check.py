@@ -259,7 +259,9 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
     # --- syntax ------------------------------------------------------------------
     keywords = ("own", "mut", "let", "fn", "pub", "class", "struct", "enum", "trait", "static", "const", "match",
                 "if", "else", "for", "while", "return", "new", "shared", "self", "super", "as", "use", "try",
-                "catch", "throw", "break", "continue", "in", "where", "impl", "type", "mod", "loop")
+                "catch", "throw", "break", "continue", "impl", "type", "dyn", "when", "readonly", "constructor", "drop",
+                "do", "finally", "exception", "defer", "spawn", "await", "async", "synchronized", "extern",
+                "unsafe", "is", "null", "true", "false", "of", "from")
     for kw in keywords:
         for m in re.finditer(r"\blet\s+(?:mut\s+)?%s\b(?!\s*\()|[(,]\s*%s\s*:\s*[A-Za-z(\[]|\b%s\s*(?:=(?!=)|\.(?=\w))" % (kw, kw, kw), text):
             if kw in ("self", "super") and "let" not in m.group(0):

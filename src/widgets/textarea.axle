@@ -1,0 +1,494 @@
+// textarea — a field for several lines of text.
+//
+//     let notes : Shared<Model<string>> = new shared Model<string>("");
+//     new Textarea(TextareaProps { placeholder: "Write a note…", rows: 4 }, notes)
+//
+// It edits a `Model<string>` like `TextField` does — a caret, a selection, the usual keys, double
+// and triple clicks, the clipboard — and adds what several lines need: Enter starts a new line
+// (Ctrl+Enter submits), Up and Down move between lines keeping their column, long lines wrap at
+// the width, and the box scrolls to keep the caret in view or when the wheel turns over it. Its
+// height is `rows` lines; text beyond that scrolls.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::fill::Fill;
+use crate::style::styles::FieldStyle;
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::text::typeset::Lines;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** How a text area looks and behaves. */
+pub struct TextareaProps {
+    /** Grey text shown while the area is empty. */
+    pub placeholder : string = "";
+
+    /** How many lines tall the box is. */
+    pub rows : i32 = 4;
+
+    /** The text size follows this size's field style. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The area's width: by default 320 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The most characters it accepts; 0 for no limit. */
+    pub maxChars : i32 = 0;
+
+    /** Whether the value is wrong: a red outline and halo. */
+    pub invalid : bool = false;
+}
+
+/** Space above and below the text. */
+const AREA_PAD_Y : f64 = 10.0;
+
+/** The handler an area without one runs. */
+fn ignoreNote(v : string) : void {
+}
+
+/** A multi-line text field. */
+pub class Textarea : Control, Widget {
+    props : TextareaProps;
+    model : Shared<Model<string>>;
+    onChange : (string) => void = ignoreNote;
+    onSubmit : (string) => void = ignoreNote;
+    lines : Lines = new Lines();
+    caret : i64 = 0;
+    anchor : i64 = 0;
+    scroll : f64 = 0.0;
+    wanted : f64 = -1.0;
+    blink : f64 = 0.0;
+    activeT : Eased = Eased::at(0.0);
+
+    /** An area reading and writing `model`. */
+    constructor(own props : TextareaProps, model : Shared<Model<string>>) {
+        self.props = props;
+        self.model = model;
+    }
+
+    /** An area that also tells `onChange` the new text on every edit. */
+    constructor(own props : TextareaProps, model : Shared<Model<string>>, onChange : (string) => void) {
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 320.0), h: self.boxHeight(st) });
+    }
+
+    /** The height of one line. */
+    pub(file) fn lineH(self, st : FieldStyle) : f64 {
+        return st.px * 1.45;
+    }
+
+    /** The height of the box. */
+    pub(file) fn boxHeight(self, st : FieldStyle) : f64 {
+        return self.lineH(st) * (self.props.rows as f64) + 2.0 * AREA_PAD_Y;
+    }
+
+    /** The width the text wraps to. */
+    pub(file) fn textWidth(self, st : FieldStyle) : f64 {
+        return Mathx::fmax(8.0, self.area.w - 2.0 * st.padX);
+    }
+
+    /** Break the text into lines for the current width. */
+    pub(file) fn rewrap(mut self, ctx : Context, st : FieldStyle) : void {
+        ctx.fonts.wrap(FaceKind::Sans, self.model.get(), st.px, self.textWidth(st), self.lines);
+    }
+
+    /** The visual line the caret (or `at`) is on. */
+    pub(file) fn lineOf(self, at : i64) : i32 {
+        let mut i : i32 = self.lines.count - 1;
+        while (i > 0) {
+            if ((self.lines.startOf(i) as i64) <= at) {
+                return i;
+            }
+            i = i - 1;
+        }
+        return 0;
+    }
+
+    /** The x of byte offset `at` within its line, relative to the text's left edge. */
+    pub(file) fn xAt(self, ctx : Context, st : FieldStyle, at : i64) : f64 {
+        let i : i32 = self.lineOf(at);
+        let start : i32 = self.lines.startOf(i);
+        let stop : i32 = self.lines.stopOf(i);
+        let upto : i32 = Mathx::clampI(at as i32, start, stop);
+        return ctx.fonts.span(FaceKind::Sans, self.model.get(), st.px, start, upto);
+    }
+
+    /** The byte offset on line `i` nearest `x` pixels from the text's left edge. */
+    pub(file) fn offsetOn(self, ctx : Context, st : FieldStyle, i : i32, x : f64) : i64 {
+        let line : i32 = Mathx::clampI(i, 0, self.lines.count - 1);
+        let start : i32 = self.lines.startOf(line);
+        let stop : i32 = self.lines.stopOf(line);
+        let piece : string = Strings::slice(self.model.get(), start as i64, stop as i64);
+        return (start as i64) + (ctx.fonts.indexAt(FaceKind::Sans, piece, st.px, x) as i64);
+    }
+
+    // ─── Editing ─────────────────────────────────────────────────
+
+    pub(file) fn selLo(self) : i64 {
+        if (self.caret < self.anchor) {
+            return self.caret;
+        }
+        return self.anchor;
+    }
+
+    pub(file) fn selHi(self) : i64 {
+        if (self.caret > self.anchor) {
+            return self.caret;
+        }
+        return self.anchor;
+    }
+
+    pub(file) fn hasSelection(self) : bool {
+        return self.caret != self.anchor;
+    }
+
+    /** Replace the text, tell the handler, ask for a frame. */
+    pub(file) fn commit(mut self, ctx : Context, text : string) : void {
+        self.model.set(text);
+        let h : (string) => void = self.onChange;
+        h(text);
+        self.blink = ctx.now;
+        ctx.invalidate();
+    }
+
+    /** Replace the selection (or insert at the caret) with `text`. */
+    pub(file) fn replaceSelection(mut self, ctx : Context, text : string) : void {
+        let cur : string = self.model.get();
+        let lo : i64 = self.selLo();
+        let hi : i64 = self.selHi();
+        if (self.props.maxChars > 0) {
+            let room : i32 = self.props.maxChars - (cur.length - ((hi - lo) as i32));
+            if (room <= 0) {
+                return;
+            }
+        }
+        let next : string = Strings::insert(Strings::remove(cur, lo, hi), lo, text);
+        let at : i64 = lo + text.byteLength;
+        self.commit(ctx, next);
+        self.caret = at;
+        self.anchor = at;
+        self.wanted = -1.0;
+    }
+
+    /** Move the caret to `to`, extending the selection when `extend`. */
+    pub(file) fn moveTo(mut self, ctx : Context, to : i64, extend : bool) : void {
+        self.caret = to;
+        if (!extend) {
+            self.anchor = to;
+        }
+        self.blink = ctx.now;
+        ctx.invalidate();
+    }
+
+    /** Move the caret `step` lines up or down, keeping its column. */
+    pub(file) fn moveLines(mut self, ctx : Context, st : FieldStyle, step : i32, extend : bool) : void {
+        if (self.wanted < 0.0) {
+            self.wanted = self.xAt(ctx, st, self.caret);
+        }
+        let target : i32 = self.lineOf(self.caret) + step;
+        let keep : f64 = self.wanted;
+        if (target < 0) {
+            self.moveTo(ctx, 0, extend);
+        } else if (target >= self.lines.count) {
+            self.moveTo(ctx, self.model.get().byteLength, extend);
+        } else {
+            self.moveTo(ctx, self.offsetOn(ctx, st, target, keep), extend);
+        }
+        self.wanted = keep;
+    }
+
+    /** The text of the selection. */
+    pub(file) fn selected(self) : string {
+        return Strings::slice(self.model.get(), self.selLo(), self.selHi());
+    }
+
+    pub(file) fn onKey(mut self, ctx : Context, st : FieldStyle, e : UiEvent) : bool {
+        let s : string = self.model.get();
+        let len : i64 = s.byteLength;
+        let word : bool = e.ctrl();
+        if (e.ctrl()) {
+            if (e.key == Key::A) {
+                self.anchor = 0;
+                self.moveTo(ctx, len, true);
+                return true;
+            }
+            if (e.key == Key::C && self.hasSelection()) {
+                ctx.clip = self.selected();
+                return true;
+            }
+            if (e.key == Key::X && self.hasSelection()) {
+                ctx.clip = self.selected();
+                self.replaceSelection(ctx, "");
+                return true;
+            }
+            if (e.key == Key::V) {
+                self.replaceSelection(ctx, ctx.clip);
+                return true;
+            }
+            if (e.key == Key::Enter) {
+                let h : (string) => void = self.onSubmit;
+                h(s);
+                return true;
+            }
+            if (e.key == Key::Home) {
+                self.moveTo(ctx, 0, e.shift());
+                return true;
+            }
+            if (e.key == Key::End) {
+                self.moveTo(ctx, len, e.shift());
+                return true;
+            }
+        }
+        if (e.key == Key::Left) {
+            if (self.hasSelection() && !e.shift()) {
+                self.moveTo(ctx, self.selLo(), false);
+            } else if (word) {
+                self.moveTo(ctx, Strings::wordLeft(s, self.caret), e.shift());
+            } else {
+                self.moveTo(ctx, Strings::left(s, self.caret), e.shift());
+            }
+            self.wanted = -1.0;
+            return true;
+        }
+        if (e.key == Key::Right) {
+            if (self.hasSelection() && !e.shift()) {
+                self.moveTo(ctx, self.selHi(), false);
+            } else if (word) {
+                self.moveTo(ctx, Strings::wordRight(s, self.caret), e.shift());
+            } else {
+                self.moveTo(ctx, Strings::right(s, self.caret), e.shift());
+            }
+            self.wanted = -1.0;
+            return true;
+        }
+        if (e.key == Key::Up) {
+            self.moveLines(ctx, st, -1, e.shift());
+            return true;
+        }
+        if (e.key == Key::Down) {
+            self.moveLines(ctx, st, 1, e.shift());
+            return true;
+        }
+        if (e.key == Key::PageUp) {
+            self.moveLines(ctx, st, 0 - self.props.rows, e.shift());
+            return true;
+        }
+        if (e.key == Key::PageDown) {
+            self.moveLines(ctx, st, self.props.rows, e.shift());
+            return true;
+        }
+        if (e.key == Key::Home) {
+            self.moveTo(ctx, self.lines.startOf(self.lineOf(self.caret)) as i64, e.shift());
+            self.wanted = -1.0;
+            return true;
+        }
+        if (e.key == Key::End) {
+            self.moveTo(ctx, self.lines.stopOf(self.lineOf(self.caret)) as i64, e.shift());
+            self.wanted = -1.0;
+            return true;
+        }
+        if (e.key == Key::Backspace) {
+            if (self.hasSelection()) {
+                self.replaceSelection(ctx, "");
+            } else if (self.caret > 0) {
+                let start : i64 = word ? Strings::wordLeft(s, self.caret) : Strings::left(s, self.caret);
+                self.anchor = start;
+                self.replaceSelection(ctx, "");
+            }
+            return true;
+        }
+        if (e.key == Key::Delete) {
+            if (self.hasSelection()) {
+                self.replaceSelection(ctx, "");
+            } else if (self.caret < len) {
+                let stop : i64 = word ? Strings::wordRight(s, self.caret) : Strings::right(s, self.caret);
+                self.anchor = stop;
+                self.replaceSelection(ctx, "");
+            }
+            return true;
+        }
+        if (e.key == Key::Enter) {
+            self.replaceSelection(ctx, "\n");
+            return true;
+        }
+        return false;
+    }
+
+    /** The byte offset under the point (`x`, `y`). */
+    pub(file) fn offsetAt(self, ctx : Context, st : FieldStyle, x : f64, y : f64) : i64 {
+        let row : i32 = Mathx::floorI((y - self.area.y - AREA_PAD_Y + self.scroll) / self.lineH(st));
+        return self.offsetOn(ctx, st, row, x - self.area.x - st.padX);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            ctx.wantCursor(Cursor::Beam);
+        }
+        self.rewrap(ctx, st);
+        if (e.kind == EventKind::Wheel && self.area.contains(e.x, e.y) && !ctx.blocked) {
+            let room : f64 = self.lineH(st) * (self.lines.count as f64) - self.lineH(st) * (self.props.rows as f64);
+            if (room > 0.0) {
+                self.scroll = Mathx::clampF(self.scroll + e.wheel * 3.0 * self.lineH(st), 0.0, room);
+                ctx.invalidate();
+                return true;
+            }
+        }
+        if (g == Gesture::Press) {
+            let at : i64 = self.offsetAt(ctx, st, e.x, e.y);
+            let s : string = self.model.get();
+            if (e.clicks >= 3) {
+                let line : i32 = self.lineOf(at);
+                self.anchor = self.lines.startOf(line) as i64;
+                self.caret = self.lines.stopOf(line) as i64;
+                self.blink = ctx.now;
+                ctx.invalidate();
+            } else if (e.clicks == 2) {
+                let hi : i64 = Strings::wordRight(s, at);
+                self.anchor = Strings::wordLeft(s, hi);
+                self.caret = hi;
+                self.blink = ctx.now;
+                ctx.invalidate();
+            } else {
+                self.moveTo(ctx, at, e.shift());
+            }
+            self.wanted = -1.0;
+            return true;
+        }
+        if (self.pressed && e.kind == EventKind::PointerMove) {
+            self.moveTo(ctx, self.offsetAt(ctx, st, e.x, e.y), true);
+            return true;
+        }
+        if (g == Gesture::Click || g == Gesture::Release) {
+            return true;
+        }
+        if (!self.isFocused(ctx) || !self.enabled) {
+            return false;
+        }
+        if (e.kind == EventKind::KeyDown) {
+            return self.onKey(ctx, st, e);
+        }
+        if (e.kind == EventKind::Text && e.cp >= 32 && e.cp != 127 && !e.ctrl()) {
+            self.replaceSelection(ctx, Strings::ofCp(e.cp));
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 0.0;
+        if (self.isFocused(ctx)) {
+            t = 1.0;
+        }
+        self.activeT = self.activeT.toward(t).step(dt, Rate::HOVER);
+        let moving : bool = self.animate(ctx, dt);
+        if (self.isFocused(ctx)) {
+            ctx.wakeIn(0.5);
+        }
+        return moving || !self.activeT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        let act : i32 = self.activeT.alpha();
+        let hv : i32 = self.hoverT.alpha();
+        let off : bool = self.props.disabled;
+        let mut fill : Fill = st.fill.mixed(st.fillFocus, act);
+        if (off) {
+            fill = st.fillOff;
+        }
+        p.fillRound(rr, fill.brush(a.y, a.h));
+        let mut focusEdge : Tint = st.borderFocus;
+        let mut halo : Tint = st.ring;
+        let mut rest : Tint = st.border.mixed(st.borderHover, hv);
+        if (self.props.invalid || ctx.invalid) {
+            focusEdge = st.borderInvalid;
+            halo = st.ringInvalid;
+            rest = st.borderInvalid;
+        }
+        let edge : Tint = rest.mixed(focusEdge, act);
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (act > 0) {
+            let ring : Tint = halo.faded(act);
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+        }
+        self.rewrap(ctx, st);
+        let s : string = self.model.get();
+        let lh : f64 = self.lineH(st);
+        // Keep the caret in view.
+        let caretLine : i32 = self.lineOf(self.caret);
+        let view : f64 = lh * (self.props.rows as f64);
+        let caretTop : f64 = lh * (caretLine as f64);
+        if (self.isFocused(ctx)) {
+            if (caretTop < self.scroll) {
+                self.scroll = caretTop;
+            }
+            if (caretTop + lh > self.scroll + view) {
+                self.scroll = caretTop + lh - view;
+            }
+        }
+        self.scroll = Mathx::clampF(self.scroll, 0.0, Mathx::fmax(0.0, lh * (self.lines.count as f64) - view));
+        let x : f64 = a.x + st.padX;
+        if (s.byteLength == 0 && self.props.placeholder.byteLength > 0 && !self.isFocused(ctx)) {
+            p.text(FaceKind::Sans, self.props.placeholder, x, ctx.baselineIn(FaceKind::Sans, st.px, a.y + AREA_PAD_Y, lh), st.px, st.placeholder);
+            return;
+        }
+        let mut ink : Tint = st.text;
+        if (off) {
+            ink = ctx.theme.palette.textOff;
+        }
+        p.pushClip(a.x + 1.0, a.y + 1.0, a.w - 2.0, a.h - 2.0);
+        for (i of 0..self.lines.count) {
+            let y : f64 = a.y + AREA_PAD_Y + lh * (i as f64) - self.scroll;
+            if (y + lh < a.y || y > a.bottom()) {
+                continue;
+            }
+            let start : i32 = self.lines.startOf(i);
+            let stop : i32 = self.lines.stopOf(i);
+            if (self.hasSelection() && self.isFocused(ctx)) {
+                let lo : i32 = Mathx::clampI(self.selLo() as i32, start, stop);
+                let hi : i32 = Mathx::clampI(self.selHi() as i32, start, stop);
+                let covers : bool = (self.selLo() as i32) <= stop && (self.selHi() as i32) >= start;
+                if (covers && (hi > lo || ((self.selHi() as i32) > stop && (self.selLo() as i32) <= stop))) {
+                    let x0 : f64 = ctx.fonts.span(FaceKind::Sans, s, st.px, start, lo);
+                    let mut x1 : f64 = ctx.fonts.span(FaceKind::Sans, s, st.px, start, hi);
+                    if ((self.selHi() as i32) > stop) {
+                        x1 = x1 + st.px * 0.4;
+                    }
+                    p.fillRound(RRect::uniform(x + x0, y, x1 - x0, lh, 3.0), Brush::solid(st.selection.rgb, st.selection.a));
+                }
+            }
+            p.textSpan(FaceKind::Sans, s, start, stop, x, ctx.baselineIn(FaceKind::Sans, st.px, y, lh), st.px, ink);
+        }
+        if (self.isFocused(ctx) && !self.hasSelection()) {
+            let phase : i64 = ((ctx.now - self.blink) * 2.0).floorToInt();
+            if (phase % 2 == 0) {
+                let cy : f64 = a.y + AREA_PAD_Y + caretTop - self.scroll;
+                let cx : f64 = x + self.xAt(ctx, st, self.caret);
+                p.fillRound(RRect::uniform(cx - 0.5, cy + 1.0, 1.5, lh - 2.0, 0.75), Brush::solid(st.caret.rgb, st.caret.a));
+            }
+        }
+        p.popClip();
+    }
+}
