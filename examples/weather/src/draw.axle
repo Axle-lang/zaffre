@@ -5,8 +5,16 @@
 // the icons are as sharp at any size as the rest of the interface and follow the theme's light and
 // dark. Free functions: none of this has state.
 
-use zaffre::{Painter, Context, FaceKind, Tint, RRect, Brush};
+use zaffre::{Painter, Context, FaceKind, Tint, RRect, Brush, Limits};
 use forecast::Sky;
+
+/** The width a widget takes when it is offered no limit. */
+pub fn wide(limits : Limits, fallback : f64) : f64 {
+    if (limits.boundedW()) {
+        return limits.maxW;
+    }
+    return fallback;
+}
 
 /** Draw `s` at `x`, its line centred in the band `y` to `y + h`; answers where it ended. */
 pub fn put(ctx : Context, p : Painter, kind : FaceKind, s : string, x : f64, y : f64, h : f64, px : f64, t : Tint) : f64 {

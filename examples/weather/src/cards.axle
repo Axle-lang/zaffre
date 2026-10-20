@@ -15,15 +15,7 @@ use units::{
     temperature, speed, pressure, distance, tempUnit, speedUnit, pressureUnit, distanceUnit, degrees,
     compass, beaufort, beaufortName, hourLabel, clock, weekdayLong, dateLong,
 };
-use draw::{put, putRight, putCenter, disc, ring, arrow, skyIcon};
-
-/** The width a widget takes when it is offered no limit. */
-fn wide(limits : Limits, fallback : f64) : f64 {
-    if (limits.boundedW()) {
-        return limits.maxW;
-    }
-    return fallback;
-}
+use draw::{wide, put, putRight, putCenter, disc, ring, arrow, skyIcon};
 
 /** "Tuesday, 20 October" and the place, as the heading of the hourly panel. */
 pub class DayTitle : Base, Widget {
