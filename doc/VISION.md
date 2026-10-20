@@ -21,37 +21,37 @@ library sits one step upstream of the pigment it paints with.
    glyphs are rasterised here, icons are paths here. The only bundled data is two fonts under the
    SIL OFL, and they can be replaced.
 2. **Modular all the way down.** Each layer (see `ARCHITECTURE.md`) imports only the ones below it,
-   and `tools/check.py` enforces that. A widget is a function over `Ui`; a custom widget is written
-   exactly the way the built-in ones are, with no privileged access.
-3. **Style is data, not code.** Tokens → theme → per-widget recipes (variants × sizes × states) →
-   per-instance override. Three levels, a fixed order, no cascade and no specificity.
+   and `tools/check.py` enforces that. A widget is a class that implements `Widget`; a custom widget is
+   written exactly the way the built-in ones are, with no privileged access.
+3. **Style is data, not code.** Palette and metrics → theme → per-widget style records (variants ×
+   sizes), rebuilt when either changes. No cascade and no specificity.
 4. **Idle is free.** The loop sleeps in the OS; a frame is built when something changed or something
    is animating; a frame allocates nothing.
-5. **One description, two painters.** The widgets emit a draw list. The CPU painter is the reference
-   (exact, deterministic, testable by comparing images); a GPU painter is a second consumer of the
-   same list, checked against the first.
+5. **One interface, two painters.** Widgets draw through `Painter`. The CPU painter is the reference
+   (exact, deterministic, testable by comparing images); a GPU painter would be a second implementation,
+   checked against the first.
 6. **Say what is not true.** `LIMITATIONS.md` is written from the compiler's answers, not from the
    plan. A component is marked as built, built-and-unverified, or planned.
 
-## The shape of the API: immediate description, retained state
+## The shape of the API: a tree of objects, values in models
 
-The program redescribes the interface whenever something changed:
+The interface is a tree of retained widgets built as one nested expression, and the values it shows
+live in `Model`s the program owns:
 
 ```rs
-ui.begin(frame);
-    ui.column(Gap::md());
-        ui.heading("Preferences");
-        if (ui.button("Save").clicked) { save(); }
-        dark = ui.switchRow("Dark mode", dark);
-        volume = ui.slider("Volume", volume, 0.0, 1.0);
-    ui.end();
-ui.finish();
+let volume = new shared Model<f64>(0.62);
+let card = new Panel(PanelProps { }, new Column(FlexProps { gap: 14.0 }, [
+    new Label("Preferences", TextRole::H3),
+    new Slider(SliderProps { label: "Volume" }, volume),
+    new Button("Save", () => notes.toast("Saved", Tone::Ok)),
+]));
 ```
 
-There are no callbacks, because a callback needs a closure and the library does not assume Axle
-has one. The library keeps what must outlive a frame — hover and press animations, scroll
-offsets, focus, the caret — keyed by a stable id, so the description can be thrown away and
-rebuilt without anything jumping.
+Handlers are lambdas over `Shared` handles; the widgets read their model when they paint, so choosing
+something anywhere changes everything that depends on it. State that outlives a frame — hover and
+press animations, scroll offsets, focus, the caret — lives in the widgets, which are not rebuilt.
+An immediate-mode `ui.button("Save")` style was considered and set aside: it cannot use what Axle is
+good at (classes, traits, enums, generics, overloaded constructors).
 
 ## What is in it
 
@@ -70,13 +70,7 @@ The levels follow atomic design. Each level may use the ones before it and nothi
 
 ## What it needs from smalt
 
-Nothing in smalt blocks the CPU painter. These improve it, and are smalt's to add:
-
-- present a damaged rectangle instead of the whole frame;
-- the pointer's shape (netaudit finds its own window by title to set one);
-- a clipboard;
-- the window's scale factor;
-- key repeat on Wayland (the shell synthesises it until then).
-
-A GPU painter wants a 2-D batch pipeline in smalt's `gpu` layer (instanced distance-field quads
-and a glyph atlas). Zaffre will not own Vulkan.
+The pointer's shape, the system clipboard, click counts, a damaged-rectangle present and the pointer
+leaving the window are in smalt's `dev` branch and used by the shell. Still missing: the window's scale
+factor, key repeat on Wayland, and a 2-D batch pipeline for a GPU painter (instanced distance-field
+quads and a glyph atlas) — Zaffre will not own Vulkan.
