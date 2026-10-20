@@ -26,6 +26,7 @@ def tick(view, n=3):
 
 
 for page in range(1, 9):
+    rt._top[0] = 64          # the runtime's heap is a bump allocator; the previous page is gone
     view = z.buildOn(page)
     view.resize(1360.0, 900.0)
     tick(view, 5)

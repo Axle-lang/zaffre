@@ -45,10 +45,16 @@ scale, grid, hover card, series colours).
 
 `View` (overlays, dark-mode model, timed wakes), `App` (window loop, cursors, clipboard, clicks).
 
+## Added since
+
+`Calendar` (single day or range) and `DatePicker` (with `Dates`: days since 1970, no calendar library),
+`Combobox` and `MultiSelect` (search, chips), `InputOTP`, `TagsInput`, `CodeBlock` (highlighting, line
+numbers, copy button), `CodeWindow`, `CopyCommand`, `InlineCode`, `TextLink`, `Split` (draggable
+divider), `Grid`, `Collapsible`, `Toolbar`, `OverlayBadge`, `HoverCard`, `UserMenu`.
+
 ## Not yet written
 
-Virtual list, tree, split pane, date picker, combobox with search, multi-select, file input, OTP
-input, hover card, toolbar, a GPU painter, right-to-left and shaped text.
+Virtual list, tree, sortable (drag to reorder) list, file input, a GPU painter, right-to-left and shaped text.
 
 ## In `examples/weather`
 

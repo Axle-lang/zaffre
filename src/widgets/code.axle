@@ -335,7 +335,7 @@ pub class CodeWindow : Base, Widget {
         p.line(a.x + 20.0, a.y + 20.0, a.x + 20.0, a.y + 20.0, 11.0, Tint::hex(0xFF5F57));
         p.line(a.x + 40.0, a.y + 20.0, a.x + 40.0, a.y + 20.0, 11.0, Tint::hex(0xFEBC2E));
         p.line(a.x + 60.0, a.y + 20.0, a.x + 60.0, a.y + 20.0, 11.0, Tint::hex(0x28C840));
-        p.text(FaceKind::Mono, self.title, a.x + 84.0, ctx.baselineIn(FaceKind::Mono, 12.0, a.y, 40.0), 12.0, Tint::hexA(0xFFFFFF, 115));
+        p.text(FaceKind::Mono, self.title, a.x + 84.0, ctx.baselineIn(FaceKind::Mono, 12.0, a.y, 40.0), 12.0, ctx.theme.isDark ? Tint::hexA(0xFFFFFF, 115) : pal.textFaint);
         p.line(a.x, a.y + 40.0 - 0.5, a.right(), a.y + 40.0 - 0.5, 1.0, edge);
         self.block.paint(ctx, p);
         p.strokeRound(a.round(r), 1.0, Brush::solid(edge.rgb, edge.a));
