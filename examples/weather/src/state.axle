@@ -1,0 +1,57 @@
+// state — what the user has picked, and the forecast it picks from.
+//
+// The five `Model`s are the app's whole state: which place, which day of the week, which hour of
+// that day, which curve the chart plots, and which units. Controls bind to them; the widgets that
+// draw the weather read them when they paint, so choosing something anywhere changes everything
+// that depends on it, with no wiring between the widgets.
+
+use zaffre::Model;
+use forecast::{Atlas, Hour, Day};
+
+/** The forecast and the picks over it. */
+pub class Weather {
+    pub atlas : Atlas = new Atlas();
+    pub place : Shared<Model<i32>>;
+    pub day : Shared<Model<i32>>;
+    pub hour : Shared<Model<i32>>;
+    pub metric : Shared<Model<i32>>;
+    pub units : Shared<Model<i32>>;
+
+    constructor(place : Shared<Model<i32>>, day : Shared<Model<i32>>, hour : Shared<Model<i32>>, metric : Shared<Model<i32>>, units : Shared<Model<i32>>) {
+        self.place = place;
+        self.day = day;
+        self.hour = hour;
+        self.metric = metric;
+        self.units = units;
+    }
+
+    /** Whether the user wants imperial units. */
+    pub fn imperial(self) : bool {
+        return self.units.get() == 1;
+    }
+
+    /** The hour picked: place, day and hour together. */
+    pub fn current(self) : Hour {
+        return self.atlas.hour(self.place.get(), self.day.get(), self.hour.get());
+    }
+
+    /** Hour `h` of the picked day. */
+    pub fn hourOf(self, h : i32) : Hour {
+        return self.atlas.hour(self.place.get(), self.day.get(), h);
+    }
+
+    /** The picked day. */
+    pub fn today(self) : Day {
+        return self.atlas.day(self.place.get(), self.day.get());
+    }
+
+    /** Day `d` of the picked place. */
+    pub fn dayOf(self, d : i32) : Day {
+        return self.atlas.day(self.place.get(), d);
+    }
+
+    /** The picked place's name. */
+    pub fn placeName(self) : string {
+        return self.atlas.nameOf(self.place.get());
+    }
+}

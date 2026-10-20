@@ -1,0 +1,142 @@
+// weather — a forecast app: the day hour by hour, the wind, and the week ahead.
+//
+// A program written against zaffre the way an application would be: the page is a nested
+// expression of widgets, the picks (place, day, hour, curve, units) are `Model`s the program holds,
+// and the widgets that show the weather are this program's own classes, drawn with the library's
+// painter. Nothing connects them; each reads the picks when it paints.
+//
+// The data is generated (`forecast.axle`): smalt has no network. Run with `--snap` to draw one
+// frame to `weather.bmp` with no window.
+
+use zaffre::{
+    View, Theme, Fonts, App, AppDesc, Model,
+    Column, Row, Panel, Label, Switch, Segmented, Select, Scroll, Spacer,
+    Widget, FlexProps, PanelProps, SelectProps, ScrollProps, Insets, Align, Length, Elevation, TextRole,
+};
+use state::Weather;
+use cards::{DayTitle, NowCard, WindCard};
+use chart::HourChart;
+use tables::{HourHead, HourRows, WeekList};
+use std::sys::process::{argc, argAt};
+use std::lang::IndexOutOfBoundsException;
+
+const WIDTH : i32 = 1280;
+const HEIGHT : i32 = 880;
+
+/** The page the program opens with. */
+fn build() : View {
+    return page(0, 0, 14, 0, 0, true);
+}
+
+/** The whole page, as the view a window or a snapshot shows, with these choices already made. */
+fn page(startPlace : i32, startDay : i32, startHour : i32, startMetric : i32, startUnits : i32, startDark : bool) : View {
+    let fonts : Shared<Fonts> = new shared Fonts();
+
+    let dark = new shared Model<bool>(startDark);
+    let place = new shared Model<i32>(startPlace);
+    let day = new shared Model<i32>(startDay);
+    let hour = new shared Model<i32>(startHour);
+    let metric = new shared Model<i32>(startMetric);
+    let units = new shared Model<i32>(startUnits);
+    let wx : Shared<Weather> = new shared Weather(place, day, hour, metric, units);
+
+    // Header: the title, and the three choices that apply to everything.
+    let placeNames : string[] = wx.atlas.names();
+    let unitNames : string[] = ["Metric", "Imperial"];
+    let titles : dyn Widget[] = [
+        new Label("Weather", TextRole::H1),
+        new Label("Hour by hour, and seven days ahead — simulated data", TextRole::Dim),
+    ];
+    let headerKids : dyn Widget[] = [
+        new Column(FlexProps { gap: 2.0 }, titles),
+        new Spacer(),
+        new Select(SelectProps { width: Length::Px(180.0) }, placeNames, place),
+        new Segmented(unitNames, units),
+        new Switch("Dark", dark),
+    ];
+    let header = new Row(FlexProps { gap: 16.0, align: Align::Center }, headerKids);
+
+    // Left: now, and the wind.
+    let nowKids : dyn Widget[] = [
+        new NowCard(wx),
+    ];
+    let windKids : dyn Widget[] = [
+        new Label("Wind", TextRole::H3),
+        new WindCard(wx),
+    ];
+    let leftKids : dyn Widget[] = [
+        new Panel(PanelProps { elevation: Elevation::Raised }, new Column(FlexProps { gap: 0.0, align: Align::Stretch }, nowKids)),
+        new Panel(PanelProps { elevation: Elevation::Raised }, new Column(FlexProps { gap: 14.0, align: Align::Stretch }, windKids)),
+    ];
+    let left = new Column(FlexProps { gap: 22.0, align: Align::Stretch, width: Length::Px(380.0) }, leftKids);
+
+    // Right, top: the curve of the day.
+    let metricNames : string[] = ["Temperature", "Precipitation", "Wind", "Humidity"];
+    let chartHead : dyn Widget[] = [
+        new DayTitle(wx),
+        new Spacer(),
+        new Segmented(metricNames, metric),
+    ];
+    let chartKids : dyn Widget[] = [
+        new Row(FlexProps { gap: 12.0, align: Align::Center }, chartHead),
+        new HourChart(wx),
+    ];
+    let chart = new Panel(PanelProps { elevation: Elevation::Raised }, new Column(FlexProps { gap: 12.0, align: Align::Stretch }, chartKids));
+
+    // Right, bottom: the table of hours, and the week.
+    let hoursKids : dyn Widget[] = [
+        new Label("Hour by hour", TextRole::H3),
+        new HourHead(),
+        new Scroll(ScrollProps { height: Length::Px(246.0), width: Length::Fill }, new HourRows(wx)),
+    ];
+    let hours = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.35 }, new Column(FlexProps { gap: 8.0, align: Align::Stretch }, hoursKids));
+    let weekKids : dyn Widget[] = [
+        new Label("Next 7 days", TextRole::H3),
+        new WeekList(wx),
+    ];
+    let week = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 12.0, align: Align::Stretch }, weekKids));
+    let lowerKids : dyn Widget[] = [hours, week];
+    let lower = new Row(FlexProps { gap: 22.0, align: Align::Start }, lowerKids);
+
+    let rightKids : dyn Widget[] = [chart, lower];
+    let right = new Column(FlexProps { gap: 22.0, align: Align::Stretch, grow: 1.0 }, rightKids);
+
+    let bodyKids : dyn Widget[] = [left, right];
+    let pageKids : dyn Widget[] = [
+        header,
+        new Row(FlexProps { gap: 22.0, align: Align::Start }, bodyKids),
+    ];
+    let root = new Column(FlexProps { gap: 22.0, padding: Insets::all(28.0) }, pageKids);
+
+    return new View(startDark ? Theme::dark() : Theme::light(), fonts, dark, root);
+}
+
+fn main() : i32 {
+    let view = build();
+
+    if (wantsSnap()) {
+        if (App::snapshot(view, WIDTH, HEIGHT, "weather.bmp")) {
+            println("wrote weather.bmp");
+            return 0;
+        }
+        println("could not write weather.bmp");
+        return 1;
+    }
+    return App::run(AppDesc { title: "Weather", width: WIDTH, height: HEIGHT }, view);
+}
+
+/** Whether `--snap` was given: draw one frame to a file and leave. */
+fn wantsSnap() : bool {
+    let mut i : i32 = 1;
+    while (i < argc()) {
+        try {
+            if (argAt(i) == "--snap") {
+                return true;
+            }
+        } catch e : IndexOutOfBoundsException {
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}

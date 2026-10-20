@@ -1,0 +1,327 @@
+// chart — the day, hour by hour, as a curve you can read and scrub.
+//
+// One of four curves, chosen with the segmented control above it: temperature, precipitation,
+// wind (with its gusts, and an arrow for the bearing at every hour) or humidity. The pointer
+// shows a crosshair and a card with that hour's figures; a press or a drag picks the hour, which
+// is the whole app's current hour — the conditions, the wind and the table follow it.
+//
+// The curve is a Catmull-Rom spline through the 24 hourly values, drawn as short capsules, with
+// the area under it filled by one-pixel columns that fade toward the axis.
+
+use zaffre::{
+    Widget, Control, Gesture, Context, Painter, Limits, Size, Bounds, FaceKind, Tint, Format,
+    UiEvent, EventKind, Palette, Brush, RRect, Mathx, Fill,
+};
+use forecast::{Hour, Sky, skyName};
+use state::Weather;
+use units::{temperature, speed, rainfall, tempUnit, speedUnit, rainUnit, hourLabel, compass, degrees};
+use draw::{put, putRight, putCenter, disc, arrow, skyIcon};
+
+/** Left margin: room for the value labels of the vertical axis. */
+const CHART_LEFT : f64 = 46.0;
+
+/** Bottom margin: room for the hour labels. */
+const CHART_BOTTOM : f64 = 26.0;
+
+/** Rounds `raw` up to 1, 2, 5 or 10 times a power of ten: a step an axis can count in. */
+fn niceStep(raw : f64) : f64 {
+    if (raw <= 0.0) {
+        return 1.0;
+    }
+    let mut mag : f64 = 1.0;
+    while (raw >= mag * 10.0) {
+        mag = mag * 10.0;
+    }
+    while (raw < mag) {
+        mag = mag / 10.0;
+    }
+    let f : f64 = raw / mag;
+    if (f <= 1.0) {
+        return mag;
+    }
+    if (f <= 2.0) {
+        return mag * 2.0;
+    }
+    if (f <= 5.0) {
+        return mag * 5.0;
+    }
+    return mag * 10.0;
+}
+
+/** The hourly chart. */
+pub class HourChart : Control, Widget {
+    wx : Shared<Weather>;
+    hot : i32 = -1;
+    vals : f64[] = malloc<f64>(24 as i64);
+    vals2 : f64[] = malloc<f64>(24 as i64);
+    lo : f64 = 0.0;
+    hi : f64 = 1.0;
+    step : f64 = 1.0;
+
+    constructor(wx : Shared<Weather>) {
+        self.wx = wx;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut w : f64 = 640.0;
+        if (limits.boundedW()) {
+            w = limits.maxW;
+        }
+        return limits.constrain(Size { w: w, h: 268.0 });
+    }
+
+    /** The plotting area inside the margins. */
+    pub(file) fn plot(self) : Bounds {
+        let a : Bounds = self.area;
+        let top : f64 = self.wx.metric.get() == 2 ? 30.0 : 12.0;
+        return Bounds::make(a.x + CHART_LEFT, a.y + top, a.w - CHART_LEFT - 10.0, a.h - top - CHART_BOTTOM);
+    }
+
+    /** Load the day's values for the picked curve, in the units shown, and fit the axis to them. */
+    pub(file) fn load(mut self) : void {
+        let imp : bool = self.wx.imperial();
+        let metric : i32 = self.wx.metric.get();
+        let mut lo : f64 = 1.0e9;
+        let mut hi : f64 = -1.0e9;
+        for (h of 0..24) {
+            let hr : Hour = self.wx.hourOf(h);
+            let mut v : f64 = temperature(hr.temp, imp);
+            let mut v2 : f64 = v;
+            if (metric == 1) {
+                v = rainfall(hr.precip, imp);
+                v2 = v;
+            } else if (metric == 2) {
+                v = speed(hr.wind, imp);
+                v2 = speed(hr.gust, imp);
+            } else if (metric == 3) {
+                v = hr.humidity;
+                v2 = v;
+            }
+            self.vals[h as i64] = v;
+            self.vals2[h as i64] = v2;
+            lo = Mathx::fmin(lo, Mathx::fmin(v, v2));
+            hi = Mathx::fmax(hi, Mathx::fmax(v, v2));
+        }
+        if (metric == 1) {
+            lo = 0.0;
+            hi = Mathx::fmax(hi, imp ? 0.02 : 0.5);
+        } else if (metric == 2) {
+            lo = 0.0;
+        } else if (metric == 3) {
+            lo = 0.0;
+            hi = 100.0;
+        } else {
+            lo = lo - 1.0;
+            hi = hi + 1.0;
+        }
+        let step : f64 = niceStep((hi - lo) / 4.0);
+        self.step = step;
+        self.lo = ((lo / step).floorToInt() as f64) * step;
+        self.hi = ((hi / step).ceilToInt() as f64) * step;
+        if (self.hi <= self.lo) {
+            self.hi = self.lo + step;
+        }
+    }
+
+    /** The y of value `v` in the plot. */
+    pub(file) fn yOf(self, v : f64) : f64 {
+        let pl : Bounds = self.plot();
+        return pl.bottom() - pl.h * (v - self.lo) / (self.hi - self.lo);
+    }
+
+    /** The x of hour `i`'s centre. */
+    pub(file) fn xOf(self, i : f64) : f64 {
+        let pl : Bounds = self.plot();
+        return pl.x + pl.w * (i + 0.5) / 24.0;
+    }
+
+    /** The curve through `v` at hour `u` (fractional), by Catmull-Rom. */
+    pub(file) fn curve(self, v : f64[], u : f64) : f64 {
+        let uu : f64 = Mathx::clampF(u, 0.0, 23.0);
+        let i : i32 = Mathx::clampI(Mathx::floorI(uu), 0, 22);
+        let s : f64 = uu - (i as f64);
+        let p1 : f64 = v[i as i64];
+        let p2 : f64 = v[(i + 1) as i64];
+        let p0 : f64 = v[Mathx::clampI(i - 1, 0, 23) as i64];
+        let p3 : f64 = v[Mathx::clampI(i + 2, 0, 23) as i64];
+        let s2 : f64 = s * s;
+        let s3 : f64 = s2 * s;
+        let r : f64 = 0.5 * ((2.0 * p1) + (p2 - p0) * s + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * s2 + (3.0 * p1 - p0 - 3.0 * p2 + p3) * s3);
+        return Mathx::clampF(r, Mathx::fmin(self.lo, Mathx::fmin(p1, p2)), Mathx::fmax(self.hi, Mathx::fmax(p1, p2)));
+    }
+
+    /** The hour under `x`. */
+    pub(file) fn hourAt(self, x : f64) : i32 {
+        let pl : Bounds = self.plot();
+        return Mathx::clampI(Mathx::floorI((x - pl.x) / pl.w * 24.0), 0, 23);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = -1;
+            if (self.hovered || self.pressed) {
+                self.hot = self.hourAt(e.x);
+                self.wantHand(ctx);
+            }
+            if (before != self.hot) {
+                ctx.invalidate();
+            }
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.hot = -1;
+            ctx.invalidate();
+        }
+        if (g == Gesture::Press || g == Gesture::Drag || g == Gesture::Click) {
+            let h : i32 = self.hourAt(e.x);
+            if (h != self.wx.hour.get()) {
+                self.wx.hour.set(h);
+                ctx.invalidate();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let imp : bool = self.wx.imperial();
+        let metric : i32 = self.wx.metric.get();
+        self.load();
+        let pl : Bounds = self.plot();
+        let a : Bounds = self.area;
+
+        // Grid and the vertical axis.
+        let decimals : i32 = self.step >= 1.0 ? 0 : (self.step >= 0.1 ? 1 : 2);
+        let lines : i32 = ((self.hi - self.lo) / self.step + 0.5).floorToInt() as i32;
+        for (k of 0..(lines + 1)) {
+            let v : f64 = self.lo + self.step * (k as f64);
+            let y : f64 = self.yOf(v);
+            p.line(pl.x, y, pl.right(), y, 1.0, pal.line.faded(k == 0 ? 255 : 150));
+            putRight(ctx, p, FaceKind::Sans, Format::fixed(v, decimals), pl.x - 8.0, y - 8.0, 16.0, 11.0, pal.textFaint);
+        }
+        let unit : string = metric == 0 ? tempUnit(imp) : (metric == 1 ? rainUnit(imp) : (metric == 2 ? speedUnit(imp) : "%"));
+        put(ctx, p, FaceKind::Sans, unit, a.x + 2.0, a.y - 2.0, 14.0, 11.0, pal.textFaint);
+
+        // Hour labels, every third hour.
+        for (i of 0..8) {
+            let h : i32 = i * 3;
+            putCenter(ctx, p, FaceKind::Sans, hourLabel(h), self.xOf(h as f64), pl.bottom() + 6.0, 16.0, 11.0, pal.textFaint);
+        }
+
+        let chosen : i32 = self.wx.hour.get();
+        // The chosen hour: a soft column behind the curve.
+        let cw : f64 = pl.w / 24.0;
+        p.fillRound(RRect::uniform(pl.x + cw * (chosen as f64), pl.y, cw, pl.h, 5.0), Brush::solid(pal.accent.rgb, 34));
+
+        if (metric == 1) {
+            self.paintBars(ctx, p, pl, chosen);
+        } else {
+            self.paintCurve(ctx, p, pl, metric);
+        }
+
+        if (metric == 2) {
+            for (h of 0..24) {
+                let hr : Hour = self.wx.hourOf(h);
+                arrow(p, self.xOf(h as f64), a.y + 12.0, 13.0, hr.windDir + 180.0, 1.7, h == chosen ? pal.accentTop : pal.textDim);
+            }
+        }
+
+        // The chosen hour's marker.
+        let cxn : f64 = self.xOf(chosen as f64);
+        let cyn : f64 = self.yOf(self.vals[chosen as i64]);
+        disc(p, cxn, cyn, 6.5, pal.accent.faded(70));
+        disc(p, cxn, cyn, 4.2, pal.accentTop);
+
+        if (self.hot >= 0) {
+            self.paintHover(ctx, p, pl, self.hot);
+        }
+    }
+
+    /** The curve (and, for wind, the gusts above it) with the area under it. */
+    pub(file) fn paintCurve(self, ctx : Context, p : Painter, pl : Bounds, metric : i32) : void {
+        let pal : Palette = ctx.theme.palette;
+        let x0 : f64 = self.xOf(0.0);
+        let x1 : f64 = self.xOf(23.0);
+        let fillTop : Tint = pal.accent.faded(92);
+        let fillBottom : Tint = pal.accent.faded(0);
+        let brush : Brush = Fill::vertical(fillTop, fillBottom).brush(pl.y, pl.h);
+        let mut x : f64 = x0;
+        while (x <= x1) {
+            let u : f64 = (x - x0) / (x1 - x0) * 23.0;
+            let y : f64 = self.yOf(self.curve(self.vals, u));
+            p.fillRound(RRect::uniform(x, y, 1.0, pl.bottom() - y, 0.0), brush);
+            x = x + 1.0;
+        }
+        if (metric == 2) {
+            self.stroke(p, self.vals2, pal.textFaint, 1.6, x0, x1);
+        }
+        self.stroke(p, self.vals, pal.accentTop, 2.6, x0, x1);
+    }
+
+    /** `v` as a line of short capsules. */
+    pub(file) fn stroke(self, p : Painter, v : f64[], t : Tint, width : f64, x0 : f64, x1 : f64) : void {
+        let n : i32 = 23 * 6;
+        let mut px : f64 = x0;
+        let mut py : f64 = self.yOf(self.curve(v, 0.0));
+        for (k of 1..(n + 1)) {
+            let u : f64 = (k as f64) / 6.0;
+            let nx : f64 = x0 + (x1 - x0) * u / 23.0;
+            let ny : f64 = self.yOf(self.curve(v, u));
+            p.line(px, py, nx, ny, width, t);
+            px = nx;
+            py = ny;
+        }
+    }
+
+    /** Precipitation as bars. */
+    pub(file) fn paintBars(self, ctx : Context, p : Painter, pl : Bounds, chosen : i32) : void {
+        let pal : Palette = ctx.theme.palette;
+        let bw : f64 = pl.w / 24.0 * 0.6;
+        for (h of 0..24) {
+            let v : f64 = self.vals[h as i64];
+            if (v > 0.0) {
+                let top : f64 = self.yOf(v);
+                let xc : f64 = self.xOf(h as f64);
+                let t : Tint = Tint::hex(0x4DA3FF);
+                p.fillRound(RRect::uniform(xc - bw * 0.5, top, bw, pl.bottom() - top, Mathx::fmin(3.0, bw * 0.5)), Brush::solid(t.rgb, h == chosen ? 255 : 190));
+            }
+        }
+    }
+
+    /** The crosshair and the card of figures for hour `h`. */
+    pub(file) fn paintHover(self, ctx : Context, p : Painter, pl : Bounds, h : i32) : void {
+        let pal : Palette = ctx.theme.palette;
+        let imp : bool = self.wx.imperial();
+        let hr : Hour = self.wx.hourOf(h);
+        let x : f64 = self.xOf(h as f64);
+        p.line(x, pl.y, x, pl.bottom(), 1.0, pal.textFaint.faded(170));
+        disc(p, x, self.yOf(self.vals[h as i64]), 4.0, pal.text);
+
+        let w : f64 = 196.0;
+        let hh : f64 = 118.0;
+        let mut bx : f64 = x + 14.0;
+        if (bx + w > pl.right()) {
+            bx = x - 14.0 - w;
+        }
+        let by : f64 = Mathx::clampF(self.yOf(self.vals[h as i64]) - hh * 0.5, pl.y, pl.bottom() - hh);
+        let rr : RRect = RRect::uniform(bx, by, w, hh, 10.0);
+        p.shadow(rr, 0.0, 8.0, 22.0, -4.0, pal.shadow.faded(120));
+        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        put(ctx, p, FaceKind::Bold, hourLabel(h), bx + 12.0, by + 8.0, 20.0, 13.0, pal.text);
+        putRight(ctx, p, FaceKind::Sans, skyName(hr.sky, hr.night), bx + w - 44.0, by + 8.0, 20.0, 12.0, pal.textDim);
+        skyIcon(p, hr.sky, hr.night, ctx.theme.isDark, pal.overlay, bx + w - 36.0, by + 6.0, 26.0);
+        put(ctx, p, FaceKind::Bold, degrees(hr.temp, imp), bx + 12.0, by + 32.0, 22.0, 17.0, pal.text);
+        put(ctx, p, FaceKind::Sans, "feels " + degrees(hr.feels, imp), bx + 62.0, by + 32.0, 22.0, 12.0, pal.textDim);
+        put(ctx, p, FaceKind::Sans, "Rain  " + Format::fixed(rainfall(hr.precip, imp), imp ? 2 : 1) + " " + rainUnit(imp) + "  ·  " + Format::whole(hr.chance) + " %", bx + 12.0, by + 56.0, 18.0, 12.0, pal.textDim);
+        put(ctx, p, FaceKind::Sans, "Wind  " + Format::whole(speed(hr.wind, imp)) + " " + speedUnit(imp) + " " + compass(hr.windDir), bx + 12.0, by + 76.0, 18.0, 12.0, pal.textDim);
+        put(ctx, p, FaceKind::Sans, "Humidity  " + Format::whole(hr.humidity) + " %", bx + 12.0, by + 96.0, 18.0, 12.0, pal.textDim);
+    }
+}

@@ -1,0 +1,149 @@
+// units — what a measure is called, and how it reads in metric and in imperial.
+//
+// The forecast is held in one set of units (°C, km/h, mm, hPa, km); these functions turn a value
+// into what the user asked to see, and name it. Free functions: a conversion has no state.
+
+use zaffre::Format;
+
+/** °C, or °F when `imperial`. */
+pub fn temperature(c : f64, imperial : bool) : f64 {
+    if (imperial) {
+        return c * 1.8 + 32.0;
+    }
+    return c;
+}
+
+/** km/h, or mph. */
+pub fn speed(kmh : f64, imperial : bool) : f64 {
+    if (imperial) {
+        return kmh * 0.621371;
+    }
+    return kmh;
+}
+
+/** mm, or inches. */
+pub fn rainfall(mm : f64, imperial : bool) : f64 {
+    if (imperial) {
+        return mm / 25.4;
+    }
+    return mm;
+}
+
+/** hPa, or inches of mercury. */
+pub fn pressure(hpa : f64, imperial : bool) : f64 {
+    if (imperial) {
+        return hpa * 0.02953;
+    }
+    return hpa;
+}
+
+/** km, or miles. */
+pub fn distance(km : f64, imperial : bool) : f64 {
+    if (imperial) {
+        return km * 0.621371;
+    }
+    return km;
+}
+
+pub fn tempUnit(imperial : bool) : string {
+    if (imperial) {
+        return "°F";
+    }
+    return "°C";
+}
+
+pub fn speedUnit(imperial : bool) : string {
+    if (imperial) {
+        return "mph";
+    }
+    return "km/h";
+}
+
+pub fn rainUnit(imperial : bool) : string {
+    if (imperial) {
+        return "in";
+    }
+    return "mm";
+}
+
+pub fn pressureUnit(imperial : bool) : string {
+    if (imperial) {
+        return "inHg";
+    }
+    return "hPa";
+}
+
+pub fn distanceUnit(imperial : bool) : string {
+    if (imperial) {
+        return "mi";
+    }
+    return "km";
+}
+
+/** A temperature as the user reads it: "21°". */
+pub fn degrees(c : f64, imperial : bool) : string {
+    return Format::whole(temperature(c, imperial)) + "°";
+}
+
+/** The sixteen-point compass name of a bearing in degrees: 0 is N, 90 is E. */
+pub fn compass(deg : f64) : string {
+    let names : string[] = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+    let mut i : i32 = ((deg + 11.25) / 22.5).floorToInt() as i32;
+    i = ((i % 16) + 16) % 16;
+    return names[i as i64];
+}
+
+/** The Beaufort force (0 to 12) of a wind in km/h. */
+pub fn beaufort(kmh : f64) : i32 {
+    let limits : f64[] = [1.0, 5.0, 11.0, 19.0, 28.0, 38.0, 49.0, 61.0, 74.0, 88.0, 102.0, 117.0];
+    let mut n : i32 = 0;
+    while (n < 12 && kmh >= limits[n as i64]) {
+        n = n + 1;
+    }
+    return n;
+}
+
+pub fn beaufortName(n : i32) : string {
+    let names : string[] = ["Calm", "Light air", "Light breeze", "Gentle breeze", "Moderate breeze", "Fresh breeze", "Strong breeze", "Near gale", "Gale", "Strong gale", "Storm", "Violent storm", "Hurricane"];
+    return names[n.max(0).min(12) as i64];
+}
+
+/** "07:00". */
+pub fn hourLabel(h : i32) : string {
+    if (h < 10) {
+        return "0" + h.toString() + ":00";
+    }
+    return h.toString() + ":00";
+}
+
+/** "06:42", for a time given in fractional hours. */
+pub fn clock(hours : f64) : string {
+    let mut m : i32 = (hours * 60.0 + 0.5).floorToInt() as i32;
+    m = ((m % 1440) + 1440) % 1440;
+    let hh : i32 = m / 60;
+    let mm : i32 = m % 60;
+    let a : string = hh < 10 ? "0" + hh.toString() : hh.toString();
+    let b : string = mm < 10 ? "0" + mm.toString() : mm.toString();
+    return a + ":" + b;
+}
+
+/** The weekday `offset` days after today (Tuesday 20 October 2026), short: "Wed". */
+pub fn weekday(offset : i32) : string {
+    let names : string[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    return names[((1 + offset) % 7) as i64];
+}
+
+pub fn weekdayLong(offset : i32) : string {
+    let names : string[] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    return names[((1 + offset) % 7) as i64];
+}
+
+/** "20 Oct", the date `offset` days after today. */
+pub fn dateShort(offset : i32) : string {
+    return (20 + offset).toString() + " Oct";
+}
+
+/** "20 October". */
+pub fn dateLong(offset : i32) : string {
+    return (20 + offset).toString() + " October";
+}

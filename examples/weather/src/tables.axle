@@ -1,0 +1,232 @@
+// tables — the day hour by hour as a table, and the week as a list. Rows you can point at and pick.
+//
+// Both are single widgets that draw all their rows and answer for them: the row under the pointer
+// is lit, a click picks it (an hour of the day, or a day of the week), and the picked row stays
+// marked. The hourly table is taller than its panel, so the app puts it in a `Scroll`; its column
+// heads are a separate widget that stays put above.
+
+use zaffre::{
+    Widget, Base, Control, Gesture, Context, Painter, Limits, Size, Bounds, FaceKind, Tint, Format,
+    UiEvent, EventKind, Palette, Brush, RRect, Mathx, ControlSize,
+};
+use forecast::{Hour, Day, Sky};
+use state::Weather;
+use units::{
+    temperature, speed, rainfall, speedUnit, rainUnit, degrees, compass, hourLabel,
+    weekday, dateShort,
+};
+use draw::{put, putRight, putCenter, arrow, skyIcon};
+
+/** Height of one hour's row. */
+const HOUR_ROW : f64 = 42.0;
+
+/** Height of one day's row. */
+const DAY_ROW : f64 = 43.0;
+
+/** Where each column of the hourly table starts, from the table's left edge. */
+const COL_TIME : f64 = 12.0;
+const COL_ICON : f64 = 64.0;
+const COL_TEMP : f64 = 100.0;
+const COL_WIND : f64 = 156.0;
+const COL_RAIN : f64 = 274.0;
+const COL_CHANCE : f64 = 330.0;
+
+/** The width a widget takes when it is offered no limit. */
+fn wide(limits : Limits, fallback : f64) : f64 {
+    if (limits.boundedW()) {
+        return limits.maxW;
+    }
+    return fallback;
+}
+
+/** The labels above the hourly table's columns. */
+pub class HourHead : Base, Widget {
+    constructor() {
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: wide(limits, 440.0), h: 24.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let a : Bounds = self.area;
+        put(ctx, p, FaceKind::Bold, "TIME", a.x + COL_TIME, a.y, a.h, 11.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, "TEMP", a.x + COL_TEMP, a.y, a.h, 11.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, "WIND", a.x + COL_WIND, a.y, a.h, 11.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, "RAIN", a.x + COL_RAIN, a.y, a.h, 11.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, "CHANCE", a.x + COL_CHANCE, a.y, a.h, 11.0, pal.textFaint);
+        putRight(ctx, p, FaceKind::Bold, "HUM.", a.right() - 10.0, a.y, a.h, 11.0, pal.textFaint);
+        p.line(a.x, a.bottom() - 0.5, a.right(), a.bottom() - 0.5, 1.0, pal.line);
+    }
+}
+
+/** The 24 hours of the picked day, one row each. */
+pub class HourRows : Control, Widget {
+    wx : Shared<Weather>;
+    hot : i32 = -1;
+
+    constructor(wx : Shared<Weather>) {
+        self.wx = wx;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: wide(limits, 440.0), h: HOUR_ROW * 24.0 });
+    }
+
+    pub(file) fn rowAt(self, y : f64) : i32 {
+        return Mathx::clampI(Mathx::floorI((y - self.area.y) / HOUR_ROW), 0, 23);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.rowAt(e.y);
+                self.wantHand(ctx);
+            }
+            if (before != self.hot) {
+                ctx.invalidate();
+            }
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.hot = -1;
+            ctx.invalidate();
+        }
+        if (g == Gesture::Click) {
+            self.wx.hour.set(self.rowAt(e.y));
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let item = ctx.theme.item(ControlSize::Md);
+        let imp : bool = self.wx.imperial();
+        let chosen : i32 = self.wx.hour.get();
+        let a : Bounds = self.area;
+        for (h of 0..24) {
+            let y : f64 = a.y + HOUR_ROW * (h as f64);
+            let row : Bounds = Bounds::make(a.x + 2.0, y + 2.0, a.w - 4.0, HOUR_ROW - 4.0);
+            if (h == chosen) {
+                p.fillRound(row.round(8.0), Brush::solid(pal.accent.rgb, 44));
+            } else if (h == self.hot) {
+                p.fillRound(row.round(8.0), Brush::solid(item.hover.rgb, item.hover.a));
+            }
+            let hr : Hour = self.wx.hourOf(h);
+            put(ctx, p, FaceKind::Bold, hourLabel(h), a.x + COL_TIME, y, HOUR_ROW, 14.0, h == chosen ? pal.accentTop : pal.text);
+            skyIcon(p, hr.sky, hr.night, ctx.theme.isDark, pal.raised, a.x + COL_ICON, y + 8.0, 26.0);
+            put(ctx, p, FaceKind::Bold, degrees(hr.temp, imp), a.x + COL_TEMP, y, HOUR_ROW, 15.0, pal.text);
+            arrow(p, a.x + COL_WIND + 8.0, y + HOUR_ROW * 0.5, 14.0, hr.windDir + 180.0, 1.8, pal.accentTop);
+            put(ctx, p, FaceKind::Sans, Format::whole(speed(hr.wind, imp)) + " " + speedUnit(imp) + " " + compass(hr.windDir), a.x + COL_WIND + 22.0, y, HOUR_ROW, 13.0, pal.textDim);
+            if (hr.precip > 0.0) {
+                put(ctx, p, FaceKind::Sans, Format::fixed(rainfall(hr.precip, imp), imp ? 2 : 1) + " " + rainUnit(imp), a.x + COL_RAIN, y, HOUR_ROW, 13.0, Tint::hex(0x4DA3FF));
+            } else {
+                put(ctx, p, FaceKind::Sans, "—", a.x + COL_RAIN, y, HOUR_ROW, 13.0, pal.textFaint);
+            }
+            put(ctx, p, FaceKind::Sans, Format::whole(hr.chance) + " %", a.x + COL_CHANCE, y, HOUR_ROW, 13.0, hr.chance >= 50.0 ? pal.textDim : pal.textFaint);
+            putRight(ctx, p, FaceKind::Sans, Format::whole(hr.humidity) + " %", a.right() - 10.0, y, HOUR_ROW, 13.0, pal.textFaint);
+        }
+    }
+}
+
+/** The seven days of the picked place, one row each. */
+pub class WeekList : Control, Widget {
+    wx : Shared<Weather>;
+    hot : i32 = -1;
+
+    constructor(wx : Shared<Weather>) {
+        self.wx = wx;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: wide(limits, 320.0), h: DAY_ROW * 7.0 });
+    }
+
+    pub(file) fn rowAt(self, y : f64) : i32 {
+        return Mathx::clampI(Mathx::floorI((y - self.area.y) / DAY_ROW), 0, 6);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.rowAt(e.y);
+                self.wantHand(ctx);
+            }
+            if (before != self.hot) {
+                ctx.invalidate();
+            }
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.hot = -1;
+            ctx.invalidate();
+        }
+        if (g == Gesture::Click) {
+            self.wx.day.set(self.rowAt(e.y));
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    /** The colour of a temperature: cold blue, mild green-yellow, warm orange. */
+    pub(file) fn heat(self, c : f64) : Tint {
+        let cold : Tint = Tint::hex(0x4DA3FF);
+        let warm : Tint = Tint::hex(0xFF9F43);
+        return cold.mixed(warm, Mathx::roundI(Mathx::clamp01((c - 2.0) / 24.0) * 255.0));
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let item = ctx.theme.item(ControlSize::Md);
+        let imp : bool = self.wx.imperial();
+        let chosen : i32 = self.wx.day.get();
+        let a : Bounds = self.area;
+        let (wlo, whi) = self.wx.atlas.weekRange(self.wx.place.get());
+        let bx0 : f64 = a.x + 174.0;
+        let bx1 : f64 = a.right() - 60.0;
+        for (d of 0..7) {
+            let y : f64 = a.y + DAY_ROW * (d as f64);
+            let row : Bounds = Bounds::make(a.x + 2.0, y + 2.0, a.w - 4.0, DAY_ROW - 4.0);
+            if (d == chosen) {
+                p.fillRound(row.round(8.0), Brush::solid(pal.accent.rgb, 44));
+            } else if (d == self.hot) {
+                p.fillRound(row.round(8.0), Brush::solid(item.hover.rgb, item.hover.a));
+            }
+            let day : Day = self.wx.dayOf(d);
+            put(ctx, p, FaceKind::Bold, d == 0 ? "Today" : weekday(d), a.x + 12.0, y + 5.0, 18.0, 14.0, d == chosen ? pal.accentTop : pal.text);
+            put(ctx, p, FaceKind::Sans, dateShort(d), a.x + 12.0, y + 22.0, 16.0, 11.0, pal.textFaint);
+            skyIcon(p, day.sky, false, ctx.theme.isDark, pal.raised, a.x + 74.0, y + 8.0, 26.0);
+            if (day.chance >= 20.0) {
+                put(ctx, p, FaceKind::Sans, Format::whole(day.chance) + "%", a.x + 106.0, y, DAY_ROW, 12.0, Tint::hex(0x4DA3FF));
+            }
+            putRight(ctx, p, FaceKind::Sans, degrees(day.lo, imp), bx0 - 8.0, y, DAY_ROW, 13.0, pal.textDim);
+            // The span of the day's temperatures within the week's.
+            let span : f64 = Mathx::fmax(1.0, whi - wlo);
+            let x0 : f64 = bx0 + (bx1 - bx0) * (day.lo - wlo) / span;
+            let x1 : f64 = bx0 + (bx1 - bx0) * (day.hi - wlo) / span;
+            p.fillRound(RRect::uniform(bx0, y + DAY_ROW * 0.5 - 2.5, bx1 - bx0, 5.0, 2.5), Brush::solid(pal.line.rgb, pal.line.a));
+            let c : Tint = self.heat((day.lo + day.hi) * 0.5);
+            p.fillRound(RRect::uniform(x0, y + DAY_ROW * 0.5 - 2.5, Mathx::fmax(5.0, x1 - x0), 5.0, 2.5), Brush::solid(c.rgb, c.a));
+            put(ctx, p, FaceKind::Bold, degrees(day.hi, imp), bx1 + 8.0, y, DAY_ROW, 13.0, pal.text);
+            arrow(p, a.right() - 12.0, y + DAY_ROW * 0.5, 12.0, day.windDir + 180.0, 1.6, pal.textFaint);
+        }
+    }
+}

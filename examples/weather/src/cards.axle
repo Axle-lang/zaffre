@@ -1,0 +1,160 @@
+// cards — the three widgets that read the picked hour and say it in words and figures: the
+// headline of the day, the current conditions, and the wind.
+//
+// A widget of the library is a class that is a `Widget`: it measures itself, is given a box, and
+// paints into it. These three own no state; each reads `Weather` when it paints, so they follow
+// the picks without being told.
+
+use zaffre::{
+    Widget, Base, Context, Painter, Limits, Size, Bounds, FaceKind, Tint, Format, UiEvent, Palette,
+    Brush, RRect, Mathx,
+};
+use forecast::{Hour, Day, skyName};
+use state::Weather;
+use units::{
+    temperature, speed, pressure, distance, tempUnit, speedUnit, pressureUnit, distanceUnit, degrees,
+    compass, beaufort, beaufortName, hourLabel, clock, weekdayLong, dateLong,
+};
+use draw::{put, putRight, putCenter, disc, ring, arrow, skyIcon};
+
+/** The width a widget takes when it is offered no limit. */
+fn wide(limits : Limits, fallback : f64) : f64 {
+    if (limits.boundedW()) {
+        return limits.maxW;
+    }
+    return fallback;
+}
+
+/** "Tuesday, 20 October" and the place, as the heading of the hourly panel. */
+pub class DayTitle : Base, Widget {
+    wx : Shared<Weather>;
+
+    constructor(wx : Shared<Weather>) {
+        self.wx = wx;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let d : i32 = self.wx.day.get();
+        let w : f64 = ctx.textWidth(FaceKind::Bold, weekdayLong(d) + ", " + dateLong(d), 18.0) + ctx.textWidth(FaceKind::Sans, "  ·  " + self.wx.placeName(), 14.0);
+        return limits.constrain(Size { w: w, h: 28.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let d : i32 = self.wx.day.get();
+        let a : Bounds = self.area;
+        let end : f64 = put(ctx, p, FaceKind::Bold, weekdayLong(d) + ", " + dateLong(d), a.x, a.y, a.h, 18.0, pal.text);
+        put(ctx, p, FaceKind::Sans, "  ·  " + self.wx.placeName(), end, a.y, a.h, 14.0, pal.textDim);
+    }
+}
+
+/** The current conditions: temperature, sky, and the figures behind them. */
+pub class NowCard : Base, Widget {
+    wx : Shared<Weather>;
+
+    constructor(wx : Shared<Weather>) {
+        self.wx = wx;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: wide(limits, 340.0), h: 300.0 });
+    }
+
+    /** One figure of the grid: a small label over a value, in column `col` of row `row`. */
+    pub(file) fn figure(self, ctx : Context, p : Painter, col : i32, row : i32, label : string, value : string) : void {
+        let pal : Palette = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let cw : f64 = a.w / 3.0;
+        let x : f64 = a.x + cw * (col as f64);
+        let y : f64 = a.y + 188.0 + 56.0 * (row as f64);
+        put(ctx, p, FaceKind::Sans, label, x, y, 18.0, 12.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, value, x, y + 18.0, 24.0, 17.0, pal.text);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let imp : bool = self.wx.imperial();
+        let h : Hour = self.wx.current();
+        let day : Day = self.wx.today();
+        let a : Bounds = self.area;
+
+        put(ctx, p, FaceKind::Sans, self.wx.placeName() + "  ·  " + hourLabel(self.wx.hour.get()), a.x, a.y, 20.0, 13.0, pal.textDim);
+        let t : f64 = temperature(h.temp, imp);
+        let big : string = Format::whole(t);
+        let end : f64 = put(ctx, p, FaceKind::Bold, big, a.x, a.y + 26.0, 72.0, 64.0, pal.text);
+        put(ctx, p, FaceKind::Sans, tempUnit(imp), end + 2.0, a.y + 30.0, 40.0, 26.0, pal.textDim);
+
+        skyIcon(p, h.sky, h.night, ctx.theme.isDark, pal.raised, a.right() - 92.0, a.y + 22.0, 92.0);
+
+        put(ctx, p, FaceKind::Bold, skyName(h.sky, h.night), a.x, a.y + 104.0, 24.0, 17.0, pal.text);
+        put(ctx, p, FaceKind::Sans, "Feels like " + degrees(h.feels, imp) + "   ·   High " + degrees(day.hi, imp) + "   Low " + degrees(day.lo, imp), a.x, a.y + 128.0, 20.0, 13.0, pal.textDim);
+        put(ctx, p, FaceKind::Sans, "Sunrise " + clock(day.sunrise) + "   ·   Sunset " + clock(day.sunset), a.x, a.y + 150.0, 20.0, 13.0, pal.textDim);
+
+        p.line(a.x, a.y + 180.0, a.right(), a.y + 180.0, 1.0, pal.line);
+        self.figure(ctx, p, 0, 0, "Humidity", Format::whole(h.humidity) + " %");
+        self.figure(ctx, p, 1, 0, "Pressure", Format::fixed(pressure(h.pressure, imp), imp ? 2 : 0) + " " + pressureUnit(imp));
+        self.figure(ctx, p, 2, 0, "UV index", Format::fixed(h.uv, 1));
+        self.figure(ctx, p, 0, 1, "Visibility", Format::fixed(distance(h.visibility, imp), 0) + " " + distanceUnit(imp));
+        self.figure(ctx, p, 1, 1, "Dew point", degrees(h.dew, imp));
+        self.figure(ctx, p, 2, 1, "Cloud cover", Format::whole(h.cloud) + " %");
+    }
+}
+
+/** The wind: a compass with an arrow, the speed, the bearing, the gusts and the Beaufort force. */
+pub class WindCard : Base, Widget {
+    wx : Shared<Weather>;
+
+    constructor(wx : Shared<Weather>) {
+        self.wx = wx;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: wide(limits, 340.0), h: 322.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal : Palette = ctx.theme.palette;
+        let imp : bool = self.wx.imperial();
+        let h : Hour = self.wx.current();
+        let a : Bounds = self.area;
+        let cx : f64 = a.midX();
+        let cy : f64 = a.y + 98.0;
+        let r : f64 = 88.0;
+
+        disc(p, cx, cy, r, pal.background.faded(120));
+        ring(p, cx, cy, r, 1.5, pal.lineStrong);
+        for (k of 0..36) {
+            let ang : f64 = (k as f64) * 0.17453292519943295;
+            let major : bool = k % 9 == 0;
+            let len : f64 = major ? 9.0 : (k % 3 == 0 ? 6.0 : 3.5);
+            let sx : f64 = ang.sin();
+            let sy : f64 = 0.0 - ang.cos();
+            p.line(cx + sx * (r - 3.0), cy + sy * (r - 3.0), cx + sx * (r - 3.0 - len), cy + sy * (r - 3.0 - len), major ? 1.6 : 1.0, major ? pal.textDim : pal.textFaint);
+        }
+        putCenter(ctx, p, FaceKind::Bold, "N", cx, cy - r + 14.0, 16.0, 12.0, pal.text);
+        putCenter(ctx, p, FaceKind::Bold, "S", cx, cy + r - 30.0, 16.0, 12.0, pal.textDim);
+        putCenter(ctx, p, FaceKind::Bold, "E", cx + r - 20.0, cy - 8.0, 16.0, 12.0, pal.textDim);
+        putCenter(ctx, p, FaceKind::Bold, "W", cx - r + 20.0, cy - 8.0, 16.0, 12.0, pal.textDim);
+
+        // The wind is named for where it comes from, so the dot sits on that side and the arrow
+        // points the way the air is going.
+        let src : f64 = h.windDir * 0.017453292519943295;
+        disc(p, cx + src.sin() * (r - 24.0), cy - src.cos() * (r - 24.0), 5.0, pal.accent);
+        let heading : f64 = h.windDir + 180.0;
+        let strength : f64 = Mathx::clampF(h.wind / 60.0, 0.0, 1.0);
+        arrow(p, cx, cy, 44.0 + 24.0 * strength, heading, 3.4, pal.accentTop);
+        disc(p, cx, cy, 4.5, pal.accentTop);
+
+        let y : f64 = a.y + 204.0;
+        putCenter(ctx, p, FaceKind::Bold, Format::whole(speed(h.wind, imp)) + " " + speedUnit(imp), cx, y, 34.0, 28.0, pal.text);
+        putCenter(ctx, p, FaceKind::Sans, "from " + compass(h.windDir) + "  ·  " + Format::whole(h.windDir) + "°", cx, y + 34.0, 20.0, 14.0, pal.textDim);
+
+        let cw : f64 = a.w / 2.0;
+        let yy : f64 = a.y + 270.0;
+        put(ctx, p, FaceKind::Sans, "Gusts", a.x, yy, 16.0, 12.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, Format::whole(speed(h.gust, imp)) + " " + speedUnit(imp), a.x, yy + 16.0, 22.0, 16.0, pal.text);
+        let n : i32 = beaufort(h.wind);
+        put(ctx, p, FaceKind::Sans, "Beaufort " + n.toString(), a.x + cw, yy, 16.0, 12.0, pal.textFaint);
+        put(ctx, p, FaceKind::Bold, beaufortName(n), a.x + cw, yy + 16.0, 22.0, 16.0, pal.text);
+    }
+}

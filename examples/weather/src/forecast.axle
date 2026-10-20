@@ -1,0 +1,292 @@
+// forecast — the weather the app shows: seven days, hour by hour, for six places.
+//
+// smalt has no network, so there is nothing to ask for the real thing; this module *makes* a
+// forecast, deterministically. It is a small model, not noise: each place has a climate (mean and
+// daily swing of temperature, humidity, how windy and how wet it is, a latitude that sets the
+// length of the day), and a few slow waves — "fronts" — drive cloud cover, from which rain,
+// temperature damping, humidity, pressure, wind and visibility follow. The same place always gets
+// the same week, so the app is reproducible and its pictures comparable.
+//
+// A real source would fill the same `Hour`s and `Day`s; nothing above this file knows the
+// difference.
+//
+// The week starts on Tuesday 20 October 2026, in the local time of each place.
+
+use zaffre::Mathx;
+
+/** What the sky looks like. */
+pub enum Sky : i32 {
+    Clear = 0,
+    Few = 1,
+    Cloudy = 2,
+    Fog = 3,
+    Drizzle = 4,
+    Rain = 5,
+    Storm = 6,
+    Snow = 7,
+}
+
+/** One hour of one place. Units: °C, %, hPa, km/h, degrees (where the wind comes FROM), mm, km. */
+pub struct Hour {
+    pub temp : f64 = 0.0;
+    pub feels : f64 = 0.0;
+    pub humidity : f64 = 0.0;
+    pub dew : f64 = 0.0;
+    pub pressure : f64 = 1013.0;
+    pub wind : f64 = 0.0;
+    pub gust : f64 = 0.0;
+    pub windDir : f64 = 0.0;
+    pub precip : f64 = 0.0;
+    pub chance : f64 = 0.0;
+    pub cloud : f64 = 0.0;
+    pub uv : f64 = 0.0;
+    pub visibility : f64 = 10.0;
+    pub sky : Sky = Sky::Clear;
+    pub night : bool = false;
+}
+
+/** One day: what the hours add up to. */
+pub struct Day {
+    pub hi : f64 = 0.0;
+    pub lo : f64 = 0.0;
+    pub rain : f64 = 0.0;
+    pub chance : f64 = 0.0;
+    pub wind : f64 = 0.0;
+    pub windDir : f64 = 0.0;
+    pub uv : f64 = 0.0;
+    pub sunrise : f64 = 0.0;
+    pub sunset : f64 = 0.0;
+    pub sky : Sky = Sky::Clear;
+}
+
+/** A place and its climate. */
+pub struct Place {
+    pub name : string = "";
+    pub lat : f64 = 0.0;
+    pub mean : f64 = 15.0;
+    pub range : f64 = 8.0;
+    pub windy : f64 = 12.0;
+    pub humid : f64 = 70.0;
+    pub wet : f64 = 0.5;
+    pub phase : f64 = 0.0;
+    pub gusty : f64 = 0.5;
+}
+
+/** The English name of a sky. */
+pub fn skyName(s : Sky, night : bool) : string {
+    return match s {
+        Sky::Clear => night ? "Clear night" : "Sunny",
+        Sky::Few => "Partly cloudy",
+        Sky::Cloudy => "Overcast",
+        Sky::Fog => "Fog",
+        Sky::Drizzle => "Light rain",
+        Sky::Rain => "Rain",
+        Sky::Storm => "Thunderstorm",
+        Sky::Snow => "Snow",
+    };
+}
+
+/** How bad a sky is, to pick the one that stands for a day. */
+fn severity(s : Sky) : i32 {
+    return match s {
+        Sky::Clear => 0,
+        Sky::Few => 1,
+        Sky::Cloudy => 2,
+        Sky::Fog => 3,
+        Sky::Drizzle => 4,
+        Sky::Snow => 5,
+        Sky::Rain => 6,
+        Sky::Storm => 7,
+    };
+}
+
+/** A bearing held to 0..360. */
+fn wrap360(d : f64) : f64 {
+    return d - ((d / 360.0).floorToInt() as f64) * 360.0;
+}
+
+/** Seven days of weather, hour by hour, for every place. */
+pub class Atlas {
+    pub count : i32;
+    places : Place[];
+    hours : Hour[];
+    days : Day[];
+
+    constructor() {
+        self.count = 6;
+        self.places = malloc<Place>(6 as i64);
+        self.hours = malloc<Hour>((6 * 168) as i64);
+        self.days = malloc<Day>((6 * 7) as i64);
+        self.places[0] = Place { name: "Paris", lat: 48.9, mean: 12.5, range: 8.0, windy: 14.0, humid: 78.0, wet: 0.85, phase: 0.4, gusty: 0.5 };
+        self.places[1] = Place { name: "Reykjavik", lat: 64.1, mean: 4.0, range: 4.5, windy: 28.0, humid: 82.0, wet: 1.0, phase: 1.9, gusty: 0.9 };
+        self.places[2] = Place { name: "Marrakech", lat: 31.6, mean: 23.5, range: 15.0, windy: 12.0, humid: 42.0, wet: 0.25, phase: 3.1, gusty: 0.4 };
+        self.places[3] = Place { name: "Tokyo", lat: 35.7, mean: 17.5, range: 8.0, windy: 11.0, humid: 66.0, wet: 0.75, phase: 5.0, gusty: 0.5 };
+        self.places[4] = Place { name: "Sydney", lat: -33.9, mean: 19.5, range: 9.0, windy: 20.0, humid: 62.0, wet: 0.6, phase: 2.6, gusty: 0.6 };
+        self.places[5] = Place { name: "Quito", lat: -0.2, mean: 14.0, range: 11.0, windy: 9.0, humid: 71.0, wet: 0.9, phase: 4.4, gusty: 0.3 };
+        for (p of 0..6) {
+            self.build(p);
+        }
+    }
+
+    /** The place's name. */
+    pub fn nameOf(self, p : i32) : string {
+        return self.places[p as i64].name;
+    }
+
+    /** Every place's name, in order. */
+    pub fn names(self) : string[] {
+        let out : string[] = malloc<string>(self.count as i64);
+        for (i of 0..self.count) {
+            out[i as i64] = self.places[i as i64].name;
+        }
+        return out;
+    }
+
+    /** Hour `h` (0..23) of day `d` (0..6) at place `p`. */
+    pub fn hour(self, p : i32, d : i32, h : i32) : Hour {
+        return self.hours[(p * 168 + d * 24 + h) as i64];
+    }
+
+    /** Day `d` at place `p`. */
+    pub fn day(self, p : i32, d : i32) : Day {
+        return self.days[(p * 7 + d) as i64];
+    }
+
+    /** The week's coldest night and warmest afternoon at place `p`, as (low, high). */
+    pub fn weekRange(self, p : i32) : (f64, f64) {
+        let mut lo : f64 = 1000.0;
+        let mut hi : f64 = -1000.0;
+        for (d of 0..7) {
+            let day : Day = self.day(p, d);
+            lo = Mathx::fmin(lo, day.lo);
+            hi = Mathx::fmax(hi, day.hi);
+        }
+        return (lo, hi);
+    }
+
+    pub(file) fn build(mut self, p : i32) : void {
+        let pl : Place = self.places[p as i64];
+        for (t of 0..168) {
+            self.hours[(p * 168 + t) as i64] = self.compute(pl, t);
+        }
+        for (d of 0..7) {
+            self.days[(p * 7 + d) as i64] = self.summarise(pl, p, d);
+        }
+    }
+
+    /** The hour `t` hours after midnight of day 0. */
+    pub(file) fn compute(self, pl : Place, t : i32) : Hour {
+        let tau : f64 = 6.283185307179586;
+        let h : i32 = t % 24;
+        let hf : f64 = h as f64;
+        let tf : f64 = t as f64;
+        let ph : f64 = pl.phase;
+        let n1 : f64 = (tf * 0.045 + ph).sin();
+        let n2 : f64 = (tf * 0.131 + ph * 2.3).sin();
+        let n3 : f64 = (tf * 0.37 + ph * 0.7).sin();
+
+        let base : f64 = 0.5 + 0.34 * n1 + 0.2 * n2;
+        let cloud : f64 = Mathx::clampF(100.0 * base * (0.35 + 0.65 * pl.wet) + 8.0 * n3, 0.0, 100.0);
+
+        let diurnal : f64 = pl.range * 0.5 * (1.0 - 0.5 * cloud / 100.0) * (tau * (hf - 9.0) / 24.0).sin();
+        let drift : f64 = 2.6 * (tf * 0.025 + ph * 1.7).sin();
+        let temp : f64 = pl.mean + diurnal + drift;
+
+        let rh : f64 = Mathx::clampF(pl.humid + 0.18 * (cloud - 50.0) - 1.1 * (temp - pl.mean), 22.0, 99.0);
+        let dew : f64 = temp - (100.0 - rh) / 5.0;
+        let pressure : f64 = 1013.0 + 9.0 * (tf * 0.03 + ph * 0.5).sin() - 0.07 * (cloud - 50.0);
+
+        let breeze : f64 = 4.0 * Mathx::fmax(0.0, (tau * (hf - 8.0) / 24.0).sin());
+        let wind : f64 = pl.windy * (0.55 + 0.45 * (0.5 + 0.5 * n2)) + breeze + 0.1 * cloud;
+        let gust : f64 = wind * (1.2 + pl.gusty * 0.5 * (0.5 + 0.5 * n3));
+        let dir : f64 = wrap360(pl.phase * 57.3 + 80.0 * (tf * 0.05 + ph).sin() + 25.0 * (tf * 0.2).sin());
+
+        let wet : f64 = Mathx::fmax(0.0, cloud - 72.0) / 28.0;
+        let mut precip : f64 = wet * wet * 4.5 * pl.wet * (0.6 + 0.4 * (0.5 + 0.5 * n3));
+        if (precip < 0.04) {
+            precip = 0.0;
+        }
+        let chance : f64 = Mathx::clampF((cloud - 52.0) * 2.7, 0.0, 100.0);
+
+        let dayLen : f64 = Mathx::clampF(12.0 - 2.4 * pl.lat / 60.0, 8.0, 16.0);
+        let rise : f64 = 12.0 - dayLen * 0.5;
+        let set : f64 = 12.0 + dayLen * 0.5;
+        let mid : f64 = hf + 0.5;
+        let night : bool = mid < rise || mid > set;
+        let mut uv : f64 = 0.0;
+        if (!night) {
+            let uvMax : f64 = Mathx::fmax(1.0, 11.0 - 0.13 * pl.lat.abs());
+            uv = uvMax * (3.141592653589793 * (mid - rise) / dayLen).sin() * (1.0 - 0.75 * cloud / 100.0);
+        }
+        let mut fog : f64 = 0.0;
+        if (rh > 90.0) {
+            fog = (rh - 90.0) * 1.6;
+        }
+        let visibility : f64 = Mathx::clampF(26.0 - 5.0 * precip - fog, 0.3, 30.0);
+
+        let mut feels : f64 = temp;
+        if (temp < 14.0 && wind > 4.0) {
+            feels = temp - Mathx::fmin(10.0, 0.11 * (wind - 4.0) * (1.0 + (12.0 - temp) / 12.0));
+        } else if (temp > 24.0) {
+            feels = temp + 0.045 * (rh - 40.0);
+        }
+
+        let mut sky : Sky = Sky::Clear;
+        if (temp <= 1.0 && precip > 0.04) {
+            sky = Sky::Snow;
+        } else if (precip > 2.0 && gust > 35.0) {
+            sky = Sky::Storm;
+        } else if (precip > 0.6) {
+            sky = Sky::Rain;
+        } else if (precip > 0.0) {
+            sky = Sky::Drizzle;
+        } else if (rh > 94.0 && wind < 7.0 && hf < 9.0) {
+            sky = Sky::Fog;
+        } else if (cloud > 70.0) {
+            sky = Sky::Cloudy;
+        } else if (cloud > 38.0) {
+            sky = Sky::Few;
+        }
+        return Hour {
+            temp: temp, feels: feels, humidity: rh, dew: dew, pressure: pressure,
+            wind: wind, gust: gust, windDir: dir, precip: precip, chance: chance, cloud: cloud,
+            uv: uv, visibility: visibility, sky: sky, night: night,
+        };
+    }
+
+    /** What day `d`'s 24 hours add up to. */
+    pub(file) fn summarise(self, pl : Place, p : i32, d : i32) : Day {
+        let mut hi : f64 = -1000.0;
+        let mut lo : f64 = 1000.0;
+        let mut rain : f64 = 0.0;
+        let mut chance : f64 = 0.0;
+        let mut wind : f64 = 0.0;
+        let mut dir : f64 = 0.0;
+        let mut uv : f64 = 0.0;
+        let mut worst : Sky = Sky::Clear;
+        for (h of 0..24) {
+            let hr : Hour = self.hour(p, d, h);
+            hi = Mathx::fmax(hi, hr.temp);
+            lo = Mathx::fmin(lo, hr.temp);
+            rain = rain + hr.precip;
+            chance = Mathx::fmax(chance, hr.chance);
+            uv = Mathx::fmax(uv, hr.uv);
+            if (hr.wind > wind) {
+                wind = hr.wind;
+                dir = hr.windDir;
+            }
+            if (severity(hr.sky) > severity(worst) && hr.precip > 0.0) {
+                worst = hr.sky;
+            }
+        }
+        let mut sky : Sky = self.hour(p, d, 13).sky;
+        if (rain >= 1.5) {
+            sky = worst;
+        }
+        let dayLen : f64 = Mathx::clampF(12.0 - 2.4 * pl.lat / 60.0, 8.0, 16.0);
+        return Day {
+            hi: hi, lo: lo, rain: rain, chance: chance, wind: wind, windDir: dir, uv: uv,
+            sunrise: 12.0 - dayLen * 0.5, sunset: 12.0 + dayLen * 0.5, sky: sky,
+        };
+    }
+}

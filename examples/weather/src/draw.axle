@@ -1,0 +1,135 @@
+// draw — what the weather widgets paint with: text placed in a band, discs, arrows, and the icons
+// of the sky.
+//
+// Everything is drawn from the shapes the `Painter` offers (rounded rectangles, capsules, text), so
+// the icons are as sharp at any size as the rest of the interface and follow the theme's light and
+// dark. Free functions: none of this has state.
+
+use zaffre::{Painter, Context, FaceKind, Tint, RRect, Brush};
+use forecast::Sky;
+
+/** Draw `s` at `x`, its line centred in the band `y` to `y + h`; answers where it ended. */
+pub fn put(ctx : Context, p : Painter, kind : FaceKind, s : string, x : f64, y : f64, h : f64, px : f64, t : Tint) : f64 {
+    let base : f64 = ctx.baselineIn(kind, px, y, h);
+    return p.text(kind, s, x, base, px, t);
+}
+
+/** Draw `s` so that it ends at `right`. */
+pub fn putRight(ctx : Context, p : Painter, kind : FaceKind, s : string, right : f64, y : f64, h : f64, px : f64, t : Tint) : void {
+    let w : f64 = ctx.textWidth(kind, s, px);
+    put(ctx, p, kind, s, right - w, y, h, px, t);
+}
+
+/** Draw `s` centred on `mid`. */
+pub fn putCenter(ctx : Context, p : Painter, kind : FaceKind, s : string, mid : f64, y : f64, h : f64, px : f64, t : Tint) : void {
+    let w : f64 = ctx.textWidth(kind, s, px);
+    put(ctx, p, kind, s, mid - w * 0.5, y, h, px, t);
+}
+
+/** A filled circle. */
+pub fn disc(p : Painter, cx : f64, cy : f64, r : f64, t : Tint) : void {
+    p.fillRound(RRect::uniform(cx - r, cy - r, r * 2.0, r * 2.0, r), Brush::solid(t.rgb, t.a));
+}
+
+/** A circle's outline. */
+pub fn ring(p : Painter, cx : f64, cy : f64, r : f64, width : f64, t : Tint) : void {
+    p.strokeRound(RRect::uniform(cx - r, cy - r, r * 2.0, r * 2.0, r), width, Brush::solid(t.rgb, t.a));
+}
+
+/**
+ * An arrow of length `len` centred on (`cx`, `cy`), pointing along `heading` degrees (0 up, 90
+ * right, clockwise).
+ */
+pub fn arrow(p : Painter, cx : f64, cy : f64, len : f64, heading : f64, width : f64, t : Tint) : void {
+    let a : f64 = heading * 0.017453292519943295;
+    let dx : f64 = a.sin();
+    let dy : f64 = 0.0 - a.cos();
+    let tx : f64 = cx + dx * len * 0.5;
+    let ty : f64 = cy + dy * len * 0.5;
+    p.line(cx - dx * len * 0.5, cy - dy * len * 0.5, tx, ty, width, t);
+    let head : f64 = len * 0.36;
+    let b1 : f64 = a + 3.141592653589793 - 0.55;
+    let b2 : f64 = a + 3.141592653589793 + 0.55;
+    p.line(tx, ty, tx + b1.sin() * head, ty - b1.cos() * head, width, t);
+    p.line(tx, ty, tx + b2.sin() * head, ty - b2.cos() * head, width, t);
+}
+
+/** A cloud in the square at (`x`, `y`) of side `s`. */
+pub fn cloud(p : Painter, x : f64, y : f64, s : f64, t : Tint) : void {
+    p.fillRound(RRect::uniform(x + 0.14 * s, y + 0.52 * s, 0.72 * s, 0.26 * s, 0.13 * s), Brush::solid(t.rgb, t.a));
+    disc(p, x + 0.36 * s, y + 0.55 * s, 0.17 * s, t);
+    disc(p, x + 0.55 * s, y + 0.42 * s, 0.22 * s, t);
+    disc(p, x + 0.73 * s, y + 0.57 * s, 0.15 * s, t);
+}
+
+/** A sun of radius `r` at (`cx`, `cy`), with its rays. */
+pub fn sun(p : Painter, cx : f64, cy : f64, r : f64, t : Tint) : void {
+    disc(p, cx, cy, r, t);
+    for (k of 0..8) {
+        let a : f64 = (k as f64) * 0.7853981633974483;
+        p.line(cx + a.cos() * r * 1.45, cy + a.sin() * r * 1.45, cx + a.cos() * r * 1.95, cy + a.sin() * r * 1.95, r * 0.28, t);
+    }
+}
+
+/** A crescent moon: a disc with a bite taken out in the colour of what is behind it. */
+pub fn moon(p : Painter, cx : f64, cy : f64, r : f64, t : Tint, bg : Tint) : void {
+    disc(p, cx, cy, r, t);
+    disc(p, cx + r * 0.5, cy - r * 0.35, r * 0.88, bg);
+}
+
+/**
+ * The icon of a sky in the square at (`x`, `y`) of side `s`. `dark` is the theme's mode, which
+ * decides how light the clouds are; `bg` is the colour behind, which the moon's bite is cut in.
+ */
+pub fn skyIcon(p : Painter, sky : Sky, night : bool, dark : bool, bg : Tint, x : f64, y : f64, s : f64) : void {
+    let sunTint : Tint = Tint::hex(0xFFC53D);
+    let mut moonTint : Tint = Tint::hex(0x8E9BC0);
+    if (dark) {
+        moonTint = Tint::hex(0xE6EAF7);
+    }
+    let mut cl : Tint = Tint::hex(0xB5C0D8);
+    if (dark) {
+        cl = Tint::hex(0xCBD3E6);
+    }
+    let blue : Tint = Tint::hex(0x4DA3FF);
+    if (sky == Sky::Clear) {
+        if (night) {
+            moon(p, x + 0.5 * s, y + 0.5 * s, 0.3 * s, moonTint, bg);
+        } else {
+            sun(p, x + 0.5 * s, y + 0.5 * s, 0.2 * s, sunTint);
+        }
+    } else if (sky == Sky::Few) {
+        if (night) {
+            moon(p, x + 0.36 * s, y + 0.36 * s, 0.2 * s, moonTint, bg);
+        } else {
+            sun(p, x + 0.36 * s, y + 0.36 * s, 0.14 * s, sunTint);
+        }
+        cloud(p, x + 0.12 * s, y + 0.14 * s, 0.84 * s, cl);
+    } else if (sky == Sky::Cloudy) {
+        cloud(p, x, y, s, cl);
+    } else if (sky == Sky::Fog) {
+        cloud(p, x, y - 0.1 * s, s, cl);
+        for (k of 0..3) {
+            let yy : f64 = y + (0.66 + 0.14 * (k as f64)) * s;
+            p.line(x + 0.2 * s, yy, x + 0.8 * s, yy, 0.05 * s, cl.faded(210));
+        }
+    } else if (sky == Sky::Drizzle || sky == Sky::Rain) {
+        cloud(p, x, y - 0.1 * s, s, cl);
+        let drops : i32 = sky == Sky::Rain ? 3 : 2;
+        for (k of 0..drops) {
+            let xx : f64 = x + (0.34 + 0.17 * (k as f64)) * s;
+            p.line(xx, y + 0.72 * s, xx - 0.06 * s, y + 0.88 * s, 0.055 * s, blue);
+        }
+    } else if (sky == Sky::Snow) {
+        cloud(p, x, y - 0.1 * s, s, cl);
+        let flake : Tint = dark ? Tint::hex(0xEAF4FF) : Tint::hex(0x8DB8E8);
+        for (k of 0..3) {
+            disc(p, x + (0.34 + 0.17 * (k as f64)) * s, y + (0.78 + 0.07 * ((k % 2) as f64)) * s, 0.05 * s, flake);
+        }
+    } else {
+        cloud(p, x, y - 0.1 * s, s, dark ? Tint::hex(0x8F9AB5) : Tint::hex(0x8793AE));
+        p.line(x + 0.54 * s, y + 0.6 * s, x + 0.43 * s, y + 0.78 * s, 0.065 * s, sunTint);
+        p.line(x + 0.43 * s, y + 0.78 * s, x + 0.58 * s, y + 0.78 * s, 0.065 * s, sunTint);
+        p.line(x + 0.58 * s, y + 0.78 * s, x + 0.46 * s, y + 0.97 * s, 0.065 * s, sunTint);
+    }
+}
