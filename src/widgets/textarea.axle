@@ -348,7 +348,7 @@ pub class Textarea : Control, Widget {
         if (e.kind == EventKind::Wheel && self.area.contains(e.x, e.y) && !ctx.blocked) {
             let room : f64 = self.lineH(st) * (self.lines.count as f64) - self.lineH(st) * (self.props.rows as f64);
             if (room > 0.0) {
-                self.scroll = Mathx::clampF(self.scroll + e.wheel * 3.0 * self.lineH(st), 0.0, room);
+                self.scroll = Mathx::clampF(self.scroll - e.wheel * 3.0 * self.lineH(st), 0.0, room);
                 ctx.invalidate();
                 return true;
             }

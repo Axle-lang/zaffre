@@ -152,7 +152,7 @@ pub class Scroll : Base, Widget {
         if (e.kind == EventKind::Wheel && inside && !ctx.blocked) {
             let travel : f64 = self.travel();
             let at : f64 = self.offset.target;
-            let to : f64 = Mathx::clampF(at + e.wheel * self.props.step, 0.0, travel);
+            let to : f64 = Mathx::clampF(at - e.wheel * self.props.step, 0.0, travel);
             if (to != at) {
                 self.offset = self.offset.toward(to);
                 ctx.invalidate();
