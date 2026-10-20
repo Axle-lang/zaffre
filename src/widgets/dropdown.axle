@@ -68,6 +68,18 @@ const MENU_MIN : f64 = 208.0;
 fn ignoreAction(i : i32) : void {
 }
 
+/** Where a menu opens and how it reports. */
+pub struct ActionMenuProps {
+    /** The trigger the menu opens under. */
+    pub anchor : Bounds = Bounds {};
+
+    /** Whether the menu's right edge lines up with the trigger's, rather than its left. */
+    pub alignEnd : bool = false;
+
+    /** What is taken from an entry's index before the handler hears it: a menu with rows of its own in front of the caller's. */
+    pub shift : i32 = 0;
+}
+
 /** The list that floats under its trigger. */
 pub class ActionMenu : Base, Widget {
     anchor : Bounds;
@@ -85,12 +97,13 @@ pub class ActionMenu : Base, Widget {
     sheet : Bounds = Bounds::zero();
     above : bool = false;
 
-    /** What is taken from an entry's index before the handler hears it: a menu with rows of its own in front of the caller's. */
-    pub shift : i32 = 0;
+    shift : i32;
 
-    /** A menu of `entries` under `anchor`, telling `onPick` the index chosen; `isOpen` is cleared when it goes away. */
-    constructor(anchor : Bounds, entries : MenuEntry[], onPick : (i32) => void, isOpen : Shared<Model<bool>>, alignEnd : bool) {
-        self.anchor = anchor;
+    /** A menu of `entries` as `props` say, telling `onPick` the index chosen; `isOpen` is cleared when it goes away. */
+    constructor(own props : ActionMenuProps, entries : MenuEntry[], onPick : (i32) => void, isOpen : Shared<Model<bool>>) {
+        self.anchor = props.anchor;
+        self.alignEnd = props.alignEnd;
+        self.shift = props.shift;
         self.count = entries.length as i32;
         // The menu keeps its own list: the button that opened it still owns `entries`.
         self.entries = malloc<MenuEntry>(self.count as i64);
@@ -100,7 +113,6 @@ pub class ActionMenu : Base, Widget {
         self.tops = malloc<f64>(self.count as i64);
         self.onPick = onPick;
         self.isOpen = isOpen;
-        self.alignEnd = alignEnd;
     }
 
     /** Start closing: fade out, then finish. */
@@ -135,6 +147,7 @@ pub class ActionMenu : Base, Widget {
             widest = Mathx::fmax(widest, w);
             h = h + MENU_ROW;
         }
+        h = h + MENU_PAD;
         let mut y : f64 = self.anchor.bottom() + 6.0;
         self.above = false;
         if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
@@ -147,7 +160,6 @@ pub class ActionMenu : Base, Widget {
         }
         x = Mathx::clampF(x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - widest));
         self.sheet = Bounds::make(x, y, widest, h);
-        h = h + MENU_PAD;
     }
 
     pub fn covers(self, x : f64, y : f64) : bool {
@@ -363,7 +375,13 @@ pub class MenuButton : Base, Widget {
             self.want.set(false);
             if (!self.isOpen.get()) {
                 self.isOpen.set(true);
-                let ok : bool = ctx.openOverlay(new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, self.alignEnd));
+                let menu = new ActionMenu(
+                    ActionMenuProps { anchor: self.area, alignEnd: self.alignEnd },
+                    self.entries,
+                    self.onPick,
+                    self.isOpen
+                );
+                let ok : bool = ctx.openOverlay(menu);
                 if (!ok) {
                     self.isOpen.set(false);
                 }
@@ -427,7 +445,13 @@ pub class DropdownMenu : Base, Widget {
             self.armed = false;
             if (was && inside && !self.isOpen.get()) {
                 self.isOpen.set(true);
-                let ok : bool = ctx.openOverlay(new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, self.alignEnd));
+                let menu = new ActionMenu(
+                    ActionMenuProps { anchor: self.area, alignEnd: self.alignEnd },
+                    self.entries,
+                    self.onPick,
+                    self.isOpen
+                );
+                let ok : bool = ctx.openOverlay(menu);
                 if (!ok) {
                     self.isOpen.set(false);
                 }

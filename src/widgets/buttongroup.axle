@@ -23,7 +23,7 @@ use crate::paint::painter::Painter;
 use crate::style::styles::ButtonStyle;
 use crate::style::variants::{ButtonKind, ControlSize};
 use crate::widgets::button::{Button, ButtonProps};
-use crate::widgets::dropdown::{ActionMenu, MenuEntry};
+use crate::widgets::dropdown::{ActionMenu, ActionMenuProps, MenuEntry};
 use crate::widgets::icon::IconKind;
 
 /** How far neighbouring buttons overlap, so one border is shared. */
@@ -178,7 +178,13 @@ pub class SplitButton : Base, Widget {
             self.want.set(false);
             if (!self.isOpen.get()) {
                 self.isOpen.set(true);
-                let ok : bool = ctx.openOverlay(new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, true));
+                let menu = new ActionMenu(
+                    ActionMenuProps { anchor: self.area, alignEnd: true },
+                    self.entries,
+                    self.onPick,
+                    self.isOpen
+                );
+                let ok : bool = ctx.openOverlay(menu);
                 if (!ok) {
                     self.isOpen.set(false);
                 }
