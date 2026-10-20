@@ -149,9 +149,9 @@ pub class Plot : Control {
 
     /** The card of figures for point `i`. */
     pub(derived) fn paintCard(self, ctx : Context, p : Painter, pl : Bounds, i : i32) : void {
-        let names : string[] = malloc<string>(self.m as i64);
-        let values : string[] = malloc<string>(self.m as i64);
-        let colors : Tint[] = malloc<Tint>(self.m as i64);
+        let mut names : string[] = malloc<string>(self.m as i64);
+        let mut values : string[] = malloc<string>(self.m as i64);
+        let mut colors : Tint[] = malloc<Tint>(self.m as i64);
         for (s of 0..self.m) {
             if (self.names.length > (s as i64)) {
                 names[s as i64] = self.names[s as i64];

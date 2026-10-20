@@ -118,6 +118,11 @@ fn sheets(demo : Demo) : Row {
     return lineup(kids);
 }
 
+/** Open the palette; running a command shows a toast. */
+fn openPalette(notes : Shared<Notifier>) : void {
+    notes.openCommands(commands(), (i : i32) => notes.toast("Ran a command", Tone::Ok));
+}
+
 /** The palette. */
 fn palette(demo : Demo) : Row {
     let notes = demo.notes;
@@ -126,7 +131,7 @@ fn palette(demo : Demo) : Row {
             label: "Open the command palette",
             icon: IconKind::Search,
         },
-        () => notes.openCommands(commands(), (i : i32) => notes.toast("Ran a command", Tone::Ok))
+        () => openPalette(notes)
     );
     let kids : dyn Widget[] = [open, new Kbd("Ctrl K")];
     return lineup(kids);

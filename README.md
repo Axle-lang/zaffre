@@ -4,6 +4,7 @@
 
 ### A native UI library for Axle — soft, typographic, themeable, and nothing but [smalt](https://github.com/Axle-lang/smalt)
 
+<img src="doc/img/gallery-data-dark.png" width="49%"> <img src="doc/img/gallery-forms-light.png" width="49%">
 <img src="doc/img/weather-dark.png" width="49%"> <img src="doc/img/weather-light.png" width="49%">
 
 *The weather example, in both themes — `examples/weather`.*
@@ -54,7 +55,7 @@ constraints going down and sizes coming up (`Flex`, `Panel`, `Scroll`, …); dra
 
 | | |
 |---|---|
-| `examples/gallery` | every component on one page; `--snap` writes `gallery.bmp` with no window |
+| `examples/gallery` | every component, in an application of its own: a sidebar, a top bar, one page per section; `--snap` writes `gallery.bmp` with no window |
 | `examples/weather` | a forecast app: the day hour by hour, the wind, the week ahead (generated data — smalt has no network) |
 
 ## Building

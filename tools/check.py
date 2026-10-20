@@ -270,6 +270,31 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
                 continue
             line = text.count("\n", 0, m.start()) + 1
             err("line %d: `%s` is a keyword and cannot name a variable or a parameter" % (line, kw))
+    # an element of an array bound with a plain `let` cannot be assigned (E0004)
+    for m in re.finditer(r"\blet\s+(?!mut\b)(\w+)\s*(?::[^=;]+)?=(?!=)", text):
+        name = m.group(1)
+        if re.search(r"(?<![.\w])%s\s*\[[^\]]*\]\s*=(?!=)" % re.escape(name), text):
+            line = text.count("\n", 0, m.start()) + 1
+            err("line %d: `%s` holds an array that is written to: declare it `let mut`" % (line, name))
+    # a lambda inside a lambda (E0700): find each lambda's body and look for another lambda arrow in it
+    arrow = re.compile(r"\(\s*(?:\w+\s*:\s*[\w<>\[\]]+(?:\s*,\s*\w+\s*:\s*[\w<>\[\]]+)*)?\s*\)\s*=>")
+    for m in arrow.finditer(text):
+        depth = 0
+        i = m.end()
+        while i < len(text):
+            c = text[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif c in ",;" and depth == 0:
+                break
+            i += 1
+        if arrow.search(text[m.end():i]):
+            line = text.count("\n", 0, m.start()) + 1
+            err("line %d: a lambda nested in a lambda is not supported (E0700): pass what it needs to a function" % line)
     for m in re.finditer(r"\bfn\s+(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|string|void)\s*\(", text):
         err("`fn %s` — a primitive type's name cannot name a method" % m.group(1))
     for i, line in enumerate(text.split("\n"), 1):
@@ -292,12 +317,13 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
 
 
 def duplicate_names(idx):
-    """Two top-level public declarations with one name collide in the crate root (`Column` the layout, `Column` the table's)."""
+    """Two top-level declarations, public or not, with one name collide in the package (E0003: `Column` the layout and the
+    table's; `doNothing` in two modules)."""
     seen = {}
     out = []
     for f in files_under(idx.src):
         mod = os.path.relpath(f, idx.src)[:-5]
-        for m in re.finditer(r"^pub\s+(?:class|struct|enum|trait|fn|const|static)\s+(\w+)", code_of(f), re.M):
+        for m in re.finditer(r"^(?:pub(?:\([a-z]+\))?\s+)?(?:class|struct|enum|trait|fn|const)\s+(\w+)", code_of(f), re.M):
             name = m.group(1)
             if name in seen and seen[name] != mod:
                 out.append("`%s` is declared in both %s and %s" % (name, seen[name], mod))
@@ -337,6 +363,8 @@ def selftest():
         ("extern C", 'extern "C" from "c" { fn puts(s : ptr) : i32; }\n'),
         ("an unknown member", "fn f() : void { Tint::nonesuch(1); }\n"),
         ("a keyword as a name", "fn f() : void { let mut own : i32 = 1; own = 2; }\n"),
+        ("an array written through let", "fn f() : void { let v : f64[] = malloc<f64>(3 as i64); v[0] = 1.0; }\n"),
+        ("a duplicate private function", "fn doNothing() : void { }\nfn doNothing() : void { }\n"),
         ("a wrong arity", "fn f() : void { let t : Tint = Tint::hex(1, 2); }\n"),
     ]
     bad = 0

@@ -32,7 +32,7 @@ const COL_RAIN : f64 = 274.0;
 const COL_CHANCE : f64 = 330.0;
 
 /** The width a widget takes when it is offered no limit. */
-fn wide(limits : Limits, fallback : f64) : f64 {
+fn tableWide(limits : Limits, fallback : f64) : f64 {
     if (limits.boundedW()) {
         return limits.maxW;
     }
@@ -45,7 +45,7 @@ pub class HourHead : Base, Widget {
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
-        return limits.constrain(Size { w: wide(limits, 440.0), h: 24.0 });
+        return limits.constrain(Size { w: tableWide(limits, 440.0), h: 24.0 });
     }
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
@@ -72,7 +72,7 @@ pub class HourRows : Control, Widget {
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
-        return limits.constrain(Size { w: wide(limits, 440.0), h: HOUR_ROW * 24.0 });
+        return limits.constrain(Size { w: tableWide(limits, 440.0), h: HOUR_ROW * 24.0 });
     }
 
     pub(file) fn rowAt(self, y : f64) : i32 {
@@ -150,7 +150,7 @@ pub class WeekList : Control, Widget {
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
-        return limits.constrain(Size { w: wide(limits, 320.0), h: DAY_ROW * 7.0 });
+        return limits.constrain(Size { w: tableWide(limits, 320.0), h: DAY_ROW * 7.0 });
     }
 
     pub(file) fn rowAt(self, y : f64) : i32 {

@@ -47,14 +47,14 @@ pub struct CardProps {
 }
 
 /** The handler a card without one runs. */
-fn doNothing() : void {
+fn cardNoop() : void {
 }
 
 /** A surface of sections. */
 pub class Card : Control, Widget {
     props : CardProps;
     column : Column;
-    onPress : () => void = doNothing;
+    onPress : () => void = cardNoop;
 
     /** A card with a body. */
     constructor(own props : CardProps, own body : dyn Widget) {

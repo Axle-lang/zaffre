@@ -135,7 +135,7 @@ pub class Atlas {
 
     /** Every place's name, in order. */
     pub fn names(self) : string[] {
-        let out : string[] = malloc<string>(self.count as i64);
+        let mut out : string[] = malloc<string>(self.count as i64);
         for (i of 0..self.count) {
             out[i as i64] = self.places[i as i64].name;
         }

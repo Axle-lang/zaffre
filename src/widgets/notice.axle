@@ -48,14 +48,14 @@ pub struct BannerProps {
 }
 
 /** The handler a banner without one runs. */
-fn ignoreAction() : void {
+fn bannerNoop() : void {
 }
 
 /** A full-width message bar. */
 pub class Banner : Control, Widget {
     props : BannerProps;
     text : string;
-    onAction : () => void = ignoreAction;
+    onAction : () => void = bannerNoop;
     gone : bool = false;
     overClose : bool = false;
     overAction : bool = false;
