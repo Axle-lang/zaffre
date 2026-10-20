@@ -67,7 +67,7 @@ pub class Navbar : Control, Widget {
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let mut x : f64 = 24.0 + self.brandWidth(ctx);
         for (i of 0..self.count) {
-            let w : f64 = ctx.textWidth(FaceKind::Bold, self.links[i as i64], 14.0) + 20.0;
+            let w : f64 = ctx.textWidth(FaceKind::Medium, self.links[i as i64], 14.0) + 20.0;
             self.left[i as i64] = x;
             self.right[i as i64] = x + w;
             x = x + w + NAV_LINK_GAP;
@@ -146,8 +146,8 @@ pub class Navbar : Control, Widget {
                 p.fillRound(box.round(ctx.theme.metrics.radiusInline), Brush::solid(pal.hover.rgb, pal.hover.a));
                 ink = pal.text;
             }
-            let w : f64 = ctx.textWidth(FaceKind::Bold, self.links[i as i64], 14.0);
-            p.text(FaceKind::Bold, self.links[i as i64], box.x + (box.w - w) * 0.5, ctx.baselineIn(FaceKind::Bold, 14.0, box.y, box.h), 14.0, ink);
+            let w : f64 = ctx.textWidth(FaceKind::Medium, self.links[i as i64], 14.0);
+            p.text(FaceKind::Medium, self.links[i as i64], box.x + (box.w - w) * 0.5, ctx.baselineIn(FaceKind::Medium, 14.0, box.y, box.h), 14.0, ink);
         }
         let t : dyn Widget = self.trailing[0];
         t.paint(ctx, p);

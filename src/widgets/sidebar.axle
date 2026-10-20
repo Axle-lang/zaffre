@@ -231,7 +231,7 @@ pub class Sidebar : Control, Widget {
                 Icons::draw(p, item.icon, x, row.midY() - 8.0, 16.0, tint);
                 x = x + 26.0;
             }
-            p.text(FaceKind::Bold, item.label, x, ctx.baselineIn(FaceKind::Bold, 13.0, row.y, row.h), 13.0, ink);
+            p.text(FaceKind::Medium, item.label, x, ctx.baselineIn(FaceKind::Medium, 13.0, row.y, row.h), 13.0, ink);
             if (item.badge.byteLength > 0) {
                 let bw : f64 = ctx.textWidth(FaceKind::Bold, item.badge, 11.0) + 14.0;
                 let pill : RRect = RRect::uniform(row.right() - 10.0 - bw, row.midY() - 9.0, bw, 18.0, 9.0);

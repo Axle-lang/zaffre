@@ -75,7 +75,7 @@ pub class FormField : Base, Widget {
         let c : dyn Widget = self.kid[0];
         let mut top : f64 = 0.0;
         if (self.text.label.byteLength > 0) {
-            top = ctx.lineHeight(FaceKind::Bold, FF_LABEL_PX) + FF_GAP;
+            top = ctx.lineHeight(FaceKind::Medium, FF_LABEL_PX) + FF_GAP;
         }
         self.controlTop = top;
         let s : Size = c.measure(ctx, limits.loosened());
@@ -85,7 +85,7 @@ pub class FormField : Base, Widget {
         }
         let mut w : f64 = s.w;
         if (self.text.label.byteLength > 0) {
-            w = Mathx::fmax(w, ctx.textWidth(FaceKind::Bold, self.text.label, FF_LABEL_PX));
+            w = Mathx::fmax(w, ctx.textWidth(FaceKind::Medium, self.text.label, FF_LABEL_PX));
         }
         return limits.constrain(Size { w: w, h: h });
     }
@@ -111,10 +111,10 @@ pub class FormField : Base, Widget {
         let pal = ctx.theme.palette;
         let a : Bounds = self.area;
         if (self.text.label.byteLength > 0) {
-            let lh : f64 = ctx.lineHeight(FaceKind::Bold, FF_LABEL_PX);
-            let end : f64 = p.text(FaceKind::Bold, self.text.label, a.x, ctx.baselineIn(FaceKind::Bold, FF_LABEL_PX, a.y, lh), FF_LABEL_PX, pal.text);
+            let lh : f64 = ctx.lineHeight(FaceKind::Medium, FF_LABEL_PX);
+            let end : f64 = p.text(FaceKind::Medium, self.text.label, a.x, ctx.baselineIn(FaceKind::Medium, FF_LABEL_PX, a.y, lh), FF_LABEL_PX, pal.text);
             if (self.text.required) {
-                p.text(FaceKind::Bold, " *", end, ctx.baselineIn(FaceKind::Bold, FF_LABEL_PX, a.y, lh), FF_LABEL_PX, pal.danger.s500);
+                p.text(FaceKind::Medium, " *", end, ctx.baselineIn(FaceKind::Medium, FF_LABEL_PX, a.y, lh), FF_LABEL_PX, pal.danger.s500);
             }
         }
         let c : dyn Widget = self.kid[0];

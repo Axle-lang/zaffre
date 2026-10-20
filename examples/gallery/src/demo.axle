@@ -6,7 +6,7 @@
 // A handler (a lambda) cannot capture the `Demo` itself, only handles, so pages copy the handle
 // they need into a local before they build a handler around it.
 
-use zaffre::{Model, Notifier, Dates};
+use zaffre::{Model, Notifier, Dates, Order};
 
 /** The values of the gallery. */
 pub class Demo {
@@ -66,6 +66,10 @@ pub class Demo {
     pub share : Shared<Model<f64>> = new shared Model<f64>(0.35);
     pub advanced : Shared<Model<bool>> = new shared Model<bool>(false);
     pub marks : Shared<Model<i32>> = new shared Model<i32>(2);
+
+    /** Lists put in order and carried between. */
+    pub order : Shared<Order> = new shared Order(5);
+    pub rights : Shared<Model<i32>> = new shared Model<i32>(5);
 
     /** The row picked in the table and in the list. */
     pub picked : Shared<Model<i32>> = new shared Model<i32>(-1);

@@ -62,7 +62,7 @@ pub class ToggleGroup : Control, Widget {
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let mut x : f64 = 0.0;
         for (i of 0..self.count) {
-            let w : f64 = ctx.textWidth(FaceKind::Bold, self.labels[i as i64], 13.0) + 28.0;
+            let w : f64 = ctx.textWidth(FaceKind::Medium, self.labels[i as i64], 13.0) + 28.0;
             self.left[i as i64] = x;
             self.right[i as i64] = x + w;
             x = x + w;
@@ -146,8 +146,8 @@ pub class ToggleGroup : Control, Widget {
             if (!last) {
                 p.line(box.right() - 0.5, a.y + 1.0, box.right() - 0.5, a.bottom() - 1.0, 1.0, pal.lineStrong);
             }
-            let w : f64 = ctx.textWidth(FaceKind::Bold, self.labels[i as i64], 13.0);
-            p.text(FaceKind::Bold, self.labels[i as i64], box.x + (box.w - w) * 0.5, ctx.baselineIn(FaceKind::Bold, 13.0, box.y, box.h), 13.0, ink);
+            let w : f64 = ctx.textWidth(FaceKind::Medium, self.labels[i as i64], 13.0);
+            p.text(FaceKind::Medium, self.labels[i as i64], box.x + (box.w - w) * 0.5, ctx.baselineIn(FaceKind::Medium, 13.0, box.y, box.h), 13.0, ink);
         }
         p.strokeRound(a.round(r), 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
     }

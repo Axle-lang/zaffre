@@ -1,0 +1,78 @@
+// signal — two small marks that say something at a glance.
+//
+//     new LatencyIndicator(3, Tone::Ok)          // three of four bars lit
+//     new Eyebrow("New in 2.4", Tone::Accent)   // a small capitalised kicker over a heading
+//
+// A `LatencyIndicator` is the four rising bars of a signal meter: the first `level` are lit in the
+// tone's colour, the rest are left as the track. An `Eyebrow` sets context above a heading.
+
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** Width of one bar, and the gap between bars. */
+const BAR_W : f64 = 5.0;
+const BAR_GAP : f64 = 3.0;
+
+/** Height of the tallest bar. */
+const BAR_H : f64 = 18.0;
+
+/** Four rising bars, the first `level` of them lit. */
+pub class LatencyIndicator : Base, Widget {
+    level : i32;
+    tone : Tone;
+
+    /** `level` bars (0 to 4) lit in the colour of `tone`. */
+    constructor(level : i32, tone : Tone) {
+        self.level = level;
+        self.tone = tone;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: 4.0 * BAR_W + 3.0 * BAR_GAP, h: BAR_H });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let lit = ctx.theme.hue(self.tone).s500;
+        let heights : f64[] = [0.35, 0.6, 0.85, 1.0];
+        let a : Bounds = self.area;
+        for (i of 0..4) {
+            let h : f64 = BAR_H * heights[i as i64];
+            let x : f64 = a.x + (BAR_W + BAR_GAP) * (i as f64);
+            let bar : RRect = RRect::uniform(x, a.bottom() - h, BAR_W, h, 1.5);
+            if (i < self.level) {
+                p.fillRound(bar, Brush::solid(lit.rgb, 255));
+            } else {
+                p.fillRound(bar, Brush::solid(pal.track.rgb, pal.track.a));
+            }
+        }
+    }
+}
+
+/** A small capitalised kicker. */
+pub class Eyebrow : Base, Widget {
+    text : string;
+    tone : Tone;
+
+    /** `text` in capitals, coloured for `tone` (`Tone::Neutral` for the quiet grey). */
+    constructor(text : string, tone : Tone) {
+        self.text = Strings::upper(text);
+        self.tone = tone;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: ctx.textWidth(FaceKind::Bold, self.text, 11.0), h: ctx.lineHeight(FaceKind::Bold, 11.0) });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let ink = self.tone == Tone::Neutral ? ctx.theme.palette.textFaint : ctx.theme.soft(self.tone).fg;
+        p.text(FaceKind::Bold, self.text, a.x, ctx.baselineIn(FaceKind::Bold, 11.0, a.y, a.h), 11.0, ink);
+    }
+}

@@ -24,17 +24,31 @@ use crate::widgets::panel::Surfaces;
 use crate::widgets::icon::{IconKind, Icons};
 
 /** Seconds a toast stays when not clicked. */
-const TOAST_SECONDS : f64 = 3.6;
+const TOAST_SECONDS : f64 = 4.0;
 
-/** The card's size and the gap between stacked cards. */
-const TOAST_HEIGHT : f64 = 60.0;
-const TOAST_GAP : f64 = 10.0;
-const TOAST_MARGIN : f64 = 28.0;
+/** The card's width: as much as the window leaves, up to this. */
+const TOAST_WIDTH : f64 = 360.0;
+
+/** Space between the card and the window's corner. */
+const TOAST_MARGIN : f64 = 16.0;
+
+/** Space between the card's edge and its content. */
+const TOAST_PAD : f64 = 14.0;
+
+/** Diameter of the disc that holds the tone's icon. */
+const TOAST_DISC : f64 = 32.0;
+
+/** Space between the disc and the text, and between the text and the cross. */
+const TOAST_GAP : f64 = 12.0;
+
+/** Sizes of the title and of the line under it. */
 const TOAST_PX : f64 = 14.0;
+const TOAST_DETAIL_PX : f64 = 13.0;
 
 /** A toast overlay. */
 pub class Toast : Base, Widget {
     text : string;
+    detail : string;
     tone : Tone;
     id : i64 = 0;
     born : f64 = -1.0;
@@ -46,6 +60,14 @@ pub class Toast : Base, Widget {
     /** A toast saying `text` in `tone`. */
     constructor(text : string, tone : Tone) {
         self.text = text;
+        self.detail = "";
+        self.tone = tone;
+    }
+
+    /** A toast with a title and a line of detail under it. */
+    constructor(text : string, detail : string, tone : Tone) {
+        self.text = text;
+        self.detail = detail;
         self.tone = tone;
     }
 
@@ -53,20 +75,34 @@ pub class Toast : Base, Widget {
         return Size { w: limits.maxW, h: limits.maxH };
     }
 
+    /** The card's height: the disc alone for a title, the two lines of text with a detail. */
+    pub(file) fn cardHeight(self, ctx : Context) : f64 {
+        let mut content : f64 = TOAST_DISC;
+        if (self.detail.byteLength > 0) {
+            content = ctx.lineHeight(FaceKind::Bold, TOAST_PX) + 2.0 + ctx.lineHeight(FaceKind::Sans, TOAST_DETAIL_PX);
+        }
+        return 2.0 * TOAST_PAD + Mathx::fmax(content, TOAST_DISC);
+    }
+
     pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
         self.area = area;
+        let h : f64 = self.cardHeight(ctx);
         if (self.id == 0 && !self.finished) {
-            self.id = ctx.toastJoin();
+            self.id = ctx.toastJoin(h);
             if (self.id == 0) {
                 // Eight are already up: this one is not shown.
                 self.finished = true;
                 return;
             }
         }
-        let w : f64 = Mathx::fmin(area.w - 32.0, ctx.textWidth(FaceKind::Sans, self.text, TOAST_PX) + 96.0);
-        let slot : f64 = ctx.toastSlot(self.id) as f64;
-        let y : f64 = area.bottom() - TOAST_MARGIN - TOAST_HEIGHT - slot * (TOAST_HEIGHT + TOAST_GAP);
-        self.sheet = Bounds::make(area.midX() - w * 0.5, y, w, TOAST_HEIGHT);
+        let w : f64 = Mathx::fmin(area.w - 2.0 * TOAST_MARGIN, TOAST_WIDTH);
+        let y : f64 = area.bottom() - TOAST_MARGIN - h - ctx.toastRise(self.id);
+        self.sheet = Bounds::make(area.right() - TOAST_MARGIN - w, y, w, h);
+    }
+
+    /** The box of the cross that dismisses the toast. */
+    pub(file) fn crossBox(self) : Bounds {
+        return Bounds::make(self.sheet.right() - TOAST_PAD - 16.0, self.sheet.y + TOAST_PAD + 8.0, 16.0, 16.0);
     }
 
     pub fn covers(self, x : f64, y : f64) : bool {
@@ -123,14 +159,26 @@ pub class Toast : Base, Widget {
         let soft : Soft = ctx.theme.soft(self.tone);
         let k : f64 = Mathx::smooth(self.openT.value);
         let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
-        let b : Bounds = self.sheet.moved(0.0, (1.0 - k) * 12.0);
-        let rr : RRect = b.round(ctx.theme.metrics.radiusSurface);
-        Surfaces::draw(p, rr, b, ctx.theme.panel(Elevation::Floating));
+        let b : Bounds = self.sheet.moved((1.0 - k) * 28.0, 0.0);
+        Surfaces::draw(p, b.round(ctx.theme.metrics.radiusSurface), b, ctx.theme.panel(Elevation::Floating));
         // The tone sits in a soft disc, as in a web toast.
-        p.fillRound(RRect::uniform(b.x + 14.0, b.midY() - 16.0, 32.0, 32.0, 16.0), Brush::solid(soft.fill.rgb, soft.fill.a));
-        Icons::draw(p, Alert::iconOf(self.tone), b.x + 21.0, b.midY() - 9.0, 18.0, soft.fg);
-        let base : f64 = ctx.baselineIn(FaceKind::Sans, TOAST_PX, b.y, b.h);
-        p.textElided(FaceKind::Sans, self.text, b.x + 58.0, base, TOAST_PX, b.w - 74.0, pal.text);
+        let disc : Bounds = Bounds::make(b.x + TOAST_PAD, b.y + TOAST_PAD, TOAST_DISC, TOAST_DISC);
+        p.fillRound(disc.round(TOAST_DISC * 0.5), Brush::solid(soft.fill.rgb, soft.fill.a));
+        Icons::draw(p, Alert::iconOf(self.tone), disc.midX() - 9.0, disc.midY() - 9.0, 18.0, soft.fg);
+        let left : f64 = disc.right() + TOAST_GAP;
+        let room : f64 = b.right() - TOAST_PAD - 16.0 - TOAST_GAP - left;
+        if (self.detail.byteLength > 0) {
+            let line : f64 = ctx.lineHeight(FaceKind::Bold, TOAST_PX);
+            p.textElided(FaceKind::Bold, self.text, left, ctx.baselineIn(FaceKind::Bold, TOAST_PX, b.y + TOAST_PAD, line), TOAST_PX, room, pal.text);
+            let top : f64 = b.y + TOAST_PAD + line + 2.0;
+            let detailLine : f64 = ctx.lineHeight(FaceKind::Sans, TOAST_DETAIL_PX);
+            p.textElided(FaceKind::Sans, self.detail, left, ctx.baselineIn(FaceKind::Sans, TOAST_DETAIL_PX, top, detailLine), TOAST_DETAIL_PX, room, pal.textDim);
+        } else {
+            p.textElided(FaceKind::Bold, self.text, left, ctx.baselineIn(FaceKind::Bold, TOAST_PX, disc.y, disc.h), TOAST_PX, room, pal.text);
+        }
+        let cross : Bounds = self.crossBox().moved((1.0 - k) * 28.0, 0.0);
+        let hot : bool = cross.grown(4.0).contains(ctx.pointerX, ctx.pointerY);
+        Icons::draw(p, IconKind::Close, cross.x + 1.0, cross.y + 1.0, 14.0, hot ? pal.text : pal.textFaint);
         p.setOpacity(prev);
     }
 }

@@ -1,0 +1,280 @@
+// sortable — a list whose rows are put in order by dragging them.
+//
+//     let order : Shared<Order> = new shared Order(4);
+//     new SortableList(SortableProps { }, ["Design", "Build", "Test", "Ship"], order)
+//
+//     for (k of 0..4) { … items[order.at(k) as i64] … }      // the program reads the order
+//
+// Press a row and drag it: the row follows the pointer, the others make room, and letting go puts
+// it in its new place. From the keyboard, Space picks the focused row up, Up and Down move it, and
+// Space puts it down. `Order` is the arrangement: `at(k)` is the item now in place `k`, and it is
+// shared, so the program and the list look at the same one.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Elevation;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::panel::Surfaces;
+
+/** Height of a row. */
+const SORT_ROW : f64 = 40.0;
+
+/** Space between rows. */
+const SORT_GAP : f64 = 6.0;
+
+/** Pixels the pointer must travel before a press becomes a drag. */
+const SORT_SLOP : f64 = 4.0;
+
+/** An arrangement of `count` items: which item is in each place. */
+pub class Order {
+    pub slots : i32[];
+    pub count : i32;
+    pub moves : i64 = 0;
+
+    /** The items 0 … `count - 1` in their own order. */
+    constructor(count : i32) {
+        self.count = count;
+        self.slots = malloc<i32>(count as i64);
+        for (i of 0..count) {
+            self.slots[i as i64] = i;
+        }
+    }
+
+    /** The item in place `k`. */
+    pub fn at(self, k : i32) : i32 {
+        return self.slots[Mathx::clampI(k, 0, self.count - 1) as i64];
+    }
+
+    /** Take the item in place `src` out and put it back in place `dst`. */
+    pub fn relocate(mut self, src : i32, dst : i32) : void {
+        if (src == dst || src < 0 || dst < 0 || src >= self.count || dst >= self.count) {
+            return;
+        }
+        let item : i32 = self.slots[src as i64];
+        let mut k : i32 = src;
+        while (k < dst) {
+            self.slots[k as i64] = self.slots[(k + 1) as i64];
+            k = k + 1;
+        }
+        while (k > dst) {
+            self.slots[k as i64] = self.slots[(k - 1) as i64];
+            k = k - 1;
+        }
+        self.slots[dst as i64] = item;
+        self.moves = self.moves + 1;
+    }
+}
+
+/** How a sortable list looks. */
+pub struct SortableProps {
+    /** The list's width: its content's (320 px), a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Fill;
+
+    /** Whether each row ends with its place, as "01". */
+    pub numbered : bool = true;
+}
+
+/** A list put in order by dragging. */
+pub class SortableList : Control, Widget {
+    props : SortableProps;
+    items : string[];
+    count : i32;
+    order : Shared<Order>;
+    armed : i32 = -1;
+    held : i32 = -1;
+    dragging : bool = false;
+    startY : f64 = 0.0;
+    grabY : f64 = 0.0;
+    pointerY : f64 = 0.0;
+    cur : i32 = 0;
+    lifted : bool = false;
+
+    /** A list of `items`, arranged as `order` says; dragging changes `order`. */
+    constructor(own props : SortableProps, items : string[], order : Shared<Order>) {
+        super();
+        self.props = props;
+        self.count = items.length as i32;
+        self.items = items;
+        self.order = order;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let n : f64 = self.count as f64;
+        let h : f64 = n * SORT_ROW + Mathx::fmax(0.0, n - 1.0) * SORT_GAP;
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 320.0), h: h });
+    }
+
+    /** The top of place `k`. */
+    pub(file) fn slotY(self, k : i32) : f64 {
+        return self.area.y + (k as f64) * (SORT_ROW + SORT_GAP);
+    }
+
+    /** The place whose row the height `y` falls in, or -1. */
+    pub(file) fn placeAt(self, y : f64) : i32 {
+        for (k of 0..self.count) {
+            let top : f64 = self.slotY(k);
+            if (y >= top && y < top + SORT_ROW) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
+    /** The place the held row would take if dropped now. */
+    pub(file) fn target(self) : i32 {
+        let centre : f64 = self.pointerY - self.grabY + SORT_ROW * 0.5;
+        let k : i32 = Mathx::floorI((centre - self.area.y) / (SORT_ROW + SORT_GAP));
+        return Mathx::clampI(k, 0, self.count - 1);
+    }
+
+    /** The place row `k` is drawn in while another is being dragged to `to`. */
+    pub(file) fn shifted(self, k : i32, to : i32) : i32 {
+        if (!self.dragging || k == self.held) {
+            return k;
+        }
+        if (self.held < to && k > self.held && k <= to) {
+            return k - 1;
+        }
+        if (self.held > to && k >= to && k < self.held) {
+            return k + 1;
+        }
+        return k;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            ctx.wantCursor(self.dragging ? Cursor::Move : Cursor::Hand);
+        }
+        if (g == Gesture::Press) {
+            self.armed = self.placeAt(e.y);
+            self.startY = e.y;
+            self.grabY = e.y - self.slotY(self.armed);
+            self.pointerY = e.y;
+            if (self.armed >= 0) {
+                self.cur = self.armed;
+            }
+            return true;
+        }
+        if (self.pressed && self.armed >= 0 && e.kind == EventKind::PointerMove) {
+            self.pointerY = e.y;
+            if (!self.dragging && (e.y - self.startY).abs() > SORT_SLOP) {
+                self.dragging = true;
+                self.held = self.armed;
+            }
+            ctx.invalidate();
+            return true;
+        }
+        if (g == Gesture::Click || g == Gesture::Release) {
+            if (self.dragging) {
+                let to : i32 = self.target();
+                self.order.relocate(self.held, to);
+                self.cur = to;
+            }
+            self.dragging = false;
+            self.held = -1;
+            self.armed = -1;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            return self.onKey(ctx, e);
+        }
+        return false;
+    }
+
+    pub(file) fn onKey(mut self, ctx : Context, e : UiEvent) : bool {
+        if (e.key == Key::Space) {
+            self.lifted = !self.lifted;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.key == Key::Escape && self.lifted) {
+            self.lifted = false;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.key == Key::Up || e.key == Key::Down) {
+            let next : i32 = Mathx::clampI(self.cur + (e.key == Key::Up ? -1 : 1), 0, self.count - 1);
+            if (self.lifted) {
+                self.order.relocate(self.cur, next);
+            }
+            self.cur = next;
+            ctx.invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    /** One row: a grip, the label and the place. */
+    pub(file) fn paintRow(self, ctx : Context, p : Painter, item : i32, place : i32, y : f64, grabbed : bool) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let box : Bounds = Bounds::make(a.x, y, a.w, SORT_ROW);
+        let rr : RRect = box.round(ctx.theme.metrics.radiusControl);
+        if (grabbed) {
+            Surfaces::draw(p, rr, box, ctx.theme.panel(Elevation::Lifted));
+            p.fillRound(rr, Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.primary.s500.rgb, 255));
+        } else {
+            p.fillRound(rr, Brush::solid(pal.surface.rgb, pal.surface.a));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        }
+        // The grip: two columns of three dots.
+        let dot : Tint = grabbed ? pal.softPrimary.fg : pal.textFaint;
+        for (c of 0..2) {
+            for (r of 0..3) {
+                let cx : f64 = box.x + 16.0 + (c as f64) * 5.0;
+                let cy : f64 = box.midY() - 5.0 + (r as f64) * 5.0;
+                p.fillRound(RRect::uniform(cx - 1.25, cy - 1.25, 2.5, 2.5, 1.25), Brush::solid(dot.rgb, dot.a));
+            }
+        }
+        let label : string = self.items[item as i64];
+        let tail : f64 = self.props.numbered ? 40.0 : 14.0;
+        p.textElided(FaceKind::Medium, label, box.x + 36.0, ctx.baselineIn(FaceKind::Medium, 13.0, box.y, box.h), 13.0, box.w - 36.0 - tail, pal.text);
+        if (self.props.numbered) {
+            let number : string = (place < 9 ? "0" : "") + Format::whole((place + 1) as f64);
+            let pw : f64 = ctx.textWidth(FaceKind::Mono, number, 11.0);
+            p.text(FaceKind::Mono, number, box.right() - 14.0 - pw, ctx.baselineIn(FaceKind::Mono, 11.0, box.y, box.h), 11.0, pal.textFaint);
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let to : i32 = self.dragging ? self.target() : -1;
+        if (self.dragging) {
+            // The empty place the held row will land in.
+            let hole : Bounds = Bounds::make(self.area.x, self.slotY(to), self.area.w, SORT_ROW);
+            let rr : RRect = hole.round(ctx.theme.metrics.radiusControl);
+            p.fillRound(rr, Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a / 2));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.primary.s500.rgb, 120));
+        }
+        for (k of 0..self.count) {
+            if (self.dragging && k == self.held) {
+                continue;
+            }
+            let slot : i32 = self.shifted(k, to);
+            self.paintRow(ctx, p, self.order.at(k), slot, self.slotY(slot), self.lifted && k == self.cur && !self.dragging);
+        }
+        if (self.dragging) {
+            let top : f64 = Mathx::clampF(self.pointerY - self.grabY, self.area.y, self.area.bottom() - SORT_ROW);
+            self.paintRow(ctx, p, self.order.at(self.held), to, top, true);
+        }
+        if (self.ringShown(ctx) && !self.dragging) {
+            let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+            let box : Bounds = Bounds::make(self.area.x, self.slotY(self.cur), self.area.w, SORT_ROW);
+            p.strokeRound(box.grown(3.0).round(ctx.theme.metrics.radiusControl + 3.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

@@ -66,7 +66,7 @@ pub class Badge : Base, Widget {
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let st : BadgeStyle = self.style(ctx);
-        let mut w : f64 = ctx.textWidth(FaceKind::Bold, self.props.text, st.px) + 2.0 * st.padX;
+        let mut w : f64 = ctx.textWidth(FaceKind::Medium, self.props.text, st.px) + 2.0 * st.padX;
         if (self.props.dot) {
             w = w + 6.0 + 6.0;
         }
@@ -78,7 +78,7 @@ pub class Badge : Base, Widget {
         let a : Bounds = self.area;
         let rr : RRect = a.round(st.radius);
         p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
-        let w : f64 = ctx.textWidth(FaceKind::Bold, self.props.text, st.px);
+        let w : f64 = ctx.textWidth(FaceKind::Medium, self.props.text, st.px);
         let mut full : f64 = w;
         if (self.props.dot) {
             full = full + 12.0;
@@ -88,8 +88,8 @@ pub class Badge : Base, Widget {
             p.line(x + 3.0, a.midY(), x + 3.0, a.midY(), 6.0, st.dot);
             x = x + 12.0;
         }
-        let base : f64 = ctx.baselineIn(FaceKind::Bold, st.px, a.y, a.h);
-        p.text(FaceKind::Bold, self.props.text, x, base, st.px, st.text);
+        let base : f64 = ctx.baselineIn(FaceKind::Medium, st.px, a.y, a.h);
+        p.text(FaceKind::Medium, self.props.text, x, base, st.px, st.text);
     }
 }
 

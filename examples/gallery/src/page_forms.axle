@@ -1,7 +1,7 @@
 // forms — text fields, choices, sliders, and the small inputs.
 
 use zaffre::{
-    Model, Dates, DatePicker, DateProps, Calendar, Combobox, MultiSelect, ComboboxProps, TagsInput, TagsProps,
+    Model, Dates, DatePicker, DateRangePicker, DateProps, Calendar, Combobox, MultiSelect, ComboboxProps, TagsInput, TagsProps,
     InputOTP, OtpProps, TextField, FieldProps, Textarea, TextareaProps, Select, Checkbox, ToggleProps, Radio, Switch,
     Slider, SliderProps, Segmented, Rating, RatingProps, QuantityInput, QuantityProps, ToggleGroup,
     FormField, FieldLabel, Column, Row, Widget, FlexProps,
@@ -157,8 +157,15 @@ fn pickers(demo : Demo) : Column {
     let countries : string[] = ["France", "Germany", "Japan", "Brazil", "Canada", "Kenya", "Norway", "Peru", "Spain", "Vietnam"];
     let abilities : string[] = ["Rust", "Axle", "C", "Zig", "Go", "Python"];
     let dateField = new FormField(
-        FieldLabel { label: "Date of birth" },
-        new DatePicker(DateProps { today: today, width: Length::Fill }, birthday)
+        FieldLabel { label: "Date of birth", hint: "Type it, or open the calendar (Down key)." },
+        new DatePicker(
+            DateProps {
+                today: today,
+                max: today,
+                width: Length::Fill,
+            },
+            birthday
+        )
     );
     let countryField = new FormField(
         FieldLabel { label: "Country", hint: "Type to search." },
@@ -180,13 +187,18 @@ fn pickers(demo : Demo) : Column {
     return stacked(kids);
 }
 
-/** A calendar choosing a range. */
+/** A calendar choosing a range, and the picker that wraps one. */
 fn range(demo : Demo) : Column {
     let arrival = demo.arrival;
     let departure = demo.departure;
     let today = Dates::ymd(2026, 10, 20);
+    let stay = new FormField(
+        FieldLabel { label: "Your stay", hint: "Presets on the left, a preview while you pick the end." },
+        new DateRangePicker(DateProps { today: today, min: today, width: Length::Fill }, arrival, departure)
+    );
     let kids : dyn Widget[] = [
-        new Calendar(DateProps { today: today }, arrival, departure),
+        stay,
+        new Calendar(DateProps { today: today, min: today, framed: true }, arrival, departure),
     ];
     return stacked(kids);
 }

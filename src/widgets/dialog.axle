@@ -20,19 +20,21 @@ use crate::style::ease::{Eased, Rate};
 use crate::style::variants::{ButtonKind, TextRole, Elevation};
 use crate::core::geometry::{Size, Bounds, Limits, Insets, Align};
 use crate::core::event::{UiEvent, EventKind, Key};
-use crate::core::context::Context;
+use crate::core::context::{Context, Cursor};
 use crate::core::model::Model;
 use crate::core::widget::Widget;
 use crate::core::widget::Base;
 use crate::paint::painter::Painter;
 use crate::widgets::button::{Button, ButtonProps};
 use crate::widgets::panel::Surfaces;
+use crate::widgets::band::{Band, BandProps, BandFill, BandEdge};
+use crate::widgets::icon::{IconKind, Icons};
 use crate::widgets::flex::{Column, Row, FlexProps};
 use crate::widgets::label::{Label, LabelProps};
 use crate::widgets::spacer::Spacer;
 
-/** The card's inner padding. */
-const DIALOG_PAD : f64 = 24.0;
+/** The card's corner radius, which its header and footer bands follow. */
+const DIALOG_RADIUS : f64 = 16.0;
 
 /** What a dialog says and offers. */
 pub struct DialogProps {
@@ -55,7 +57,7 @@ pub struct DialogProps {
     pub showCancel : bool = true;
 
     /** The card's width, in pixels. */
-    pub width : f64 = 420.0;
+    pub width : f64 = 448.0;
 }
 
 /** The handler a dialog without one runs. */
@@ -73,6 +75,7 @@ pub class Dialog : Base, Widget {
     closing : bool = false;
     finished : bool = false;
     sheet : Bounds = Bounds::zero();
+    overClose : bool = false;
 
     /** A dialog as `props` say, running `onConfirm` or `onCancel` when it is answered. */
     constructor(own props : DialogProps, onConfirm : () => void, onCancel : () => void) {
@@ -86,26 +89,41 @@ pub class Dialog : Base, Widget {
         if (props.danger) {
             kind = ButtonKind::Danger;
         }
-        let buttons : dyn Widget[] = [
-            new Spacer(),
-            new Button(ButtonProps { label: props.cancel }, () => answer.set(2)),
-            new Button(ButtonProps { label: props.confirm, kind: kind }, () => answer.set(1)),
-        ];
-        let buttonsNoCancel : dyn Widget[] = [
-            new Spacer(),
-            new Button(ButtonProps { label: props.confirm, kind: kind }, () => answer.set(1)),
-        ];
-        let mut row : Row = new Row(FlexProps { gap: 10.0, align: Align::Center }, buttons);
+        let cancel = new Button(ButtonProps { label: props.cancel, kind: ButtonKind::Outline }, () => answer.set(2));
+        let confirm = new Button(ButtonProps { label: props.confirm, kind: kind }, () => answer.set(1));
+        let both : dyn Widget[] = [new Spacer(), cancel, confirm];
+        let only : dyn Widget[] = [new Spacer(), confirm];
+        let mut row : Row = new Row(FlexProps { gap: 10.0, align: Align::Center }, both);
         if (!props.showCancel) {
-            row = new Row(FlexProps { gap: 10.0, align: Align::Center }, buttonsNoCancel);
+            row = new Row(FlexProps { gap: 10.0, align: Align::Center }, only);
         }
-        let parts : dyn Widget[] = [
-            new Label(props.title, TextRole::H3),
-            new Label(LabelProps { role: TextRole::Dim, wrap: true }, props.message),
-            row,
-        ];
+        let radius : f64 = DIALOG_RADIUS;
+        let head = new Band(
+            BandProps {
+                padding: Insets { top: 16.0, right: 56.0, bottom: 16.0, left: 20.0 },
+                edge: BandEdge::Below,
+                roundTop: true,
+                radius: radius,
+            },
+            new Label(props.title, TextRole::Title)
+        );
+        let body = new Band(
+            BandProps { padding: Insets::all(20.0) },
+            new Label(LabelProps { role: TextRole::Dim, wrap: true }, props.message)
+        );
+        let foot = new Band(
+            BandProps {
+                fill: BandFill::Raised,
+                edge: BandEdge::Above,
+                padding: Insets { top: 14.0, right: 20.0, bottom: 14.0, left: 20.0 },
+                roundBottom: true,
+                radius: radius,
+            },
+            row
+        );
+        let parts : dyn Widget[] = [head, body, foot];
         self.kid = malloc<dyn Widget>(1 as i64);
-        self.kid[0] = new Column(FlexProps { gap: 14.0, align: Align::Stretch }, parts);
+        self.kid[0] = new Column(FlexProps { gap: 0.0, align: Align::Stretch }, parts);
     }
 
     pub fn modal(self) : bool {
@@ -127,12 +145,15 @@ pub class Dialog : Base, Widget {
     pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
         self.area = area;
         let c : dyn Widget = self.kid[0];
-        let inner : f64 = Mathx::fmin(self.width, area.w - 32.0) - 2.0 * DIALOG_PAD;
-        let s : Size = c.measure(ctx, Limits::loose(inner, area.h - 64.0));
-        let w : f64 = inner + 2.0 * DIALOG_PAD;
-        let h : f64 = s.h + 2.0 * DIALOG_PAD;
-        self.sheet = Bounds::make(area.midX() - w * 0.5, area.midY() - h * 0.5 - 12.0, w, h);
-        c.arrange(ctx, Bounds::make(self.sheet.x + DIALOG_PAD, self.sheet.y + DIALOG_PAD, inner, s.h));
+        let w : f64 = Mathx::fmin(self.width, area.w - 32.0);
+        let s : Size = c.measure(ctx, Limits { minW: w, maxW: w, minH: 0.0, maxH: area.h - 64.0 });
+        self.sheet = Bounds::make(area.midX() - w * 0.5, area.midY() - s.h * 0.5 - 12.0, w, s.h);
+        c.arrange(ctx, self.sheet);
+    }
+
+    /** The box of the close button in the header. */
+    pub(file) fn closeBox(self) : Bounds {
+        return Bounds::make(self.sheet.right() - 48.0, self.sheet.y + 12.0, 32.0, 32.0);
     }
 
     /** Take the answer: run its handler once and start closing. */
@@ -153,6 +174,16 @@ pub class Dialog : Base, Widget {
 
     pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
         if (self.closing || self.finished) {
+            return true;
+        }
+        if (e.kind == EventKind::PointerMove) {
+            self.overClose = self.closeBox().contains(e.x, e.y);
+            if (self.overClose) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0 && self.closeBox().contains(e.x, e.y)) {
+            self.finish(ctx, 2);
             return true;
         }
         let c : dyn Widget = self.kid[0];
@@ -210,6 +241,12 @@ pub class Dialog : Base, Widget {
         Surfaces::draw(p, rr, b, ctx.theme.panel(Elevation::Floating));
         let c : dyn Widget = self.kid[0];
         c.paint(ctx, p);
+        // The close cross at the end of the header.
+        let cb : Bounds = self.closeBox().moved(0.0, (1.0 - k) * 10.0);
+        if (self.overClose) {
+            p.fillRound(cb.round(ctx.theme.metrics.radiusInline), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        Icons::draw(p, IconKind::Close, cb.midX() - 10.0, cb.midY() - 10.0, 20.0, self.overClose ? pal.text : pal.textFaint);
         p.setOpacity(prev);
     }
 }

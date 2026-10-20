@@ -29,6 +29,9 @@ use crate::paint::painter::Painter;
 /** Space between neighbouring titles. */
 const TAB_GAP : f64 = 4.0;
 
+/** Space at each side of a title. */
+const TAB_PAD : f64 = 12.0;
+
 /** The handler a tab bar without one runs. */
 fn ignoreTab(v : i32) : void {
 }
@@ -70,12 +73,12 @@ pub class TabBar : Control {
         let st : ItemStyle = ctx.theme.item(self.size);
         let mut x : f64 = 0.0;
         for (i of 0..self.count) {
-            let w : f64 = ctx.textWidth(FaceKind::Bold, self.titles[i as i64], st.px) + 2.0 * st.padX;
+            let w : f64 = ctx.textWidth(FaceKind::Medium, self.titles[i as i64], st.px) + 2.0 * TAB_PAD;
             self.left[i as i64] = x;
             self.right[i as i64] = x + w;
             x = x + w + TAB_GAP;
         }
-        return limits.constrain(Size { w: Mathx::fmax(0.0, x - TAB_GAP), h: st.height + 6.0 });
+        return limits.constrain(Size { w: Mathx::fmax(0.0, x - TAB_GAP), h: ctx.theme.heightOf(self.size) });
     }
 
     /** The title under `x`, or -1. */
@@ -154,18 +157,19 @@ pub class TabBar : Control {
         for (i of 0..self.count) {
             let x : f64 = a.x + self.left[i as i64];
             let w : f64 = self.right[i as i64] - self.left[i as i64];
-            let cell : Bounds = Bounds::make(x, a.y + 2.0, w, a.h - 6.0);
-            if (i == self.hot && i != chosen) {
-                p.fillRound(cell.round(st.radius), Brush::solid(st.hover.rgb, st.hover.a));
-            }
+            let cell : Bounds = Bounds::make(x, a.y, w, a.h);
             let near : f64 = 1.0 - Mathx::fmin(1.0, (self.mark.value - (i as f64)).abs());
-            let ink : Tint = st.text.mixed(st.textSelected, Mathx::roundI(near * 255.0));
-            let tw : f64 = ctx.textWidth(FaceKind::Bold, self.titles[i as i64], st.px);
-            let base : f64 = ctx.baselineIn(FaceKind::Bold, st.px, cell.y, cell.h);
-            p.text(FaceKind::Bold, self.titles[i as i64], x + (w - tw) * 0.5, base, st.px, ink);
+            let mut rest : Tint = st.text;
+            if (i == self.hot && i != chosen) {
+                rest = pal.text;
+            }
+            let ink : Tint = rest.mixed(st.textSelected, Mathx::roundI(near * 255.0));
+            let tw : f64 = ctx.textWidth(FaceKind::Medium, self.titles[i as i64], st.px);
+            let base : f64 = ctx.baselineIn(FaceKind::Medium, st.px, cell.y, cell.h);
+            p.text(FaceKind::Medium, self.titles[i as i64], x + (w - tw) * 0.5, base, st.px, ink);
         }
         let (from0, to0) = self.spanAt(self.mark.value);
-        let bar : RRect = Bounds::make(a.x + from0 + 6.0, a.bottom() - 2.5, to0 - from0 - 12.0, 2.5).round(1.25);
+        let bar : RRect = Bounds::make(a.x + from0, a.bottom() - 2.0, to0 - from0, 2.0).round(1.0);
         p.fillRound(bar, Brush::solid(pal.accent.rgb, pal.accent.a));
         if (self.ringShown(ctx)) {
             let ring : Tint = pal.accent.faded(self.focusT.alpha());

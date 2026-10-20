@@ -1,0 +1,406 @@
+// datepicker — fields that take a date by typing it or by choosing it on a calendar.
+//
+//     let day : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+//     new DatePicker(DateProps { today: Dates::ymd(2026, 10, 20) }, day)
+//
+// `DatePicker` is a text field you can type a date into ("20 Oct 2026", "2026-10-20", "20/10/2026"),
+// with a calendar button at its right edge. The calendar opens under the field from the button or the
+// Down key, follows what is typed, and writes the day you click back into the text. Text that is not
+// a date, or lies outside `min` and `max`, turns the field red once you leave it. Both read and write
+// the same `Model<i32>` of days (see `Dates`), so the program sees one value, whichever way it was set.
+//
+// `DateRangePicker` chooses a start and an end: its field shows the range, and its panel puts a column
+// of presets (today, the last 7 days, this month, …) beside a calendar.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length, Insets, Align};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::field::{TextField, FieldProps};
+use crate::widgets::flex::{Row, FlexProps};
+use crate::widgets::popover::{Popover, PopoverSheet};
+use crate::widgets::dates::{Dates, DateProps};
+use crate::widgets::calendar::Calendar;
+
+/** The calendar a picker opens, as a plain widget, turned to the month of `chosen`. */
+fn pickerCalendar(today : i32, lo : i32, hi : i32, chosen : Shared<Model<i32>>, open : Shared<Model<bool>>) : dyn Widget {
+    return new Calendar(DateProps { today: today, min: lo, max: hi }, chosen, open, true);
+}
+
+/** A field that takes a date typed or chosen. */
+pub class DatePicker : Base, Widget {
+    props : DateProps;
+    chosen : Shared<Model<i32>>;
+    draft : Shared<Model<string>>;
+    open : Shared<Model<bool>>;
+    field : TextField;
+    seen : i32;
+    draftSeen : i64;
+    shown : bool = false;
+
+    /** A picker choosing into `chosen`. */
+    constructor(own props : DateProps, chosen : Shared<Model<i32>>) {
+        let open : Shared<Model<bool>> = new shared Model<bool>(false);
+        let draft : Shared<Model<string>> = new shared Model<string>(Dates::text(chosen.get()));
+        let fieldProps : FieldProps = FieldProps {
+            placeholder: props.placeholder,
+            size: props.size,
+            width: props.width,
+            disabled: props.disabled,
+            trailing: IconKind::Calendar,
+        };
+        self.field = new TextField(fieldProps, draft);
+        self.field.whenTrailing(() => open.set(true));
+        self.field.toEnd();
+        self.props = props;
+        self.chosen = chosen;
+        self.draft = draft;
+        self.open = open;
+        self.seen = chosen.get();
+        self.draftSeen = draft.changes();
+    }
+
+    /** Follow the text into the choice, the choice into the text, and judge the text once it is left. */
+    pub(file) fn refresh(mut self, ctx : Context) : void {
+        let lo : i32 = self.props.min;
+        let hi : i32 = self.props.max;
+        if (self.draft.changes() != self.draftSeen) {
+            self.draftSeen = self.draft.changes();
+            let typed : string = self.draft.get();
+            let day : i32 = Dates::parse(typed);
+            if (typed.byteLength == 0) {
+                self.chosen.set(Dates::NONE);
+            } else if (Dates::within(day, lo, hi) && day != self.chosen.get()) {
+                self.chosen.set(day);
+            }
+            self.seen = self.chosen.get();
+        }
+        let now : i32 = self.chosen.get();
+        if (now != self.seen) {
+            self.seen = now;
+            self.draft.set(Dates::text(now));
+            self.draftSeen = self.draft.changes();
+            self.field.toEnd();
+            ctx.invalidate();
+        }
+        let editing : bool = self.field.isFocused(ctx);
+        let text : string = self.draft.get();
+        if (!editing && now != Dates::NONE && Dates::parse(text) == now && text != Dates::text(now)) {
+            self.draft.set(Dates::text(now));
+            self.draftSeen = self.draft.changes();
+        }
+        let bad : bool = text.byteLength > 0 && !Dates::within(Dates::parse(text), lo, hi);
+        self.field.markInvalid(bad && !editing);
+    }
+
+    /** Open the calendar under the field when the flag says so, once. */
+    pub(file) fn syncSheet(mut self, ctx : Context) : void {
+        if (!self.open.get()) {
+            self.shown = false;
+            return;
+        }
+        if (self.shown) {
+            return;
+        }
+        self.shown = true;
+        let today : i32 = self.props.today;
+        let lo : i32 = self.props.min;
+        let hi : i32 = self.props.max;
+        let chosen : Shared<Model<i32>> = self.chosen;
+        let open : Shared<Model<bool>> = self.open;
+        let sheet : PopoverSheet = new PopoverSheet(self.area, () => pickerCalendar(today, lo, hi, chosen, open), open, false);
+        sheet.padded(0.0);
+        if (!ctx.openOverlay(sheet)) {
+            self.open.set(false);
+            self.shown = false;
+        }
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return self.field.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.field.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let mut used : bool = self.field.event(ctx, e);
+        if (!used && e.kind == EventKind::KeyDown && e.key == Key::Down && self.field.isFocused(ctx) && !self.open.get()) {
+            self.open.set(true);
+            used = true;
+        }
+        self.refresh(ctx);
+        self.syncSheet(ctx);
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.refresh(ctx);
+        self.syncSheet(ctx);
+        return self.field.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.field.paint(ctx, p);
+    }
+}
+
+// ─── Ranges ──────────────────────────────────────────────────────
+
+/** Width of the column of presets. */
+const PRESET_WIDTH : f64 = 148.0;
+
+/** Height of one preset. */
+const PRESET_ROW : f64 = 32.0;
+
+/** The names of the presets. */
+fn presetNames() : string[] {
+    return ["Today", "Last 7 days", "Last 30 days", "This month", "Last month"];
+}
+
+/** The start and the end of preset `i` when today is `today`. */
+fn presetSpan(i : i32, today : i32) : (a: i32, b: i32) {
+    let first : i32 = Dates::ymd(Dates::year(today), Dates::month(today), 1);
+    if (i == 1) {
+        return (today - 6, today);
+    }
+    if (i == 2) {
+        return (today - 29, today);
+    }
+    if (i == 3) {
+        return (first, Dates::addMonths(first, 1) - 1);
+    }
+    if (i == 4) {
+        return (Dates::addMonths(first, -1), first - 1);
+    }
+    return (today, today);
+}
+
+/** The column of ready-made ranges beside a range calendar. */
+pub class RangePresets : Control, Widget {
+    today : i32;
+    start : Shared<Model<i32>>;
+    stop : Shared<Model<i32>>;
+    open : Shared<Model<bool>>;
+    hot : i32 = -1;
+
+    /** Presets relative to `today`, writing into `start` and `stop`, and closing the panel through `open`. */
+    constructor(today : i32, start : Shared<Model<i32>>, stop : Shared<Model<i32>>, open : Shared<Model<bool>>) {
+        super();
+        self.today = today;
+        self.start = start;
+        self.stop = stop;
+        self.open = open;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: PRESET_WIDTH, h: 16.0 + PRESET_ROW * 5.0 });
+    }
+
+    /** The box of preset `i`. */
+    pub(file) fn rowBox(self, i : i32) : Bounds {
+        return Bounds::make(self.area.x + 8.0, self.area.y + 8.0 + PRESET_ROW * (i as f64), self.area.w - 17.0, PRESET_ROW);
+    }
+
+    /** The preset under (`x`, `y`), or -1. */
+    pub(file) fn rowAt(self, x : f64, y : f64) : i32 {
+        for (i of 0..5) {
+            if (self.rowBox(i).contains(x, y)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Whether preset `i` is the range now chosen. */
+    pub(file) fn isChosen(self, i : i32) : bool {
+        let (a, b) = presetSpan(i, self.today);
+        return self.start.get() == a && self.stop.get() == b;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = self.hovered ? self.rowAt(e.x, e.y) : -1;
+            if (self.hot >= 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+            if (self.hot != before) {
+                ctx.invalidate();
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.rowAt(e.x, e.y);
+            if (i >= 0) {
+                let (a, b) = presetSpan(i, self.today);
+                self.start.set(a);
+                self.stop.set(b);
+                self.open.set(false);
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusInline;
+        let a : Bounds = self.area;
+        p.line(a.right() - 0.5, a.y, a.right() - 0.5, a.bottom(), 1.0, pal.line);
+        let names : string[] = presetNames();
+        for (i of 0..5) {
+            let box : Bounds = self.rowBox(i);
+            let mut ink : Tint = pal.textDim;
+            if (self.isChosen(i)) {
+                p.fillRound(box.round(radius), Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+                ink = pal.softPrimary.fg;
+            } else if (i == self.hot) {
+                p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+                ink = pal.text;
+            }
+            p.text(FaceKind::Medium, names[i as i64], box.x + 10.0, ctx.baselineIn(FaceKind::Medium, 13.0, box.y, box.h), 13.0, ink);
+        }
+    }
+}
+
+/** The panel of a range picker: presets beside a calendar. */
+fn rangePanel(today : i32, lo : i32, hi : i32, start : Shared<Model<i32>>, stop : Shared<Model<i32>>, open : Shared<Model<bool>>) : dyn Widget {
+    let parts : dyn Widget[] = [
+        new RangePresets(today, start, stop, open),
+        new Calendar(DateProps { today: today, min: lo, max: hi }, start, stop, open),
+    ];
+    return new Row(FlexProps { gap: 0.0, align: Align::Stretch }, parts);
+}
+
+/** The field a range picker shows: the range, and a calendar picture. */
+pub class RangeField : Control, Widget {
+    props : DateProps;
+    start : Shared<Model<i32>>;
+    stop : Shared<Model<i32>>;
+    open : Shared<Model<bool>>;
+
+    /** A field showing `start` to `stop`; `open` says whether the panel is showing. */
+    constructor(own props : DateProps, start : Shared<Model<i32>>, stop : Shared<Model<i32>>, open : Shared<Model<bool>>) {
+        super();
+        self.props = props;
+        self.start = start;
+        self.stop = stop;
+        self.open = open;
+    }
+
+    /** The range as text: "12 Oct 2026 – 18 Oct 2026", or just the start while the end is open. */
+    pub(file) fn text(self) : string {
+        let a : i32 = self.start.get();
+        let b : i32 = self.stop.get();
+        if (a == Dates::NONE) {
+            return "";
+        }
+        if (b == Dates::NONE) {
+            return Dates::text(a) + " – …";
+        }
+        return Dates::text(a) + " – " + Dates::text(b);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 300.0), h: ctx.theme.heightOf(self.props.size) });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let st = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        p.fillRound(rr, st.fill.brush(a.y, a.h));
+        let mut edge : Tint = st.border.mixed(st.borderHover, self.hoverT.alpha());
+        if (self.open.get()) {
+            edge = st.borderFocus;
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(st.ring.rgb, st.ring.a));
+        }
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h);
+        let text : string = self.text();
+        p.pushClip(a.x, a.y, a.w - 36.0, a.h);
+        if (text.byteLength == 0) {
+            p.text(FaceKind::Sans, "Pick a range", a.x + st.padX, base, st.px, st.placeholder);
+        } else {
+            p.text(FaceKind::Sans, text, a.x + st.padX, base, st.px, st.text);
+        }
+        p.popClip();
+        Icons::draw(p, IconKind::Calendar, a.right() - 27.0, a.midY() - 9.0, 18.0, pal.textFaint);
+    }
+}
+
+/** A field that chooses a start and an end on a calendar with a column of presets. */
+pub class DateRangePicker : Base, Widget {
+    kid : dyn Widget[];
+
+    /** A picker choosing into `start` and `stop`. */
+    constructor(own props : DateProps, start : Shared<Model<i32>>, stop : Shared<Model<i32>>) {
+        let open : Shared<Model<bool>> = new shared Model<bool>(false);
+        let today : i32 = props.today;
+        let lo : i32 = props.min;
+        let hi : i32 = props.max;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        let popover : Popover = new Popover(
+            new RangeField(props, start, stop, open),
+            () => rangePanel(today, lo, hi, start, stop, open),
+            open
+        );
+        popover.flush();
+        self.kid[0] = popover;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+}

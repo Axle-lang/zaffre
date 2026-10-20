@@ -30,7 +30,16 @@ pub enum FaceKind : i32 {
 
     /** The monospace face, bold. */
     MonoBold = 3,
+
+    /**
+     * A weight between regular and bold, for labels, buttons and tabs: the regular face set twice, a
+     * hair apart, which thickens every stem by that hair. No third font file is needed.
+     */
+    Medium = 4,
 }
+
+/** How far the second strike of a medium run sits from the first, as a fraction of the text size. */
+const MEDIUM_SHIFT : f64 = 0.02;
 
 /** The faces of a program. */
 pub class Fonts {
@@ -67,6 +76,9 @@ pub class Fonts {
 
     /** The face actually used for `kind`: a monospace request falls back to the sans. */
     pub fn resolve(self, kind : FaceKind) : FaceKind {
+        if (kind == FaceKind::Medium) {
+            return FaceKind::Sans;
+        }
         if (self.hasMono) {
             return kind;
         }
@@ -99,6 +111,7 @@ pub class Fonts {
     pub fn ascent(self, kind : FaceKind, px : f64) : f64 {
         return match self.resolve(kind) {
             FaceKind::Sans => self.sans.ascent(px),
+            FaceKind::Medium => self.sans.ascent(px),
             FaceKind::Bold => self.bold.ascent(px),
             FaceKind::Mono => self.mono.ascent(px),
             FaceKind::MonoBold => self.monoBold.ascent(px),
@@ -109,6 +122,7 @@ pub class Fonts {
     pub fn descent(self, kind : FaceKind, px : f64) : f64 {
         return match self.resolve(kind) {
             FaceKind::Sans => self.sans.descent(px),
+            FaceKind::Medium => self.sans.descent(px),
             FaceKind::Bold => self.bold.descent(px),
             FaceKind::Mono => self.mono.descent(px),
             FaceKind::MonoBold => self.monoBold.descent(px),
@@ -119,6 +133,7 @@ pub class Fonts {
     pub fn lineHeight(self, kind : FaceKind, px : f64) : f64 {
         return match self.resolve(kind) {
             FaceKind::Sans => self.sans.lineHeight(px),
+            FaceKind::Medium => self.sans.lineHeight(px),
             FaceKind::Bold => self.bold.lineHeight(px),
             FaceKind::Mono => self.mono.lineHeight(px),
             FaceKind::MonoBold => self.monoBold.lineHeight(px),
@@ -129,8 +144,12 @@ pub class Fonts {
 
     /** The width of `s`. */
     pub fn width(self, kind : FaceKind, s : string, px : f64) : f64 {
+        if (kind == FaceKind::Medium) {
+            return Typeset::width(self.sans, s, px) + px * MEDIUM_SHIFT;
+        }
         return match self.resolve(kind) {
             FaceKind::Sans => Typeset::width(self.sans, s, px),
+            FaceKind::Medium => Typeset::width(self.sans, s, px),
             FaceKind::Bold => Typeset::width(self.bold, s, px),
             FaceKind::Mono => Typeset::width(self.mono, s, px),
             FaceKind::MonoBold => Typeset::width(self.monoBold, s, px),
@@ -141,6 +160,7 @@ pub class Fonts {
     pub fn span(self, kind : FaceKind, s : string, px : f64, start : i32, stop : i32) : f64 {
         return match self.resolve(kind) {
             FaceKind::Sans => Typeset::span(self.sans, s, px, start, stop),
+            FaceKind::Medium => Typeset::span(self.sans, s, px, start, stop),
             FaceKind::Bold => Typeset::span(self.bold, s, px, start, stop),
             FaceKind::Mono => Typeset::span(self.mono, s, px, start, stop),
             FaceKind::MonoBold => Typeset::span(self.monoBold, s, px, start, stop),
@@ -149,8 +169,13 @@ pub class Fonts {
 
     /** Draw `s` with the pen at (`x`, `baseline`); answers the pen after it. */
     pub fn draw(self, c : Canvas, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        if (kind == FaceKind::Medium) {
+            Typeset::draw(self.sans, c, s, x, baseline, px, t);
+            return Typeset::draw(self.sans, c, s, x + px * MEDIUM_SHIFT, baseline, px, t);
+        }
         return match self.resolve(kind) {
             FaceKind::Sans => Typeset::draw(self.sans, c, s, x, baseline, px, t),
+            FaceKind::Medium => Typeset::draw(self.sans, c, s, x, baseline, px, t),
             FaceKind::Bold => Typeset::draw(self.bold, c, s, x, baseline, px, t),
             FaceKind::Mono => Typeset::draw(self.mono, c, s, x, baseline, px, t),
             FaceKind::MonoBold => Typeset::draw(self.monoBold, c, s, x, baseline, px, t),
@@ -159,8 +184,13 @@ pub class Fonts {
 
     /** Draw bytes [`start`, `stop`) of `s`. */
     pub fn drawSpan(self, c : Canvas, kind : FaceKind, s : string, start : i32, stop : i32, x : f64, baseline : f64, px : f64, t : Tint) : f64 {
+        if (kind == FaceKind::Medium) {
+            Typeset::drawSpan(self.sans, c, s, start, stop, x, baseline, px, t);
+            return Typeset::drawSpan(self.sans, c, s, start, stop, x + px * MEDIUM_SHIFT, baseline, px, t);
+        }
         return match self.resolve(kind) {
             FaceKind::Sans => Typeset::drawSpan(self.sans, c, s, start, stop, x, baseline, px, t),
+            FaceKind::Medium => Typeset::drawSpan(self.sans, c, s, start, stop, x, baseline, px, t),
             FaceKind::Bold => Typeset::drawSpan(self.bold, c, s, start, stop, x, baseline, px, t),
             FaceKind::Mono => Typeset::drawSpan(self.mono, c, s, start, stop, x, baseline, px, t),
             FaceKind::MonoBold => Typeset::drawSpan(self.monoBold, c, s, start, stop, x, baseline, px, t),
@@ -169,8 +199,13 @@ pub class Fonts {
 
     /** Draw `s` cut to `maxW` pixels with an ellipsis. */
     pub fn drawElided(self, c : Canvas, kind : FaceKind, s : string, x : f64, baseline : f64, px : f64, maxW : f64, t : Tint) : f64 {
+        if (kind == FaceKind::Medium) {
+            Typeset::drawElided(self.sans, c, s, x, baseline, px, maxW, t);
+            return Typeset::drawElided(self.sans, c, s, x + px * MEDIUM_SHIFT, baseline, px, maxW, t);
+        }
         return match self.resolve(kind) {
             FaceKind::Sans => Typeset::drawElided(self.sans, c, s, x, baseline, px, maxW, t),
+            FaceKind::Medium => Typeset::drawElided(self.sans, c, s, x, baseline, px, maxW, t),
             FaceKind::Bold => Typeset::drawElided(self.bold, c, s, x, baseline, px, maxW, t),
             FaceKind::Mono => Typeset::drawElided(self.mono, c, s, x, baseline, px, maxW, t),
             FaceKind::MonoBold => Typeset::drawElided(self.monoBold, c, s, x, baseline, px, maxW, t),
@@ -195,6 +230,7 @@ pub class Fonts {
     pub fn indexAt(self, kind : FaceKind, s : string, px : f64, x : f64) : i32 {
         return match self.resolve(kind) {
             FaceKind::Sans => Typeset::indexAt(self.sans, s, px, x),
+            FaceKind::Medium => Typeset::indexAt(self.sans, s, px, x),
             FaceKind::Bold => Typeset::indexAt(self.bold, s, px, x),
             FaceKind::Mono => Typeset::indexAt(self.mono, s, px, x),
             FaceKind::MonoBold => Typeset::indexAt(self.monoBold, s, px, x),

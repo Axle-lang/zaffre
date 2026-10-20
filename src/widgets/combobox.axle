@@ -421,7 +421,7 @@ pub class MultiSelect : Dropper, Widget {
 
     /** The width of a chip for option `i`. */
     pub(file) fn chipWidth(self, ctx : Context, i : i32) : f64 {
-        return ctx.textWidth(FaceKind::Bold, self.options[i as i64], 12.0) + 34.0;
+        return ctx.textWidth(FaceKind::Medium, self.options[i as i64], 12.0) + 34.0;
     }
 
     /** The index of the chip whose cross is under `x`, or -1. */
@@ -501,7 +501,7 @@ pub class MultiSelect : Dropper, Widget {
             }
             let chip : Bounds = Bounds::make(left, a.midY() - 12.0, w, 24.0);
             p.fillRound(chip.round(ctx.theme.metrics.radiusInline), Brush::solid(soft.fill.rgb, soft.fill.a));
-            p.text(FaceKind::Bold, self.options[i as i64], chip.x + 10.0, ctx.baselineIn(FaceKind::Bold, 12.0, chip.y, chip.h), 12.0, soft.fg);
+            p.text(FaceKind::Medium, self.options[i as i64], chip.x + 10.0, ctx.baselineIn(FaceKind::Medium, 12.0, chip.y, chip.h), 12.0, soft.fg);
             Icons::draw(p, IconKind::Close, chip.right() - 20.0, chip.midY() - 7.0, 14.0, soft.fg);
             left = left + w + 6.0;
             shown = shown + 1;

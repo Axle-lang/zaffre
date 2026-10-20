@@ -60,10 +60,20 @@ pub struct FieldProps {
 
     /** Whether a cross at the right end clears the text, while there is some. */
     pub clearable : bool = false;
+
+    /** A picture at the right edge that works as a button (see `whenTrailing`). */
+    pub trailing : IconKind = IconKind::None;
 }
+
+/** Width of the button at a field's right edge. */
+const TRAILING_WIDTH : f64 = 36.0;
 
 /** The handler a field without one runs. */
 fn ignoreText(v : string) : void {
+}
+
+/** What the right-edge button does until the program says otherwise. */
+fn trailingNoop() : void {
 }
 
 /** A single-line text field. */
@@ -72,6 +82,8 @@ pub class TextField : Control, Widget {
     model : Shared<Model<string>>;
     onChange : (string) => void;
     onSubmit : (string) => void;
+    onTrailing : () => void;
+    wrong : bool = false;
     caret : i64 = 0;
     anchor : i64 = 0;
     scroll : f64 = 0.0;
@@ -85,6 +97,7 @@ pub class TextField : Control, Widget {
         self.model = model;
         self.onChange = ignoreText;
         self.onSubmit = ignoreText;
+        self.onTrailing = trailingNoop;
     }
 
     /** A field showing `model`, calling `onChange` with the new text after every edit. */
@@ -94,6 +107,7 @@ pub class TextField : Control, Widget {
         self.model = model;
         self.onChange = onChange;
         self.onSubmit = ignoreText;
+        self.onTrailing = trailingNoop;
     }
 
     /** A field showing `model`, calling `onChange` after every edit and `onSubmit` when Enter is pressed. */
@@ -103,10 +117,27 @@ pub class TextField : Control, Widget {
         self.model = model;
         self.onChange = onChange;
         self.onSubmit = onSubmit;
+        self.onTrailing = trailingNoop;
     }
 
     pub fn flex(self) : f64 {
         return self.props.grow;
+    }
+
+    /** Run `handler` when the picture at the right edge is pressed. */
+    pub fn whenTrailing(mut self, handler : () => void) : void {
+        self.onTrailing = handler;
+    }
+
+    /** Put the caret at the end of the text, after the program has replaced it. */
+    pub fn toEnd(mut self) : void {
+        self.caret = self.model.get().byteLength;
+        self.anchor = self.caret;
+    }
+
+    /** Draw the field as wrong (or not), on top of what its props say. */
+    pub fn markInvalid(mut self, wrong : bool) : void {
+        self.wrong = wrong;
     }
 
     // ─── Geometry ────────────────────────────────────────────────
@@ -121,6 +152,9 @@ pub class TextField : Control, Widget {
         if (self.showsClear()) {
             right = right + 22.0;
         }
+        if (self.props.trailing != IconKind::None) {
+            right = right + TRAILING_WIDTH - st.padX + 4.0;
+        }
         return Bounds { x: self.area.x + left, y: self.area.y, w: Mathx::fmax(0.0, self.area.w - left - right), h: self.area.h };
     }
 
@@ -131,7 +165,21 @@ pub class TextField : Control, Widget {
 
     /** The box of the clear cross. */
     pub(file) fn clearBox(self) : Bounds {
-        return Bounds::make(self.area.right() - 34.0, self.area.y, 34.0, self.area.h);
+        let mut shift : f64 = 0.0;
+        if (self.props.trailing != IconKind::None) {
+            shift = TRAILING_WIDTH;
+        }
+        return Bounds::make(self.area.right() - 34.0 - shift, self.area.y, 34.0, self.area.h);
+    }
+
+    /** The box of the right-edge button. */
+    pub(file) fn trailingBox(self) : Bounds {
+        return Bounds::make(self.area.right() - TRAILING_WIDTH, self.area.y, TRAILING_WIDTH, self.area.h);
+    }
+
+    /** Whether the pointer is over the right-edge button. */
+    pub(file) fn overTrailing(self, x : f64, y : f64) : bool {
+        return self.props.trailing != IconKind::None && !self.props.disabled && self.trailingBox().contains(x, y);
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
@@ -292,14 +340,21 @@ pub class TextField : Control, Widget {
         let kind : FaceKind = FaceKind::Sans;
         let g : Gesture = self.pointer(ctx, e);
         let overClear : bool = self.showsClear() && self.clearBox().contains(e.x, e.y);
+        let overTrail : bool = self.overTrailing(e.x, e.y);
         if (e.kind == EventKind::PointerMove && self.hovered) {
-            if (overClear) {
+            if (overClear || overTrail) {
                 ctx.wantCursor(Cursor::Hand);
             } else {
                 ctx.wantCursor(Cursor::Beam);
             }
         }
         let fieldBox : Bounds = self.inner(st);
+        if (g == Gesture::Press && overTrail) {
+            let go : () => void = self.onTrailing;
+            go();
+            ctx.invalidate();
+            return true;
+        }
         if (g == Gesture::Press && overClear) {
             self.anchor = 0;
             self.caret = 0;
@@ -378,7 +433,7 @@ pub class TextField : Control, Widget {
         let mut focusEdge : Tint = st.borderFocus;
         let mut halo : Tint = st.ring;
         let mut rest : Tint = st.border.mixed(st.borderHover, hv);
-        if (self.props.invalid || ctx.invalid) {
+        if (self.props.invalid || self.wrong || ctx.invalid) {
             focusEdge = st.borderInvalid;
             halo = st.ringInvalid;
             rest = st.borderInvalid;
@@ -397,6 +452,14 @@ pub class TextField : Control, Widget {
                 cross = ctx.theme.palette.text;
             }
             Icons::draw(p, IconKind::Close, cb.midX() - 7.0, cb.midY() - 7.0, 14.0, cross);
+        }
+        if (self.props.trailing != IconKind::None) {
+            let tb : Bounds = self.trailingBox();
+            let mut glyph : Tint = ctx.theme.palette.textFaint;
+            if (tb.contains(ctx.pointerX, ctx.pointerY) && !off) {
+                glyph = ctx.theme.palette.text;
+            }
+            Icons::draw(p, self.props.trailing, tb.midX() - 9.0, tb.midY() - 9.0, 18.0, glyph);
         }
         if (self.props.icon != IconKind::None) {
             let isz : f64 = st.px * 1.3;

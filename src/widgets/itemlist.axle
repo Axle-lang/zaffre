@@ -104,7 +104,7 @@ pub class ItemList : Control, Widget {
         for (i of 0..self.count) {
             h = h + self.rowHeight(i);
             let e : ListEntry = self.entries[i as i64];
-            let mut rw : f64 = 32.0 + ctx.textWidth(FaceKind::Bold, e.title, 14.0) + ctx.textWidth(FaceKind::Sans, e.note, 13.0) + 64.0;
+            let mut rw : f64 = 32.0 + ctx.textWidth(FaceKind::Medium, e.title, 14.0) + ctx.textWidth(FaceKind::Sans, e.note, 13.0) + 64.0;
             if (e.icon != IconKind::None) {
                 rw = rw + 52.0;
             }
@@ -179,10 +179,10 @@ pub class ItemList : Control, Widget {
                 x = x + 52.0;
             }
             if (e.subtitle.byteLength > 0) {
-                p.text(FaceKind::Bold, e.title, x, ctx.baselineIn(FaceKind::Bold, 14.0, top + 10.0, 20.0), 14.0, pal.text);
+                p.text(FaceKind::Medium, e.title, x, ctx.baselineIn(FaceKind::Medium, 14.0, top + 10.0, 20.0), 14.0, pal.text);
                 p.text(FaceKind::Sans, e.subtitle, x, ctx.baselineIn(FaceKind::Sans, 13.0, top + 32.0, 20.0), 13.0, pal.textFaint);
             } else {
-                p.text(FaceKind::Bold, e.title, x, ctx.baselineIn(FaceKind::Bold, 14.0, top, h), 14.0, pal.text);
+                p.text(FaceKind::Medium, e.title, x, ctx.baselineIn(FaceKind::Medium, 14.0, top, h), 14.0, pal.text);
             }
             if (e.note.byteLength > 0) {
                 let w : f64 = ctx.textWidth(FaceKind::Sans, e.note, 13.0);

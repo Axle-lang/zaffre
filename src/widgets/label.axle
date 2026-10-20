@@ -99,9 +99,17 @@ pub class Label : Base, Widget {
         return ctx.theme.text(self.props.role);
     }
 
+    /** The face the role is set in: the label role is a medium weight, the rest follow the style's flags. */
+    pub(file) fn kindOf(self, st : TextStyle) : FaceKind {
+        if (self.props.role == TextRole::Label) {
+            return FaceKind::Medium;
+        }
+        return Fonts::kindOf(st.bold, st.mono);
+    }
+
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let st : TextStyle = self.styleOf(ctx);
-        let kind : FaceKind = Fonts::kindOf(st.bold, st.mono);
+        let kind : FaceKind = self.kindOf(st);
         let line : f64 = ctx.lineHeight(kind, st.px);
         let mut w : f64 = 0.0;
         let mut h : f64 = line;
@@ -127,7 +135,7 @@ pub class Label : Base, Widget {
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let st : TextStyle = self.styleOf(ctx);
-        let kind : FaceKind = Fonts::kindOf(st.bold, st.mono);
+        let kind : FaceKind = self.kindOf(st);
         let mut ink : Tint = st.color;
         if (self.props.tinted) {
             ink = Tint::hexA(self.props.color, self.props.opacity);

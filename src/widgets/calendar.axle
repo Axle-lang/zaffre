@@ -1,0 +1,640 @@
+// calendar — one month of days to choose from.
+//
+//     let day : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+//     new Calendar(DateProps { today: Dates::ymd(2026, 10, 20) }, day)
+//
+// Arrows turn the month; the title opens a grid of months (and turns years) so a far date is three
+// clicks away rather than fifty. A click chooses a day: it is filled with the brand colour, today is
+// outlined, and days outside `min` and `max` are dimmed and cannot be chosen. With a second model the
+// calendar chooses a range — the first click sets the start, the second the end — and the days between
+// are tinted as one band, previewed under the pointer while the end is still open.
+//
+// Keys: Up and Down enter the grid and move by a week, Left and Right by a day, Enter or Space chooses
+// the day under the ring, Page Up and Page Down turn the month. A picker's calendar also has a footer
+// with Clear and Today; it closes the panel once something is chosen.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::style::variants::Elevation;
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
+use crate::widgets::dates::{Dates, DateProps};
+
+/** Width of a calendar. */
+const CAL_WIDTH : f64 = 288.0;
+
+/** Space around the content. */
+const CAL_PAD : f64 = 12.0;
+
+/** Height of the bar with the month and the arrows. */
+const CAL_HEAD : f64 = 36.0;
+
+/** Side of an arrow button. */
+const CAL_NAV : f64 = 28.0;
+
+/** Height of the row of weekday letters. */
+const CAL_DAYS : f64 = 28.0;
+
+/** Height of a week. */
+const CAL_ROW : f64 = 34.0;
+
+/** Diameter of a day. */
+const CAL_DISC : f64 = 32.0;
+
+/** Height of the footer of a picker's calendar. */
+const CAL_FOOT : f64 = 48.0;
+
+/** Width of a footer button. */
+const CAL_LINK : f64 = 64.0;
+
+/** One month of days. */
+pub class Calendar : Control, Widget {
+    props : DateProps;
+    chosen : Shared<Model<i32>>;
+    ending : Shared<Model<i32>>;
+    open : Shared<Model<bool>>;
+    ranged : bool;
+    picker : bool;
+    year : i32 = 2026;
+    month : i32 = 1;
+    months : bool = false;
+    cursor : i32 = -2000000000;
+    seen : i32 = -2000000000;
+    hot : i32 = -1;
+    hotNav : i32 = 0;
+    hotTitle : bool = false;
+    hotFoot : i32 = 0;
+
+    /** A calendar choosing one day into `chosen`. */
+    constructor(own props : DateProps, chosen : Shared<Model<i32>>) {
+        super();
+        self.props = props;
+        self.chosen = chosen;
+        self.ending = new shared Model<i32>(Dates::NONE);
+        self.open = new shared Model<bool>(true);
+        self.ranged = false;
+        self.picker = false;
+        self.begin();
+    }
+
+    /** A calendar choosing a range into `chosen` (the start) and `ending` (the end). */
+    constructor(own props : DateProps, chosen : Shared<Model<i32>>, ending : Shared<Model<i32>>) {
+        super();
+        self.props = props;
+        self.chosen = chosen;
+        self.ending = ending;
+        self.open = new shared Model<bool>(true);
+        self.ranged = true;
+        self.picker = false;
+        self.begin();
+    }
+
+    /** A picker's calendar: it has a footer, and choosing a day clears `open`, which closes the panel. */
+    constructor(own props : DateProps, chosen : Shared<Model<i32>>, open : Shared<Model<bool>>, picker : bool) {
+        super();
+        self.props = props;
+        self.chosen = chosen;
+        self.ending = new shared Model<i32>(Dates::NONE);
+        self.open = open;
+        self.ranged = false;
+        self.picker = true;
+        self.begin();
+    }
+
+    /** A picker's calendar choosing a range; the panel closes when the end is chosen. */
+    constructor(own props : DateProps, chosen : Shared<Model<i32>>, ending : Shared<Model<i32>>, open : Shared<Model<bool>>) {
+        super();
+        self.props = props;
+        self.chosen = chosen;
+        self.ending = ending;
+        self.open = open;
+        self.ranged = true;
+        self.picker = true;
+        self.begin();
+    }
+
+    /** Turn to the month of the choice and remember it. */
+    pub(file) fn begin(mut self) : void {
+        self.seen = self.chosen.get();
+        self.showMonthOf(self.seen);
+    }
+
+    /** Turn to the month that holds `days`, or to today's month, or to January 2026. */
+    pub(file) fn showMonthOf(mut self, days : i32) : void {
+        let mut at : i32 = days;
+        if (at == Dates::NONE) {
+            at = self.props.today;
+        }
+        if (at == Dates::NONE) {
+            at = Dates::ymd(2026, 1, 1);
+        }
+        let (y, m, d) = Dates::civil(at);
+        self.year = y;
+        self.month = m;
+    }
+
+    // ─── Geometry ────────────────────────────────────────────────
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut h : f64 = CAL_HEAD + CAL_DAYS + CAL_ROW * 6.0 + 2.0 * CAL_PAD;
+        if (self.picker) {
+            h = h + CAL_FOOT - CAL_PAD;
+        }
+        return limits.constrain(Size { w: CAL_WIDTH, h: h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        // A calendar is as wide as it is: a column that stretches its children does not stretch it.
+        self.area = Bounds::make(area.x, area.y, Mathx::fmin(area.w, CAL_WIDTH), area.h);
+        if (self.focusable) {
+            if (self.token == 0) {
+                self.token = ctx.mint();
+            }
+            ctx.announce(self.token);
+        }
+    }
+
+    /** Where the weekday row starts: under the month bar. */
+    pub(file) fn gridTop(self) : f64 {
+        return self.area.y + CAL_PAD + CAL_HEAD;
+    }
+
+    /** The box of the previous (0) or next (1) arrow. */
+    pub(file) fn navBox(self, which : i32) : Bounds {
+        let a : Bounds = self.area;
+        let x : f64 = which == 0 ? a.x + CAL_PAD : a.right() - CAL_PAD - CAL_NAV;
+        return Bounds::make(x, a.y + CAL_PAD + (CAL_HEAD - CAL_NAV) * 0.5, CAL_NAV, CAL_NAV);
+    }
+
+    /** The text in the bar: the month and year, or the year over the month grid. */
+    pub(file) fn title(self) : string {
+        if (self.months) {
+            return Format::whole(self.year as f64);
+        }
+        return Dates::monthName(self.month) + " " + Format::whole(self.year as f64);
+    }
+
+    /** The box of the title, which is a button. */
+    pub(file) fn titleBox(self, ctx : Context) : Bounds {
+        let w : f64 = ctx.textWidth(FaceKind::Bold, self.title(), 14.0) + 34.0;
+        let a : Bounds = self.area;
+        return Bounds::make(a.midX() - w * 0.5, a.y + CAL_PAD + (CAL_HEAD - CAL_NAV) * 0.5, w, CAL_NAV);
+    }
+
+    /** The width of a day cell. */
+    pub(file) fn cellW(self) : f64 {
+        return (self.area.w - 2.0 * CAL_PAD) / 7.0;
+    }
+
+    /** The box of grid cell `i` (0..41, row by row from the Monday on or before the 1st). */
+    pub(file) fn cellBox(self, i : i32) : Bounds {
+        let w : f64 = self.cellW();
+        let col : f64 = (i % 7) as f64;
+        let row : f64 = (i / 7) as f64;
+        return Bounds::make(self.area.x + CAL_PAD + w * col, self.gridTop() + CAL_DAYS + CAL_ROW * row, w, CAL_ROW);
+    }
+
+    /** The box of cell `i` (0..11) of the grid of months. */
+    pub(file) fn monthBox(self, i : i32) : Bounds {
+        let w : f64 = (self.area.w - 2.0 * CAL_PAD) / 3.0;
+        let h : f64 = (CAL_DAYS + CAL_ROW * 6.0) / 4.0;
+        return Bounds::make(self.area.x + CAL_PAD + w * ((i % 3) as f64), self.gridTop() + h * ((i / 3) as f64), w, h);
+    }
+
+    /** The box of the footer button `which`: 0 for Clear, 1 for Today. */
+    pub(file) fn footBox(self, which : i32) : Bounds {
+        let a : Bounds = self.area;
+        let top : f64 = a.bottom() - CAL_FOOT + 8.0;
+        let x : f64 = which == 0 ? a.x + CAL_PAD : a.right() - CAL_PAD - CAL_LINK;
+        return Bounds::make(x, top, CAL_LINK, 32.0);
+    }
+
+    /** The day number in grid cell `i`, or NONE when the cell lies outside the month. */
+    pub(file) fn dayAt(self, i : i32) : i32 {
+        let first : i32 = Dates::ymd(self.year, self.month, 1);
+        let n : i32 = i - Dates::weekday(first) + 1;
+        if (n < 1 || n > Dates::daysIn(self.year, self.month)) {
+            return Dates::NONE;
+        }
+        return Dates::ymd(self.year, self.month, n);
+    }
+
+    /** The grid cell under (`x`, `y`), or -1. */
+    pub(file) fn cellAt(self, x : f64, y : f64) : i32 {
+        for (i of 0..42) {
+            if (self.dayAt(i) != Dates::NONE && self.cellBox(i).contains(x, y)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The month (0..11) of the grid of months under (`x`, `y`), or -1. */
+    pub(file) fn monthAt(self, x : f64, y : f64) : i32 {
+        for (i of 0..12) {
+            if (self.monthBox(i).contains(x, y)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Whether day `d` may be chosen. */
+    pub(file) fn allowed(self, d : i32) : bool {
+        return Dates::within(d, self.props.min, self.props.max);
+    }
+
+    // ─── Choosing ────────────────────────────────────────────────
+
+    /** Turn the month by `step`; over the grid of months, the year. */
+    pub(file) fn turn(mut self, step : i32) : void {
+        if (self.months) {
+            self.year = self.year + step;
+            return;
+        }
+        let at : i32 = Dates::addMonths(Dates::ymd(self.year, self.month, 1), step);
+        self.showMonthOf(at);
+    }
+
+    /** Close the panel of a picker. */
+    pub(file) fn dismiss(mut self) : void {
+        if (self.picker) {
+            self.open.set(false);
+        }
+    }
+
+    /** Take day `d` as the choice. */
+    pub(file) fn pick(mut self, ctx : Context, d : i32) : void {
+        if (!self.allowed(d)) {
+            return;
+        }
+        if (!self.ranged) {
+            self.chosen.set(d);
+            self.dismiss();
+        } else if (self.chosen.get() == Dates::NONE || self.ending.get() != Dates::NONE) {
+            self.chosen.set(d);
+            self.ending.set(Dates::NONE);
+        } else if (d < self.chosen.get()) {
+            self.ending.set(self.chosen.get());
+            self.chosen.set(d);
+            self.dismiss();
+        } else {
+            self.ending.set(d);
+            self.dismiss();
+        }
+        self.seen = self.chosen.get();
+        ctx.invalidate();
+    }
+
+    /** Empty the choice. */
+    pub(file) fn clear(mut self, ctx : Context) : void {
+        self.chosen.set(Dates::NONE);
+        self.ending.set(Dates::NONE);
+        self.seen = Dates::NONE;
+        self.dismiss();
+        ctx.invalidate();
+    }
+
+    /** Move the keyboard ring by `step` days, starting from the choice, today or the 1st. */
+    pub(file) fn moveCursor(mut self, ctx : Context, step : i32) : void {
+        let mut at : i32 = self.cursor;
+        let mut by : i32 = step;
+        if (at == Dates::NONE) {
+            at = self.chosen.get();
+            by = 0;
+        }
+        if (at == Dates::NONE) {
+            at = self.props.today;
+        }
+        if (at == Dates::NONE) {
+            at = Dates::ymd(self.year, self.month, 1);
+        }
+        self.cursor = at + by;
+        self.months = false;
+        self.showMonthOf(self.cursor);
+        ctx.invalidate();
+    }
+
+    pub(file) fn onKey(mut self, ctx : Context, e : UiEvent) : bool {
+        if (e.key == Key::PageUp || e.key == Key::PageDown) {
+            self.turn(e.key == Key::PageUp ? -1 : 1);
+            ctx.invalidate();
+            return true;
+        }
+        if (e.key == Key::Down || e.key == Key::Up) {
+            self.moveCursor(ctx, e.key == Key::Down ? 7 : -7);
+            return true;
+        }
+        // A picker leaves Left and Right to the text field until the ring is in the grid.
+        if (self.picker && self.cursor == Dates::NONE) {
+            return false;
+        }
+        if (e.key == Key::Left || e.key == Key::Right) {
+            self.moveCursor(ctx, e.key == Key::Left ? -1 : 1);
+            return true;
+        }
+        if ((e.key == Key::Enter || e.key == Key::Space) && self.cursor != Dates::NONE) {
+            self.pick(ctx, self.cursor);
+            return true;
+        }
+        return false;
+    }
+
+    // ─── Events ──────────────────────────────────────────────────
+
+    /** Work out what the pointer is over. */
+    pub(file) fn track(mut self, ctx : Context, e : UiEvent) : void {
+        let before : i32 = self.hot * 1000 + self.hotNav * 100 + self.hotFoot * 10 + (self.hotTitle ? 1 : 0);
+        self.hot = -1;
+        self.hotNav = 0;
+        self.hotFoot = 0;
+        self.hotTitle = false;
+        if (self.hovered) {
+            if (self.months) {
+                self.hot = self.monthAt(e.x, e.y);
+            } else {
+                self.hot = self.cellAt(e.x, e.y);
+                if (self.hot >= 0 && !self.allowed(self.dayAt(self.hot))) {
+                    self.hot = -1;
+                }
+            }
+            if (self.navBox(0).contains(e.x, e.y)) {
+                self.hotNav = 1;
+            } else if (self.navBox(1).contains(e.x, e.y)) {
+                self.hotNav = 2;
+            }
+            self.hotTitle = self.titleBox(ctx).contains(e.x, e.y);
+            if (self.picker && self.footBox(0).contains(e.x, e.y)) {
+                self.hotFoot = 1;
+            } else if (self.picker && !self.ranged && self.footBox(1).contains(e.x, e.y)) {
+                self.hotFoot = 2;
+            }
+            if (self.hot >= 0 || self.hotNav > 0 || self.hotTitle || self.hotFoot > 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        let after : i32 = self.hot * 1000 + self.hotNav * 100 + self.hotFoot * 10 + (self.hotTitle ? 1 : 0);
+        if (after != before) {
+            ctx.invalidate();
+        }
+    }
+
+    pub(file) fn onClick(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.navBox(0).contains(e.x, e.y)) {
+            self.turn(-1);
+            return true;
+        }
+        if (self.navBox(1).contains(e.x, e.y)) {
+            self.turn(1);
+            return true;
+        }
+        if (self.titleBox(ctx).contains(e.x, e.y)) {
+            self.months = !self.months;
+            return true;
+        }
+        if (self.picker && self.footBox(0).contains(e.x, e.y)) {
+            self.clear(ctx);
+            return true;
+        }
+        if (self.picker && !self.ranged && self.footBox(1).contains(e.x, e.y)) {
+            self.pick(ctx, self.props.today);
+            self.showMonthOf(self.props.today);
+            return true;
+        }
+        if (self.months) {
+            let m : i32 = self.monthAt(e.x, e.y);
+            if (m >= 0) {
+                self.month = m + 1;
+                self.months = false;
+                return true;
+            }
+            return false;
+        }
+        let i : i32 = self.cellAt(e.x, e.y);
+        if (i >= 0) {
+            self.pick(ctx, self.dayAt(i));
+            return true;
+        }
+        return false;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.track(ctx, e);
+        }
+        if (g == Gesture::Click && self.onClick(ctx, e)) {
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && (self.isFocused(ctx) || self.picker)) {
+            if (self.onKey(ctx, e)) {
+                return true;
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        // The choice moved from outside (a typed date): follow it.
+        let now : i32 = self.chosen.get();
+        if (now != self.seen) {
+            self.seen = now;
+            if (now != Dates::NONE) {
+                self.showMonthOf(now);
+                self.months = false;
+            }
+            self.cursor = Dates::NONE;
+            ctx.invalidate();
+        }
+        return self.animate(ctx, dt);
+    }
+
+    // ─── Painting ────────────────────────────────────────────────
+
+    /** The month bar: arrows, and the title that opens the months. */
+    pub(file) fn paintHead(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusInline;
+        let tb : Bounds = self.titleBox(ctx);
+        if (self.hotTitle || self.months) {
+            p.fillRound(tb.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        let title : string = self.title();
+        let tw : f64 = ctx.textWidth(FaceKind::Bold, title, 14.0);
+        let base : f64 = ctx.baselineIn(FaceKind::Bold, 14.0, tb.y, tb.h);
+        p.text(FaceKind::Bold, title, tb.x + 10.0, base, 14.0, pal.text);
+        let chevron : IconKind = self.months ? IconKind::ChevronUp : IconKind::ChevronDown;
+        Icons::draw(p, chevron, tb.x + 10.0 + tw + 4.0, tb.midY() - 6.0, 12.0, pal.textFaint);
+        for (n of 0..2) {
+            let box : Bounds = self.navBox(n);
+            if (self.hotNav == n + 1) {
+                p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            let icon : IconKind = n == 0 ? IconKind::ChevronLeft : IconKind::ChevronRight;
+            Icons::draw(p, icon, box.midX() - 8.0, box.midY() - 8.0, 16.0, pal.textDim);
+        }
+    }
+
+    /** The grid of months, with the current one filled. */
+    pub(file) fn paintMonths(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusControl;
+        let (cy, cm, cd) = Dates::civil(self.chosen.get() == Dates::NONE ? 0 : self.chosen.get());
+        let (ty, tm, td) = Dates::civil(self.props.today == Dates::NONE ? 0 : self.props.today);
+        for (i of 0..12) {
+            let cell : Bounds = self.monthBox(i);
+            let box : Bounds = Bounds::make(cell.x + 4.0, cell.y + 7.0, cell.w - 8.0, cell.h - 14.0);
+            let label : string = Dates::monthShort(i + 1);
+            let isChosen : bool = self.chosen.get() != Dates::NONE && cy == self.year && cm == i + 1;
+            let isToday : bool = self.props.today != Dates::NONE && ty == self.year && tm == i + 1;
+            let mut ink : Tint = pal.text;
+            let mut kind : FaceKind = FaceKind::Medium;
+            if (isChosen) {
+                p.fillRound(box.round(radius), Brush::solid(pal.primary.s500.rgb, 255));
+                ink = Tint::hex(0xFFFFFF);
+                kind = FaceKind::Bold;
+            } else if (i == self.hot) {
+                p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            if (isToday && !isChosen) {
+                p.strokeRound(box.round(radius), 1.0, Brush::solid(pal.primary.s500.rgb, 255));
+                ink = pal.softPrimary.fg;
+            }
+            let lw : f64 = ctx.textWidth(kind, label, 14.0);
+            p.text(kind, label, box.midX() - lw * 0.5, ctx.baselineIn(kind, 14.0, box.y, box.h), 14.0, ink);
+        }
+    }
+
+    /** The band behind a run of days, as a stripe across the cells it covers. */
+    pub(file) fn paintBand(self, ctx : Context, p : Painter, cell : Bounds, left : bool, right : bool) : void {
+        let tone = ctx.theme.palette.softPrimary.hover;
+        let top : f64 = cell.midY() - CAL_DISC * 0.5;
+        // Whole cells overlap their neighbours by half a pixel, so no seam shows between them.
+        let x0 : f64 = left ? cell.x - 0.5 : cell.midX();
+        let x1 : f64 = right ? cell.right() + 0.5 : cell.midX();
+        p.fillRound(Bounds::make(x0, top, x1 - x0, CAL_DISC).round(0.0), Brush::solid(tone.rgb, tone.a));
+    }
+
+    /** One day cell. */
+    pub(file) fn paintDay(self, ctx : Context, p : Painter, i : i32, d : i32, reach : i32) : void {
+        let pal = ctx.theme.palette;
+        let start : i32 = self.chosen.get();
+        let stop : i32 = self.ranged ? self.ending.get() : Dates::NONE;
+        let cell : Bounds = self.cellBox(i);
+        let disc : RRect = RRect::uniform(cell.midX() - CAL_DISC * 0.5, cell.midY() - CAL_DISC * 0.5, CAL_DISC, CAL_DISC, CAL_DISC * 0.5);
+        let isStart : bool = d == start;
+        let isStop : bool = stop != Dates::NONE && d == stop;
+        let inside : bool = reach != Dates::NONE && start != Dates::NONE && d > start && d < reach;
+        let mut ink : Tint = pal.text;
+        let mut kind : FaceKind = FaceKind::Sans;
+        let off : bool = !self.allowed(d);
+        if (inside) {
+            self.paintBand(ctx, p, cell, true, true);
+            ink = pal.softPrimary.fg;
+        }
+        if (reach != Dates::NONE && start != Dates::NONE && reach > start) {
+            if (isStart) {
+                self.paintBand(ctx, p, cell, false, true);
+            } else if (d == reach) {
+                self.paintBand(ctx, p, cell, true, false);
+            }
+        }
+        if (isStart || isStop) {
+            p.fillRound(disc, Brush::solid(pal.primary.s500.rgb, 255));
+            ink = Tint::hex(0xFFFFFF);
+            kind = FaceKind::Bold;
+        } else if (i == self.hot) {
+            p.fillRound(disc, Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        if (d == self.props.today && !isStart && !isStop) {
+            p.strokeRound(disc, 1.0, Brush::solid(pal.primary.s500.rgb, 255));
+            ink = pal.softPrimary.fg;
+            kind = FaceKind::Bold;
+        }
+        if (d == self.cursor && (self.isFocused(ctx) || self.picker)) {
+            p.strokeRound(RRect::uniform(disc.x - 2.0, disc.y - 2.0, CAL_DISC + 4.0, CAL_DISC + 4.0, CAL_DISC * 0.5 + 2.0), 2.0, Brush::solid(pal.primary.s500.rgb, 160));
+        }
+        if (off) {
+            ink = pal.textOff;
+        }
+        let label : string = Format::whole(Dates::day(d) as f64);
+        let lw : f64 = ctx.textWidth(kind, label, 14.0);
+        p.text(kind, label, cell.midX() - lw * 0.5, ctx.baselineIn(kind, 14.0, cell.y, cell.h), 14.0, ink);
+    }
+
+    /** The weekday letters and the days. */
+    pub(file) fn paintDays(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let letters : string[] = ["M", "T", "W", "T", "F", "S", "S"];
+        let w : f64 = self.cellW();
+        for (c of 0..7) {
+            let lw : f64 = ctx.textWidth(FaceKind::Medium, letters[c as i64], 11.0);
+            let x : f64 = self.area.x + CAL_PAD + w * (c as f64) + (w - lw) * 0.5;
+            p.text(FaceKind::Medium, letters[c as i64], x, ctx.baselineIn(FaceKind::Medium, 11.0, self.gridTop(), CAL_DAYS), 11.0, pal.textFaint);
+        }
+        // While the end of a range is still open, the day under the pointer previews it.
+        let start : i32 = self.chosen.get();
+        let mut reach : i32 = self.ranged ? self.ending.get() : Dates::NONE;
+        if (self.ranged && start != Dates::NONE && reach == Dates::NONE && self.hot >= 0) {
+            let under : i32 = self.dayAt(self.hot);
+            if (under != Dates::NONE && under > start) {
+                reach = under;
+            }
+        }
+        for (i of 0..42) {
+            let d : i32 = self.dayAt(i);
+            if (d != Dates::NONE) {
+                self.paintDay(ctx, p, i, d, reach);
+            }
+        }
+    }
+
+    /** The footer of a picker's calendar: Clear, and Today. */
+    pub(file) fn paintFoot(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusInline;
+        let a : Bounds = self.area;
+        let y : f64 = a.bottom() - CAL_FOOT;
+        p.line(a.x, y, a.right(), y, 1.0, pal.line);
+        for (n of 0..2) {
+            if (n == 1 && self.ranged) {
+                continue;
+            }
+            let box : Bounds = self.footBox(n);
+            let label : string = n == 0 ? "Clear" : "Today";
+            let mut ink : Tint = n == 0 ? pal.textDim : pal.softPrimary.fg;
+            if (self.hotFoot == n + 1) {
+                p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+                ink = n == 0 ? pal.text : pal.softPrimary.fg;
+            }
+            let lw : f64 = ctx.textWidth(FaceKind::Medium, label, 13.0);
+            p.text(FaceKind::Medium, label, box.midX() - lw * 0.5, ctx.baselineIn(FaceKind::Medium, 13.0, box.y, box.h), 13.0, ink);
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.props.framed && !self.picker) {
+            let rr : RRect = self.area.round(ctx.theme.metrics.radiusSurface);
+            Surfaces::draw(p, rr, self.area, ctx.theme.panel(Elevation::Raised));
+        }
+        self.paintHead(ctx, p);
+        if (self.months) {
+            self.paintMonths(ctx, p);
+        } else {
+            self.paintDays(ctx, p);
+        }
+        if (self.picker) {
+            self.paintFoot(ctx, p);
+        }
+    }
+}

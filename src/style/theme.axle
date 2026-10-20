@@ -64,7 +64,7 @@ pub class Theme {
     pub badges : BadgeStyle[] = malloc<BadgeStyle>(36 as i64);
     pub progress : ProgressStyle[] = malloc<ProgressStyle>(5 as i64);
     pub items : ItemStyle[] = malloc<ItemStyle>(5 as i64);
-    pub texts : TextStyle[] = malloc<TextStyle>(10 as i64);
+    pub texts : TextStyle[] = malloc<TextStyle>(12 as i64);
 
     /** A theme that switches between two palettes, starting in the dark one when `startDark`. */
     constructor(dark : Palette, light : Palette, metrics : Metrics, startDark : bool) {
@@ -266,7 +266,7 @@ pub class Theme {
                 }
             }
         }
-        for (r of 0..10) {
+        for (r of 0..12) {
             self.texts[r as i64] = self.makeText(r);
         }
     }
@@ -639,7 +639,7 @@ pub class Theme {
             return TextStyle { px: m.fontXs, bold: false, mono: false, color: p.textFaint };
         }
         if (r == 4) {
-            return TextStyle { px: m.fontMd, bold: true, mono: false, color: p.text };
+            return TextStyle { px: m.fontMd, bold: false, mono: false, color: p.text };
         }
         if (r == 5) {
             return TextStyle { px: m.fontH3, bold: true, mono: false, color: p.text };
@@ -655,6 +655,12 @@ pub class Theme {
         }
         if (r == 9) {
             return TextStyle { px: m.fontMd, bold: true, mono: false, color: p.text };
+        }
+        if (r == 10) {
+            return TextStyle { px: m.fontLg, bold: true, mono: false, color: p.text };
+        }
+        if (r == 11) {
+            return TextStyle { px: m.fontSm, bold: false, mono: false, color: p.textDim };
         }
         return TextStyle { px: m.fontMd, bold: false, mono: false, color: p.text };
     }

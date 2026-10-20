@@ -1,7 +1,7 @@
 // feedback — messages, badges, progress, and placeholders for what has not loaded yet.
 
 use zaffre::{
-    Notifier, Alert, Banner, BannerProps, Callout, Badge, BadgeProps, StatusPill, Tag, TagProps, Kbd, Dot,
+    Notifier, LatencyIndicator, Eyebrow, Alert, Banner, BannerProps, Callout, Badge, BadgeProps, StatusPill, Tag, TagProps, Kbd, Dot,
     ProgressBar, ProgressRing, RingProps, Spinner, Skeleton, EmptyState, EmptyProps, Button, ButtonProps,
     Column, Row, Widget, FlexProps, Label,
     Tone, BadgeLook, BadgeSize, BannerLook, SkeletonShape, ControlSize, ButtonKind, TextRole, IconKind,
@@ -79,6 +79,10 @@ fn labels() : Column {
         new Tag(TagProps { text: "draft" }),
         new Kbd("Ctrl K"),
         new Dot(Tone::Ok, 12.0, true),
+        new LatencyIndicator(4, Tone::Ok),
+        new LatencyIndicator(2, Tone::Warn),
+        new LatencyIndicator(1, Tone::Danger),
+        new Eyebrow("New in 2.4", Tone::Accent),
     ];
     let kids : dyn Widget[] = [lineup(subtle), lineup(solid), lineup(small)];
     return stacked(kids);
@@ -135,16 +139,40 @@ fn empty(notes : Shared<Notifier>) : Column {
         },
         create
     );
-    let kids : dyn Widget[] = [nothing, toasts(notes)];
+    let kids : dyn Widget[] = [outcomes(nothing), toasts(notes)];
     return stacked(kids);
+}
+
+/** An empty state and two results, which are the same widget with a tone. */
+fn outcomes(own nothing : EmptyState) : Row {
+    let paid = new EmptyState(
+        EmptyProps {
+            icon: IconKind::Check,
+            tone: Tone::Ok,
+            title: "Payment received",
+            description: "A receipt is on its way to your inbox.",
+        },
+        new Button(ButtonProps { label: "Back to billing", kind: ButtonKind::Outline })
+    );
+    let failed = new EmptyState(
+        EmptyProps {
+            icon: IconKind::Warning,
+            tone: Tone::Danger,
+            title: "Something went wrong",
+            description: "The request did not go through. Nothing was charged.",
+        },
+        new Button(ButtonProps { label: "Try again", kind: ButtonKind::Danger })
+    );
+    let kids : dyn Widget[] = [nothing, paid, failed];
+    return new Row(FlexProps { gap: 24.0, align: Align::Start }, kids);
 }
 
 /** Buttons that open a toast of each tone. */
 fn toasts(notes : Shared<Notifier>) : Row {
     let kids : dyn Widget[] = [
-        new Button(ButtonProps { label: "Success toast", kind: ButtonKind::Success }, () => notes.toast("Saved", Tone::Ok)),
-        new Button(ButtonProps { label: "Info toast", kind: ButtonKind::Outline }, () => notes.toast("A new version is available", Tone::Info)),
-        new Button(ButtonProps { label: "Warning toast", kind: ButtonKind::Important }, () => notes.toast("Low battery", Tone::Warn)),
+        new Button(ButtonProps { label: "Success toast", kind: ButtonKind::Success }, () => notes.notify("Changes saved", "Your profile is up to date.", Tone::Ok)),
+        new Button(ButtonProps { label: "Info toast", kind: ButtonKind::Outline }, () => notes.notify("Update available", "Version 2.4 is ready to install.", Tone::Info)),
+        new Button(ButtonProps { label: "Warning toast", kind: ButtonKind::Important }, () => notes.notify("Low battery", "12% left. Plug in soon.", Tone::Warn)),
         new Button(ButtonProps { label: "Error toast", kind: ButtonKind::Danger }, () => notes.toast("Could not connect", Tone::Danger)),
     ];
     return lineup(kids);

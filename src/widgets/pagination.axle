@@ -238,8 +238,8 @@ pub class Pagination : Control, Widget {
                 if (active) {
                     ink = Tint::hex(0xFFFFFF);
                 }
-                let tw : f64 = ctx.textWidth(FaceKind::Bold, label, 14.0);
-                p.text(FaceKind::Bold, label, box.x + (w - tw) * 0.5, ctx.baselineIn(FaceKind::Bold, 14.0, box.y, box.h), 14.0, ink);
+                let tw : f64 = ctx.textWidth(FaceKind::Medium, label, 14.0);
+                p.text(FaceKind::Medium, label, box.x + (w - tw) * 0.5, ctx.baselineIn(FaceKind::Medium, 14.0, box.y, box.h), 14.0, ink);
             }
             if (self.ringShown(ctx) && active) {
                 let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());

@@ -110,7 +110,7 @@ pub class Stat : Base, Widget {
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let mut w : f64 = ctx.textWidth(FaceKind::Bold, self.props.value, STAT_VALUE_PX);
-        w = Mathx::fmax(w, ctx.textWidth(FaceKind::Sans, self.props.label, STAT_SMALL_PX) + 8.0);
+        w = Mathx::fmax(w, ctx.textWidth(FaceKind::Medium, self.props.label, STAT_SMALL_PX) + 8.0);
         w = Mathx::fmax(w + 2.0 * STAT_PAD, 160.0);
         let want : f64 = self.props.width.resolve(limits.maxW, w);
         let mut h : f64 = 2.0 * STAT_PAD + self.headH(ctx);
@@ -163,9 +163,9 @@ pub class Stat : Base, Widget {
         }
         let x : f64 = a.x + STAT_PAD;
         let mut y : f64 = a.y + STAT_PAD;
-        let lh : f64 = ctx.lineHeight(FaceKind::Sans, STAT_SMALL_PX);
-        let base : f64 = ctx.baselineIn(FaceKind::Sans, STAT_SMALL_PX, y, lh);
-        p.text(FaceKind::Sans, self.props.label, x, base, STAT_SMALL_PX, label);
+        let lh : f64 = ctx.lineHeight(FaceKind::Medium, STAT_SMALL_PX);
+        let base : f64 = ctx.baselineIn(FaceKind::Medium, STAT_SMALL_PX, y, lh);
+        p.text(FaceKind::Medium, self.props.label, x, base, STAT_SMALL_PX, label);
         y = y + lh + 6.0;
         let vh : f64 = ctx.lineHeight(FaceKind::Bold, STAT_VALUE_PX);
         p.text(FaceKind::Bold, self.props.value, x, ctx.baselineIn(FaceKind::Bold, STAT_VALUE_PX, y, vh), STAT_VALUE_PX, value);

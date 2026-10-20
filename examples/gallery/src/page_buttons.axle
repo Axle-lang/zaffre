@@ -1,7 +1,7 @@
 // buttons — every kind of button, at every size, and in each state.
 
 use zaffre::{
-    Button, ButtonProps, Label, Tooltip, MenuButton, MenuEntry, Notifier, Widget, Column, Row,
+    Button, ButtonProps, ButtonGroup, SplitButton, Label, Tooltip, MenuButton, MenuEntry, Notifier, Widget, Column, Row,
     FlexProps, TextRole, ButtonKind, ControlSize, IconKind, Tone, Length, Align, Insets, Justify,
 };
 use kit::{section, half, lineup, stacked, side, pageOf, note};
@@ -147,12 +147,50 @@ fn extras(notes : Shared<Notifier>) : Row {
     return lineup(kids);
 }
 
+/** A button for a group: of `kind`, saying `label`. */
+fn member(label : string, kind : ButtonKind) : Button {
+    return new Button(ButtonProps { label: label, kind: kind });
+}
+
+/** Attached buttons: a segmented group, a filled group, and a button with a menu of alternatives. */
+fn groups(notes : Shared<Notifier>) : Row {
+    let views : Button[] = [
+        member("Day", ButtonKind::Outline),
+        member("Week", ButtonKind::Outline),
+        member("Month", ButtonKind::Outline),
+    ];
+    let filled : Button[] = [
+        member("Back", ButtonKind::Secondary),
+        member("Pause", ButtonKind::Secondary),
+        member("Next", ButtonKind::Secondary),
+    ];
+    let entries : MenuEntry[] = [
+        MenuEntry { label: "Deploy to staging", icon: IconKind::Cloud },
+        MenuEntry { label: "Deploy to production", icon: IconKind::Upload },
+        MenuEntry { separator: true },
+        MenuEntry { label: "Schedule…", icon: IconKind::Clock },
+    ];
+    let split = new SplitButton(
+        ButtonProps {
+            label: "Deploy",
+            kind: ButtonKind::Primary,
+            icon: IconKind::Upload,
+        },
+        () => notes.toast("Deploying…", Tone::Ok),
+        entries,
+        (i : i32) => notes.toast("Picked a way to deploy", Tone::Info)
+    );
+    let row : dyn Widget[] = [new ButtonGroup(views), new ButtonGroup(filled), split];
+    return lineup(row);
+}
+
 /** The page. */
 pub fn buttonsPage(notes : Shared<Notifier>) : Column {
     let kids : dyn Widget[] = [
         section("Kinds", "Loud for the one action a page is for, quiet for the rest.", kinds()),
         section("Sizes", "Heights of 32, 36, 40, 48 and 56 pixels.", sizes()),
         section("Icons", "Before the label, after it, or alone as a square.", icons()),
+        section("Groups", "Buttons attached into one control, and a main action with a menu of alternatives.", groups(notes)),
         section("States", "A busy button shows the wait cursor; a disabled one the not-allowed cursor.", states()),
         section("Menus and tooltips", "A menu opens under its button; a tooltip appears after the pointer rests.", extras(notes)),
     ];

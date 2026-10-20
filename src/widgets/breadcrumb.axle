@@ -60,7 +60,7 @@ pub class Breadcrumb : Control, Widget {
         for (i of 0..self.count) {
             let mut kind : FaceKind = FaceKind::Sans;
             if (i == self.count - 1) {
-                kind = FaceKind::Bold;
+                kind = FaceKind::Medium;
             }
             let w : f64 = ctx.textWidth(kind, self.items[i as i64], CRUMB_PX);
             self.left[i as i64] = x;
@@ -119,7 +119,7 @@ pub class Breadcrumb : Control, Widget {
             let mut kind : FaceKind = FaceKind::Sans;
             let mut ink : Tint = pal.textDim;
             if (last) {
-                kind = FaceKind::Bold;
+                kind = FaceKind::Medium;
                 ink = pal.text;
             } else if (i == self.hot) {
                 ink = pal.text;

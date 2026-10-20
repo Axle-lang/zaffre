@@ -127,6 +127,12 @@ pub enum TextRole : i32 {
 
     /** Body text in bold: the title of an alert, a name in a list. */
     Strong = 9,
+
+    /** The title of a dialog or a sheet: 16 px, bold. */
+    Title = 10,
+
+    /** Supporting text under a title: 13 px, the secondary colour. */
+    Note = 11,
 }
 
 /** How much a surface stands out from the page. */

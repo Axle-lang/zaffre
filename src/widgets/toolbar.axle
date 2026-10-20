@@ -176,12 +176,12 @@ pub class Toolbar : Control, Widget {
         // The tip, once the pointer has rested.
         if (self.hot >= 0 && ctx.now - self.since >= TOOL_DELAY && self.items[self.hot as i64].tip.byteLength > 0) {
             let tip : string = self.items[self.hot as i64].tip;
-            let w : f64 = ctx.textWidth(FaceKind::Bold, tip, 12.0) + 20.0;
+            let w : f64 = ctx.textWidth(FaceKind::Medium, tip, 12.0) + 20.0;
             let x : f64 = a.x + self.lefts[self.hot as i64] + TOOL_SIDE * 0.5 - w * 0.5;
             let box : Bounds = Bounds::make(x, a.bottom() + 6.0, w, 26.0);
             let rr : RRect = box.round(ctx.theme.metrics.radiusInline);
             p.fillRound(rr, Brush::solid(pal.inverse.rgb, pal.inverse.a));
-            p.text(FaceKind::Bold, tip, box.x + 10.0, ctx.baselineIn(FaceKind::Bold, 12.0, box.y, box.h), 12.0, pal.inverseText);
+            p.text(FaceKind::Medium, tip, box.x + 10.0, ctx.baselineIn(FaceKind::Medium, 12.0, box.y, box.h), 12.0, pal.inverseText);
         }
     }
 }

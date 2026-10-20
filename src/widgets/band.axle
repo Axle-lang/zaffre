@@ -53,6 +53,9 @@ pub struct BandProps {
 
     /** Whether the bottom corners follow the surface's radius. */
     pub roundBottom : bool = false;
+
+    /** The corner radius to follow; negative takes the theme's surface radius. */
+    pub radius : f64 = -1.0;
 }
 
 /** A padded, filled strip around one child. */
@@ -83,7 +86,10 @@ pub class Band : Base, Widget {
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let pal = ctx.theme.palette;
         let a : Bounds = self.area;
-        let r : f64 = ctx.theme.metrics.radiusSurface;
+        let mut r : f64 = ctx.theme.metrics.radiusSurface;
+        if (self.props.radius >= 0.0) {
+            r = self.props.radius;
+        }
         if (self.props.fill == BandFill::Raised) {
             let top : f64 = self.props.roundTop ? r : 0.0;
             let bottom : f64 = self.props.roundBottom ? r : 0.0;

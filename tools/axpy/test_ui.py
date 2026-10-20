@@ -318,7 +318,7 @@ key(ov, z.Key.Enter); settle(ov, 40)
 check("Enter confirms", log == ["no", "yes"] and d2.done(), log)
 click(ov, ask_btn); settle(ov, 5); ov.layout(); settle(ov, 40)
 d3 = [o for o in ov.overlays[:ov.used] if isinstance(o, z.Dialog) and not o.done()][0]
-cb = d3.kid[0].kids[2].kids[2]       # the confirm button of the card's last row
+cb = d3.kid[0].kids[2].kid[0].kids[2]    # the confirm button in the footer band
 click(ov, cb); settle(ov, 40)
 check("clicking the confirm button confirms", log == ["no", "yes", "yes"] and d3.done(), log)
 click(ov, ask_btn); settle(ov, 5); ov.layout(); settle(ov, 60)

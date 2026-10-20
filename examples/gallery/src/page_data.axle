@@ -1,7 +1,7 @@
 // data — key figures, a table, lists, a timeline, and charts.
 
 use zaffre::{
-    Model, Stat, StatProps, StatLook, Sparkline, Table, TableProps, TableColumn, Label, Badge, Avatar,
+    Model, Order, SortableList, SortableProps, TransferList, TransferProps, Stat, StatProps, StatLook, Sparkline, Table, TableProps, TableColumn, Label, Badge, Avatar,
     ItemList, ItemListProps, ListEntry, DescriptionList, Timeline, TimelineEntry, LineChart, BarChart,
     DonutChart, DonutProps, BarList, ChartProps, Scroll, Column, Row, Widget, FlexProps, LabelProps,
     Tone, TextRole, IconKind, Length, Align, Insets, Justify,
@@ -130,6 +130,22 @@ fn shares() : Column {
     return stacked(kids);
 }
 
+/** A list put in order by dragging. */
+fn sorting(demo : Demo) : Column {
+    let order = demo.order;
+    let steps : string[] = ["Design", "Build", "Test", "Review", "Ship"];
+    let kids : dyn Widget[] = [new SortableList(SortableProps { }, steps, order)];
+    return stacked(kids);
+}
+
+/** Two lists with arrows between them. */
+fn transfer(demo : Demo) : Column {
+    let rights = demo.rights;
+    let perms : string[] = ["Read", "Write", "Comment", "Delete", "Invite", "Admin"];
+    let kids : dyn Widget[] = [new TransferList(TransferProps { rows: 5 }, perms, rights)];
+    return stacked(kids);
+}
+
 /** The page. */
 pub fn dataPage(demo : Demo) : Column {
     let lower : dyn Widget[] = [
@@ -140,11 +156,16 @@ pub fn dataPage(demo : Demo) : Column {
         half("Trends", "Lines and bars over the same data; hover for the figures.", charts()),
         half("Shares", "A donut and a ranked list.", shares()),
     ];
+    let ordering : dyn Widget[] = [
+        half("Sortable list", "Drag a row to move it, or press Space and use the arrows.", sorting(demo)),
+        half("Transfer list", "Tick rows and carry them across.", transfer(demo)),
+    ];
     let rows : dyn Widget[] = [
         figures(),
         section("People", "Sort by a column, pick a row. Cells are widgets: an avatar, a badge.", people(demo)),
         side(lower),
         section("Activity", "A timeline of what happened.", history()),
+        side(ordering),
         side(charted),
     ];
     return pageOf(rows);

@@ -44,7 +44,7 @@ pub class Stepper : Control, Widget {
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let w : f64 = limits.boundedW() ? limits.maxW : 120.0 * (self.count as f64);
-        return limits.constrain(Size { w: w, h: STEP_DISC + 8.0 + ctx.lineHeight(FaceKind::Bold, STEP_PX) });
+        return limits.constrain(Size { w: w, h: STEP_DISC + 8.0 + ctx.lineHeight(FaceKind::Medium, STEP_PX) });
     }
 
     /** The x of the middle of stage `i`. */
@@ -128,9 +128,9 @@ pub class Stepper : Control, Widget {
             if (done || active) {
                 ink = pal.text;
             }
-            let lw : f64 = ctx.textWidth(FaceKind::Bold, self.titles[i as i64], STEP_PX);
+            let lw : f64 = ctx.textWidth(FaceKind::Medium, self.titles[i as i64], STEP_PX);
             let ly : f64 = a.y + STEP_DISC + 8.0;
-            p.text(FaceKind::Bold, self.titles[i as i64], cx - lw * 0.5, ctx.baselineIn(FaceKind::Bold, STEP_PX, ly, a.bottom() - ly), STEP_PX, ink);
+            p.text(FaceKind::Medium, self.titles[i as i64], cx - lw * 0.5, ctx.baselineIn(FaceKind::Medium, STEP_PX, ly, a.bottom() - ly), STEP_PX, ink);
         }
     }
 }

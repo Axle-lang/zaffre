@@ -54,8 +54,8 @@ pub class TipOverlay : Base, Widget {
 
     pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
         self.area = area;
-        let w : f64 = ctx.textWidth(FaceKind::Bold, self.text, TIP_PX) + 2.0 * TIP_PAD_X;
-        let h : f64 = ctx.lineHeight(FaceKind::Bold, TIP_PX) + 2.0 * TIP_PAD_Y;
+        let w : f64 = ctx.textWidth(FaceKind::Medium, self.text, TIP_PX) + 2.0 * TIP_PAD_X;
+        let h : f64 = ctx.lineHeight(FaceKind::Medium, TIP_PX) + 2.0 * TIP_PAD_Y;
         let mut y : f64 = self.anchor.bottom() + 8.0;
         self.above = false;
         if (y + h > area.bottom() - 6.0 && self.anchor.y - 8.0 - h >= area.y + 6.0) {
@@ -114,8 +114,8 @@ pub class TipOverlay : Base, Widget {
         let chip : PanelStyle = ctx.theme.panel(Elevation::Overlay);
         p.shadow(rr, 0.0, chip.shadowDy, chip.shadowBlur, chip.shadowSpread, chip.shadow);
         p.fillRound(rr, Brush::solid(pal.inverse.rgb, pal.inverse.a));
-        let base : f64 = ctx.baselineIn(FaceKind::Bold, TIP_PX, b.y, b.h);
-        p.text(FaceKind::Bold, self.text, b.x + TIP_PAD_X, base, TIP_PX, pal.inverseText);
+        let base : f64 = ctx.baselineIn(FaceKind::Medium, TIP_PX, b.y, b.h);
+        p.text(FaceKind::Medium, self.text, b.x + TIP_PAD_X, base, TIP_PX, pal.inverseText);
         p.setOpacity(prev);
     }
 }

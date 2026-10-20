@@ -66,6 +66,7 @@ fn doNothing() : void {
 pub class Button : Control, Widget {
     props : ButtonProps;
     onPress : () => void;
+    join : i32 = 0;
 
     /** A button labelled `label`, doing nothing yet. */
     constructor(label : string) {
@@ -121,11 +122,23 @@ pub class Button : Control, Widget {
         ctx.invalidate();
     }
 
+    /** Attach the button to its neighbours in a row: 1 for the first of a group, 2 for one in the middle, 3 for the last. */
+    pub fn attach(mut self, place : i32) : void {
+        self.join = place;
+    }
+
+    /** The button's outline in `box`: square at the sides that touch a neighbour. */
+    pub(file) fn shape(self, box : Bounds, r : f64) : RRect {
+        let left : f64 = (self.join == 2 || self.join == 3) ? 0.0 : r;
+        let right : f64 = (self.join == 1 || self.join == 2) ? 0.0 : r;
+        return RRect::corners(box.x, box.y, box.w, box.h, left, right, right, left);
+    }
+
     /** The width of the icon-and-label content, in pixels. */
     pub(file) fn contentWidth(self, ctx : Context, st : ButtonStyle) : f64 {
         let mut w : f64 = ctx.textWidth(FaceKind::Bold, self.props.label, st.px);
         if (!st.bold) {
-            w = ctx.textWidth(FaceKind::Sans, self.props.label, st.px);
+            w = ctx.textWidth(FaceKind::Medium, self.props.label, st.px);
         }
         if (self.props.icon != IconKind::None || self.props.loading) {
             w = w + st.px * 1.2;
@@ -183,7 +196,7 @@ pub class Button : Control, Widget {
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let st : ButtonStyle = ctx.theme.button(self.props.kind, self.props.size);
         let a : Bounds = self.area;
-        let rr : RRect = a.round(st.radius);
+        let rr : RRect = self.shape(a, st.radius);
         let hv : i32 = self.hoverT.alpha();
         let pr : i32 = self.pressT.alpha();
         let off : bool = self.props.disabled;
@@ -214,10 +227,10 @@ pub class Button : Control, Widget {
         if (self.ringShown(ctx)) {
             let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
             let gap : f64 = ctx.theme.metrics.ringOffset;
-            p.strokeRound(a.grown(gap + ctx.theme.metrics.ring).round(st.radius + gap + ctx.theme.metrics.ring), ctx.theme.metrics.ring, Brush::solid(ring.rgb, ring.a));
+            p.strokeRound(self.shape(a.grown(gap + ctx.theme.metrics.ring), st.radius + gap + ctx.theme.metrics.ring), ctx.theme.metrics.ring, Brush::solid(ring.rgb, ring.a));
         }
         // Content: icon (or spinner) and label, centred as a group.
-        let mut kind : FaceKind = FaceKind::Sans;
+        let mut kind : FaceKind = FaceKind::Medium;
         if (st.bold) {
             kind = FaceKind::Bold;
         }

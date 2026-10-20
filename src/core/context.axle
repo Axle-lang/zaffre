@@ -101,6 +101,7 @@ pub class Context {
 
     /** The toasts showing, oldest first, by id; a toast's place on screen is its place in this list. */
     toasts : i64[] = malloc<i64>(8 as i64);
+    toastTall : f64[] = malloc<f64>(8 as i64);
     toastCount : i32 = 0;
     toastNext : i64 = 1;
 
@@ -168,16 +169,29 @@ pub class Context {
 
     // ─── Toasts ──────────────────────────────────────────────────
 
-    /** Register a toast that has begun to show; answers its id, or 0 when eight are already up. */
-    pub fn toastJoin(mut self) : i64 {
+    /** Register a toast `height` tall that has begun to show; answers its id, or 0 when eight are already up. */
+    pub fn toastJoin(mut self, height : f64) : i64 {
         if (self.toastCount >= 8) {
             return 0;
         }
         let id : i64 = self.toastNext;
         self.toastNext = self.toastNext + 1;
         self.toasts[self.toastCount as i64] = id;
+        self.toastTall[self.toastCount as i64] = height;
         self.toastCount = self.toastCount + 1;
         return id;
+    }
+
+    /** How far above the bottom margin toast `id` sits: the heights and gaps of the toasts before it. */
+    pub fn toastRise(self, id : i64) : f64 {
+        let mut rise : f64 = 0.0;
+        for (i of 0..self.toastCount) {
+            if (self.toasts[i as i64] == id) {
+                return rise;
+            }
+            rise = rise + self.toastTall[i as i64] + 10.0;
+        }
+        return rise;
     }
 
     /** Where toast `id` sits among the ones showing: 0 for the oldest. */
@@ -203,6 +217,7 @@ pub class Context {
         }
         for (i of at..(self.toastCount - 1)) {
             self.toasts[i as i64] = self.toasts[(i + 1) as i64];
+            self.toastTall[i as i64] = self.toastTall[(i + 1) as i64];
         }
         self.toastCount = self.toastCount - 1;
     }

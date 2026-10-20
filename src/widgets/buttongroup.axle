@@ -1,0 +1,205 @@
+// buttongroup — buttons attached into one control.
+//
+//     new ButtonGroup([
+//         new Button(ButtonProps { label: "Day", kind: ButtonKind::Outline }),
+//         new Button(ButtonProps { label: "Week", kind: ButtonKind::Outline }),
+//         new Button(ButtonProps { label: "Month", kind: ButtonKind::Outline }),
+//     ])
+//
+//     new SplitButton(ButtonProps { label: "Deploy", icon: IconKind::Plus }, () => deploy(), entries, (i : i32) => pick(i))
+//
+// A group squares the corners that touch a neighbour and lets the borders overlap by a pixel, so
+// the buttons read as one segmented control. A split button is a group of two: the main action and
+// a caret that opens a menu of the alternatives under both.
+
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::Brush;
+use crate::core::geometry::{Size, Bounds, Limits, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::style::styles::ButtonStyle;
+use crate::style::variants::{ButtonKind, ControlSize};
+use crate::widgets::button::{Button, ButtonProps};
+use crate::widgets::dropdown::{ActionMenu, MenuEntry};
+use crate::widgets::icon::IconKind;
+
+/** How far neighbouring buttons overlap, so one border is shared. */
+const GROUP_OVERLAP : f64 = 1.0;
+
+/** A row of attached buttons. */
+pub class ButtonGroup : Base, Widget {
+    buttons : Button[];
+    count : i32;
+    widths : f64[];
+
+    /** A group of `buttons`, which it takes. */
+    constructor(own buttons : Button[]) {
+        self.count = buttons.length as i32;
+        self.buttons = buttons;
+        self.widths = malloc<f64>(self.count as i64);
+        for (i of 0..self.count) {
+            self.buttons[i as i64].attach(ButtonGroup::placeOf(i, self.count));
+        }
+    }
+
+    /** Where button `i` of `count` sits: 0 alone, 1 first, 2 in the middle, 3 last. */
+    pub(file) static fn placeOf(i : i32, count : i32) : i32 {
+        if (count <= 1) {
+            return 0;
+        }
+        if (i == 0) {
+            return 1;
+        }
+        if (i == count - 1) {
+            return 3;
+        }
+        return 2;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let loose : Limits = Limits { minW: 0.0, maxW: UNBOUNDED, minH: 0.0, maxH: limits.maxH };
+        let mut w : f64 = 0.0;
+        let mut h : f64 = 0.0;
+        for (i of 0..self.count) {
+            let s : Size = self.buttons[i as i64].measure(ctx, loose);
+            self.widths[i as i64] = s.w;
+            w = w + s.w;
+            if (s.h > h) {
+                h = s.h;
+            }
+        }
+        if (self.count > 1) {
+            w = w - GROUP_OVERLAP * ((self.count - 1) as f64);
+        }
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let mut x : f64 = area.x;
+        for (i of 0..self.count) {
+            let w : f64 = self.widths[i as i64];
+            self.buttons[i as i64].arrange(ctx, Bounds::make(x, area.y, w, area.h));
+            x = x + w - GROUP_OVERLAP;
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let mut used : bool = false;
+        for (i of 0..self.count) {
+            if (self.buttons[i as i64].event(ctx, e)) {
+                used = true;
+            }
+        }
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut moving : bool = false;
+        for (i of 0..self.count) {
+            if (self.buttons[i as i64].tick(ctx, dt)) {
+                moving = true;
+            }
+        }
+        return moving;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        // The button under the pointer goes last, so its border is not covered by a neighbour's.
+        for (i of 0..self.count) {
+            if (!self.buttons[i as i64].hovered) {
+                self.buttons[i as i64].paint(ctx, p);
+            }
+        }
+        for (i of 0..self.count) {
+            if (self.buttons[i as i64].hovered) {
+                self.buttons[i as i64].paint(ctx, p);
+            }
+        }
+    }
+}
+
+/** A main action attached to a caret that opens a menu. */
+pub class SplitButton : Base, Widget {
+    props : ButtonProps;
+    main : Button;
+    caret : Button;
+    entries : MenuEntry[];
+    onPick : (i32) => void;
+    want : Shared<Model<bool>>;
+    isOpen : Shared<Model<bool>>;
+    mainWidth : f64 = 0.0;
+    caretWidth : f64 = 0.0;
+
+    /** `props` for the main action, which runs `onPress`; the caret's menu lists `entries` and tells `onPick` the index chosen. */
+    constructor(own props : ButtonProps, onPress : () => void, entries : MenuEntry[], onPick : (i32) => void) {
+        let kind : ButtonKind = props.kind;
+        let size : ControlSize = props.size;
+        let caretProps : ButtonProps = ButtonProps {
+            icon: IconKind::ChevronDown,
+            kind: kind,
+            size: size,
+            disabled: props.disabled,
+        };
+        self.want = new shared Model<bool>(false);
+        self.isOpen = new shared Model<bool>(false);
+        let ask : Shared<Model<bool>> = self.want;
+        self.main = new Button(props, onPress);
+        self.caret = new Button(caretProps, () => ask.set(true));
+        self.main.attach(1);
+        self.caret.attach(3);
+        self.props = ButtonProps { kind: kind, size: size };
+        self.entries = entries;
+        self.onPick = onPick;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let loose : Limits = Limits { minW: 0.0, maxW: UNBOUNDED, minH: 0.0, maxH: limits.maxH };
+        let m : Size = self.main.measure(ctx, loose);
+        let c : Size = self.caret.measure(ctx, loose);
+        self.mainWidth = m.w;
+        self.caretWidth = c.w;
+        return limits.constrain(Size { w: m.w + c.w - GROUP_OVERLAP, h: m.h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.main.arrange(ctx, Bounds::make(area.x, area.y, self.mainWidth, area.h));
+        self.caret.arrange(ctx, Bounds::make(area.x + self.mainWidth - GROUP_OVERLAP, area.y, self.caretWidth, area.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let a : bool = self.main.event(ctx, e);
+        let b : bool = self.caret.event(ctx, e);
+        if (self.want.get()) {
+            self.want.set(false);
+            if (!self.isOpen.get()) {
+                self.isOpen.set(true);
+                let ok : bool = ctx.openOverlay(new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, true));
+                if (!ok) {
+                    self.isOpen.set(false);
+                }
+            }
+        }
+        return a || b;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let a : bool = self.main.tick(ctx, dt);
+        let b : bool = self.caret.tick(ctx, dt);
+        return a || b;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.main.paint(ctx, p);
+        self.caret.paint(ctx, p);
+        // A hairline in the text colour keeps the seam legible on a filled button and on a quiet one.
+        let st : ButtonStyle = ctx.theme.button(self.props.kind, self.props.size);
+        let x : f64 = self.caret.bounds().x;
+        let a : Bounds = self.area;
+        p.line(x + 0.5, a.y + 1.0, x + 0.5, a.bottom() - 1.0, 1.0, st.text.faded(64));
+    }
+}

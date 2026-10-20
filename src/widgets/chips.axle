@@ -158,7 +158,7 @@ pub class StatusPill : Base, Widget {
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let px : f64 = chipText(self.size);
-        let w : f64 = ctx.textWidth(FaceKind::Sans, self.text, px) + 2.0 * chipPad(self.size) + 14.0;
+        let w : f64 = ctx.textWidth(FaceKind::Medium, self.text, px) + 2.0 * chipPad(self.size) + 14.0;
         return limits.constrain(Size { w: w, h: chipHeight(self.size) });
     }
 
@@ -180,8 +180,8 @@ pub class StatusPill : Base, Widget {
         }
         let x : f64 = a.x + chipPad(self.size);
         Dot::draw(ctx, p, self.tone, x + 3.0, a.midY(), 6.0, halo);
-        let base : f64 = ctx.baselineIn(FaceKind::Sans, px, a.y, a.h);
-        p.text(FaceKind::Sans, self.text, x + 14.0, base, px, pal.text);
+        let base : f64 = ctx.baselineIn(FaceKind::Medium, px, a.y, a.h);
+        p.text(FaceKind::Medium, self.text, x + 14.0, base, px, pal.text);
     }
 }
 
@@ -227,7 +227,7 @@ pub class Tag : Control, Widget {
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let px : f64 = chipText(self.props.size);
-        let mut w : f64 = ctx.textWidth(FaceKind::Sans, self.props.text, px) + 2.0 * chipPad(self.props.size);
+        let mut w : f64 = ctx.textWidth(FaceKind::Medium, self.props.text, px) + 2.0 * chipPad(self.props.size);
         if (self.props.removable) {
             w = w + 18.0;
         }
@@ -270,8 +270,8 @@ pub class Tag : Control, Widget {
         let px : f64 = chipText(self.props.size);
         let rr : RRect = a.round(ctx.theme.metrics.radiusInline);
         p.fillRound(rr, Brush::solid(soft.fill.rgb, soft.fill.a));
-        let base : f64 = ctx.baselineIn(FaceKind::Sans, px, a.y, a.h);
-        p.text(FaceKind::Sans, self.props.text, a.x + chipPad(self.props.size), base, px, soft.fg);
+        let base : f64 = ctx.baselineIn(FaceKind::Medium, px, a.y, a.h);
+        p.text(FaceKind::Medium, self.props.text, a.x + chipPad(self.props.size), base, px, soft.fg);
         if (self.props.removable) {
             let c : Bounds = self.closeBox();
             if (self.overClose) {

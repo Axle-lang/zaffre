@@ -32,10 +32,12 @@ const NOTIFY_SLOTS : i32 = 8;
 /** One toast waiting to be shown. */
 pub class ToastRequest {
     pub text : string;
+    pub detail : string;
     pub tone : Tone;
 
-    constructor(text : string, tone : Tone) {
+    constructor(text : string, detail : string, tone : Tone) {
         self.text = text;
+        self.detail = detail;
         self.tone = tone;
     }
 }
@@ -88,10 +90,15 @@ pub class Notifier {
 
     /** Show `text` as a toast in `tone`. */
     pub fn toast(mut self, text : string, tone : Tone) : void {
+        self.notify(text, "", tone);
+    }
+
+    /** Show a toast with a title and a line of detail under it. */
+    pub fn notify(mut self, title : string, detail : string, tone : Tone) : void {
         if (self.toastCount >= NOTIFY_SLOTS) {
             return;
         }
-        self.toasts[self.toastCount as i64] = new ToastRequest(text, tone);
+        self.toasts[self.toastCount as i64] = new ToastRequest(title, detail, tone);
         self.toastCount = self.toastCount + 1;
     }
 
@@ -192,7 +199,7 @@ pub class Notifications : Base, Widget {
         let n : Shared<Notifier> = self.notes;
         for (i of 0..n.toastCount) {
             let r : ToastRequest = n.toasts[i as i64];
-            ctx.openOverlay(new Toast(r.text, r.tone));
+            ctx.openOverlay(new Toast(r.text, r.detail, r.tone));
         }
         n.clearToasts();
         for (i of 0..n.dialogCount) {

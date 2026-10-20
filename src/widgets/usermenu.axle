@@ -59,7 +59,7 @@ pub class UserMenu : Control, Widget {
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let mut w : f64 = 52.0;
         if (self.props.showName) {
-            w = w + ctx.textWidth(FaceKind::Bold, self.props.name, 14.0) + 22.0;
+            w = w + ctx.textWidth(FaceKind::Medium, self.props.name, 14.0) + 22.0;
         }
         return limits.constrain(Size { w: w, h: 44.0 });
     }
@@ -95,7 +95,7 @@ pub class UserMenu : Control, Widget {
         }
         Avatar::draw(ctx, p, self.props.name, a.x + 6.0, a.y + 6.0, 32.0);
         if (self.props.showName) {
-            p.text(FaceKind::Bold, self.props.name, a.x + 46.0, ctx.baselineIn(FaceKind::Bold, 14.0, a.y, a.h), 14.0, pal.text);
+            p.text(FaceKind::Medium, self.props.name, a.x + 46.0, ctx.baselineIn(FaceKind::Medium, 14.0, a.y, a.h), 14.0, pal.text);
             Icons::draw(p, IconKind::ChevronDown, a.right() - 24.0, a.midY() - 8.0, 16.0, pal.textFaint);
         }
         if (self.ringShown(ctx)) {

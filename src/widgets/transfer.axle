@@ -1,0 +1,289 @@
+// transfer — two lists and the arrows that carry items from one to the other.
+//
+//     let chosen : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new TransferList(TransferProps { }, ["Read", "Write", "Delete", "Admin"], chosen)
+//
+// The model is a set of items, one bit each (so at most 31 of them): the items whose bit is set are
+// in the right-hand list, the others in the left-hand one. Clicking a row ticks it; the arrows move
+// the ticked rows across. A header over each list says how many it holds.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Height of a list's header. */
+const XFER_HEAD : f64 = 36.0;
+
+/** Height of a row. */
+const XFER_ROW : f64 = 32.0;
+
+/** Space around the rows. */
+const XFER_PAD : f64 = 6.0;
+
+/** Width of the column of arrows, and its two gaps. */
+const XFER_MID : f64 = 32.0;
+const XFER_GAP : f64 = 12.0;
+
+/** How a transfer list looks. */
+pub struct TransferProps {
+    /** What the left-hand list is called. */
+    pub left : string = "Available";
+
+    /** What the right-hand list is called. */
+    pub right : string = "Chosen";
+
+    /** How many rows each list shows before it would have to grow. */
+    pub rows : i32 = 6;
+
+    /** The control's width: 520 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Fill;
+}
+
+/** Two lists with arrows between them. */
+pub class TransferList : Control, Widget {
+    props : TransferProps;
+    items : string[];
+    count : i32;
+    chosen : Shared<Model<i32>>;
+    ticked : i32 = 0;
+    hotSide : i32 = -1;
+    hotRow : i32 = -1;
+    hotArrow : i32 = -1;
+
+    /** A transfer list of `items`, the right-hand ones being the set bits of `chosen`. */
+    constructor(own props : TransferProps, items : string[], chosen : Shared<Model<i32>>) {
+        super();
+        self.props = props;
+        self.count = Mathx::clampI(items.length as i32, 0, 31);
+        self.items = items;
+        self.chosen = chosen;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let h : f64 = XFER_HEAD + 2.0 * XFER_PAD + XFER_ROW * (self.props.rows as f64);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 520.0), h: h });
+    }
+
+    /** The width of one list. */
+    pub(file) fn listW(self) : f64 {
+        return (self.area.w - XFER_MID - 2.0 * XFER_GAP) * 0.5;
+    }
+
+    /** The box of the list on `side`: 0 for the left, 1 for the right. */
+    pub(file) fn listBox(self, side : i32) : Bounds {
+        let w : f64 = self.listW();
+        let x : f64 = side == 0 ? self.area.x : self.area.right() - w;
+        return Bounds::make(x, self.area.y, w, self.area.h);
+    }
+
+    /** The box of arrow `n`: 0 moves right, 1 moves left. */
+    pub(file) fn arrowBox(self, n : i32) : Bounds {
+        let x : f64 = self.area.x + self.listW() + XFER_GAP;
+        let mid : f64 = self.area.midY();
+        return Bounds::make(x, n == 0 ? mid - 36.0 : mid + 4.0, XFER_MID, 32.0);
+    }
+
+    /** Whether item `i` is in the right-hand list. */
+    pub(file) fn isChosen(self, i : i32) : bool {
+        return (self.chosen.get() & (1 << i)) != 0;
+    }
+
+    /** Whether item `i` is ticked. */
+    pub(file) fn isTicked(self, i : i32) : bool {
+        return (self.ticked & (1 << i)) != 0;
+    }
+
+    /** The item in row `row` of the list on `side`, or -1. */
+    pub(file) fn itemAt(self, side : i32, row : i32) : i32 {
+        let mut seen : i32 = 0;
+        for (i of 0..self.count) {
+            if (self.isChosen(i) == (side == 1)) {
+                if (seen == row) {
+                    return i;
+                }
+                seen = seen + 1;
+            }
+        }
+        return -1;
+    }
+
+    /** How many items are in the list on `side`. */
+    pub(file) fn sizeOf(self, side : i32) : i32 {
+        let mut n : i32 = 0;
+        for (i of 0..self.count) {
+            if (self.isChosen(i) == (side == 1)) {
+                n = n + 1;
+            }
+        }
+        return n;
+    }
+
+    /** How many ticked items are in the list on `side`. */
+    pub(file) fn tickedIn(self, side : i32) : i32 {
+        let mut n : i32 = 0;
+        for (i of 0..self.count) {
+            if (self.isChosen(i) == (side == 1) && self.isTicked(i)) {
+                n = n + 1;
+            }
+        }
+        return n;
+    }
+
+    /** The box of row `row` of the list on `side`. */
+    pub(file) fn rowBox(self, side : i32, row : i32) : Bounds {
+        let l : Bounds = self.listBox(side);
+        return Bounds::make(l.x + XFER_PAD, l.y + XFER_HEAD + XFER_PAD + XFER_ROW * (row as f64), l.w - 2.0 * XFER_PAD, XFER_ROW);
+    }
+
+    /** Carry the ticked items of the list on `side` to the other one. */
+    pub(file) fn carry(mut self, ctx : Context, side : i32) : void {
+        let mut set : i32 = self.chosen.get();
+        for (i of 0..self.count) {
+            if (self.isChosen(i) == (side == 1) && self.isTicked(i)) {
+                set = side == 0 ? (set | (1 << i)) : (set & ~(1 << i));
+                self.ticked = self.ticked & ~(1 << i);
+            }
+        }
+        self.chosen.set(set);
+        ctx.invalidate();
+    }
+
+    /** Where the pointer is: sets `hotSide`, `hotRow` and `hotArrow`. */
+    pub(file) fn track(mut self, ctx : Context, x : f64, y : f64) : void {
+        self.hotSide = -1;
+        self.hotRow = -1;
+        self.hotArrow = -1;
+        if (!self.hovered) {
+            return;
+        }
+        for (n of 0..2) {
+            if (self.arrowBox(n).contains(x, y) && self.tickedIn(n) > 0) {
+                self.hotArrow = n;
+            }
+        }
+        for (side of 0..2) {
+            for (row of 0..self.sizeOf(side)) {
+                if (self.rowBox(side, row).contains(x, y)) {
+                    self.hotSide = side;
+                    self.hotRow = row;
+                }
+            }
+        }
+        if (self.hotArrow >= 0 || self.hotRow >= 0) {
+            ctx.wantCursor(Cursor::Hand);
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.track(ctx, e.x, e.y);
+            ctx.invalidate();
+        }
+        if (g == Gesture::Click) {
+            for (n of 0..2) {
+                if (self.arrowBox(n).contains(e.x, e.y) && self.tickedIn(n) > 0) {
+                    self.carry(ctx, n);
+                    return true;
+                }
+            }
+            for (side of 0..2) {
+                for (row of 0..self.sizeOf(side)) {
+                    if (self.rowBox(side, row).contains(e.x, e.y)) {
+                        self.ticked = self.ticked ^ (1 << self.itemAt(side, row));
+                        ctx.invalidate();
+                        return true;
+                    }
+                }
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    /** One row: a tick box and a label. */
+    pub(file) fn paintRow(self, ctx : Context, p : Painter, side : i32, row : i32) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusInline;
+        let item : i32 = self.itemAt(side, row);
+        let box : Bounds = self.rowBox(side, row);
+        let on : bool = self.isTicked(item);
+        let mut ink : Tint = pal.textDim;
+        if (on) {
+            p.fillRound(box.round(radius), Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+            ink = pal.softPrimary.fg;
+        } else if (self.hotSide == side && self.hotRow == row) {
+            p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+            ink = pal.text;
+        }
+        let mark : Bounds = Bounds::make(box.x + 10.0, box.midY() - 8.0, 16.0, 16.0);
+        if (on) {
+            p.fillRound(mark.round(4.0), Brush::solid(pal.primary.s600.rgb, 255));
+            Icons::draw(p, IconKind::Check, mark.x + 2.0, mark.y + 2.0, 12.0, Tint::hex(0xFFFFFF));
+        } else {
+            p.strokeRound(mark.round(4.0), 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        }
+        p.textElided(FaceKind::Sans, self.items[item as i64], box.x + 36.0, ctx.baselineIn(FaceKind::Sans, 13.0, box.y, box.h), 13.0, box.w - 46.0, ink);
+    }
+
+    /** One list: a frame, its header and its rows. */
+    pub(file) fn paintList(self, ctx : Context, p : Painter, side : i32) : void {
+        let pal = ctx.theme.palette;
+        let l : Bounds = self.listBox(side);
+        let radius : f64 = ctx.theme.metrics.radiusSurface;
+        p.fillRound(l.round(radius), Brush::solid(pal.surface.rgb, pal.surface.a));
+        // The header has a wash of its own, clipped to the frame's rounded top.
+        p.fillRound(RRect::corners(l.x, l.y, l.w, XFER_HEAD, radius, radius, 0.0, 0.0), Brush::solid(pal.raised.rgb, pal.raised.a));
+        p.line(l.x, l.y + XFER_HEAD - 0.5, l.right(), l.y + XFER_HEAD - 0.5, 1.0, pal.line);
+        p.strokeRound(l.round(radius), 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        let title : string = Strings::upper(side == 0 ? self.props.left : self.props.right);
+        p.text(FaceKind::Bold, title, l.x + 14.0, ctx.baselineIn(FaceKind::Bold, 11.0, l.y, XFER_HEAD), 11.0, pal.textFaint);
+        let n : string = Format::whole(self.sizeOf(side) as f64);
+        let nw : f64 = ctx.textWidth(FaceKind::Mono, n, 11.0);
+        p.text(FaceKind::Mono, n, l.right() - 14.0 - nw, ctx.baselineIn(FaceKind::Mono, 11.0, l.y, XFER_HEAD), 11.0, pal.textFaint);
+        let total : i32 = self.sizeOf(side);
+        if (total == 0) {
+            let msg : string = "Nothing here";
+            let mw : f64 = ctx.textWidth(FaceKind::Sans, msg, 12.0);
+            p.text(FaceKind::Sans, msg, l.midX() - mw * 0.5, ctx.baselineIn(FaceKind::Sans, 12.0, l.y + XFER_HEAD, l.h - XFER_HEAD), 12.0, pal.textFaint);
+        }
+        for (row of 0..total) {
+            self.paintRow(ctx, p, side, row);
+        }
+    }
+
+    /** The two arrows. */
+    pub(file) fn paintArrows(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        for (n of 0..2) {
+            let box : Bounds = self.arrowBox(n);
+            let live : bool = self.tickedIn(n) > 0;
+            let rr : RRect = box.round(ctx.theme.metrics.radiusInline);
+            if (live && self.hotArrow == n) {
+                p.fillRound(rr, Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, live ? pal.lineStrong.a : pal.lineStrong.a / 2));
+            let icon : IconKind = n == 0 ? IconKind::ChevronRight : IconKind::ChevronLeft;
+            Icons::draw(p, icon, box.midX() - 8.0, box.midY() - 8.0, 16.0, live ? pal.textDim : pal.textOff);
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.paintList(ctx, p, 0);
+        self.paintList(ctx, p, 1);
+        self.paintArrows(ctx, p);
+    }
+}

@@ -25,7 +25,7 @@ use crate::widgets::panel::Surfaces;
 const POP_PAD : f64 = 16.0;
 
 /** The widest a popover's content is. */
-const POP_MAX_WIDTH : f64 = 360.0;
+const POP_MAX_WIDTH : f64 = 480.0;
 
 /** The panel itself, as an overlay. */
 pub class PopoverSheet : Base, Widget {
@@ -37,6 +37,7 @@ pub class PopoverSheet : Base, Widget {
     closing : bool = false;
     finished : bool = false;
     sheet : Bounds = Bounds::zero();
+    pad : f64 = POP_PAD;
 
     /** A panel under `anchor` holding what `content` builds; `isOpen` is cleared when it goes away. */
     constructor(anchor : Bounds, content : () => dyn Widget, isOpen : Shared<Model<bool>>, alignEnd : bool) {
@@ -46,6 +47,11 @@ pub class PopoverSheet : Base, Widget {
         self.kid = malloc<dyn Widget>(1 as i64);
         let build : () => dyn Widget = content;
         self.kid[0] = build();
+    }
+
+    /** Space between the panel's edge and its content (16 px unless set): 0 for content that has its own. */
+    pub fn padded(mut self, pad : f64) : void {
+        self.pad = pad;
     }
 
     pub fn close(mut self, ctx : Context) : void {
@@ -70,8 +76,8 @@ pub class PopoverSheet : Base, Widget {
         self.area = area;
         let c : dyn Widget = self.kid[0];
         let s : Size = c.measure(ctx, Limits { minW: 0.0, maxW: POP_MAX_WIDTH, minH: 0.0, maxH: UNBOUNDED });
-        let w : f64 = s.w + 2.0 * POP_PAD;
-        let h : f64 = s.h + 2.0 * POP_PAD;
+        let w : f64 = s.w + 2.0 * self.pad;
+        let h : f64 = s.h + 2.0 * self.pad;
         let mut y : f64 = self.anchor.bottom() + 6.0;
         if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
             y = self.anchor.y - 6.0 - h;
@@ -83,7 +89,7 @@ pub class PopoverSheet : Base, Widget {
         x = Mathx::clampF(x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - w));
         let k : f64 = 1.0 - Mathx::smooth(self.openT.value);
         self.sheet = Bounds::make(x, y, w, h);
-        c.arrange(ctx, Bounds::make(x + POP_PAD, y + POP_PAD + 6.0 * k, s.w, s.h));
+        c.arrange(ctx, Bounds::make(x + self.pad, y + self.pad + 6.0 * k, s.w, s.h));
     }
 
     pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
@@ -148,6 +154,7 @@ pub class Popover : Base, Widget {
     isOpen : Shared<Model<bool>>;
     armed : bool = false;
     alignEnd : bool = false;
+    pad : f64 = POP_PAD;
 
     /** `trigger`, which the wrapper takes, opening a panel of what `content` builds. */
     constructor(own trigger : dyn Widget, content : () => dyn Widget) {
@@ -163,6 +170,11 @@ pub class Popover : Base, Widget {
         self.kid[0] = trigger;
         self.content = content;
         self.isOpen = isOpen;
+    }
+
+    /** Open panels without padding, for content that draws its own. */
+    pub fn flush(mut self) : void {
+        self.pad = 0.0;
     }
 
     /** Open the panel with its right edge under the trigger's. */
@@ -193,7 +205,9 @@ pub class Popover : Base, Widget {
             self.armed = false;
             if (was && inside && !self.isOpen.get()) {
                 self.isOpen.set(true);
-                let ok : bool = ctx.openOverlay(new PopoverSheet(self.area, self.content, self.isOpen, self.alignEnd));
+                let sheet : PopoverSheet = new PopoverSheet(self.area, self.content, self.isOpen, self.alignEnd);
+                sheet.padded(self.pad);
+                let ok : bool = ctx.openOverlay(sheet);
                 if (!ok) {
                     self.isOpen.set(false);
                 }
