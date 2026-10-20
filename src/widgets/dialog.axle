@@ -89,14 +89,15 @@ pub class Dialog : Base, Widget {
         if (props.danger) {
             kind = ButtonKind::Danger;
         }
-        let cancel = new Button(ButtonProps { label: props.cancel, kind: ButtonKind::Outline }, () => answer.set(2));
-        let confirm = new Button(ButtonProps { label: props.confirm, kind: kind }, () => answer.set(1));
-        let both : dyn Widget[] = [new Spacer(), cancel, confirm];
-        let only : dyn Widget[] = [new Spacer(), confirm];
-        let mut row : Row = new Row(FlexProps { gap: 10.0, align: Align::Center }, both);
-        if (!props.showCancel) {
-            row = new Row(FlexProps { gap: 10.0, align: Align::Center }, only);
-        }
+        let cancel = new Button(
+            ButtonProps { label: props.cancel, kind: ButtonKind::Outline },
+            () => answer.set(2)
+        );
+        let confirm = new Button(
+            ButtonProps { label: props.confirm, kind: kind },
+            () => answer.set(1)
+        );
+        let row = Dialog::actions(props.showCancel, cancel, confirm);
         let radius : f64 = DIALOG_RADIUS;
         let head = new Band(
             BandProps {
@@ -124,6 +125,18 @@ pub class Dialog : Base, Widget {
         let parts : dyn Widget[] = [head, body, foot];
         self.kid = malloc<dyn Widget>(1 as i64);
         self.kid[0] = new Column(FlexProps { gap: 0.0, align: Align::Stretch }, parts);
+    }
+
+    /** The footer's buttons, pushed to the right: both when `withCancel`, else only `confirm`. */
+    pub(file) static fn actions(withCancel : bool, own cancel : Button, own confirm : Button) : Row {
+        let flex = FlexProps { gap: 10.0, align: Align::Center };
+
+        if (withCancel) {
+            let both : dyn Widget[] = [new Spacer(), cancel, confirm];
+            return new Row(flex, both);
+        }
+        let only : dyn Widget[] = [new Spacer(), confirm];
+        return new Row(flex, only);
     }
 
     pub fn modal(self) : bool {
