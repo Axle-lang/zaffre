@@ -59,6 +59,7 @@ pub class Toggle : Control {
 
     /** A toggle set as `props` say, whose mark starts `on`. */
     constructor(own props : ToggleProps, on : bool) {
+        super();
         self.props = props;
         self.valueT = Eased::at(0.0);
         if (on) {

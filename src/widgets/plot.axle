@@ -46,6 +46,7 @@ pub class Plot : Control {
 
     /** A plot of `values` (series after series) over `labels`, the series called `names`. */
     constructor(own props : ChartProps, labels : string[], values : f64[], names : string[]) {
+        super();
         self.props = props;
         self.labels = labels;
         self.values = values;

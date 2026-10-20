@@ -51,12 +51,14 @@ pub class Pagination : Control, Widget {
 
     /** A pager over `props.pages` pages reading and writing `model`. */
     constructor(own props : PaginationProps, model : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.model = model;
     }
 
     /** A pager that also tells `onChange` the new page index. */
     constructor(own props : PaginationProps, model : Shared<Model<i32>>, onChange : (i32) => void) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = onChange;

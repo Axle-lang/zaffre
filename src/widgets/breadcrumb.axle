@@ -40,6 +40,7 @@ pub class Breadcrumb : Control, Widget {
 
     /** A path of `items`, the last being the current page. */
     constructor(items : string[]) {
+        super();
         self.items = items;
         self.count = Mathx::clampI(items.length as i32, 0, 16);
         self.focusable = false;
@@ -47,6 +48,7 @@ pub class Breadcrumb : Control, Widget {
 
     /** A path whose crumbs call `onPick` with their index when clicked. */
     constructor(items : string[], onPick : (i32) => void) {
+        super();
         self.items = items;
         self.count = Mathx::clampI(items.length as i32, 0, 16);
         self.onPick = onPick;

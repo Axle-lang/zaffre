@@ -80,6 +80,7 @@ pub class TextField : Control, Widget {
 
     /** A field set as `props` say showing `model`. */
     constructor(own props : FieldProps, model : Shared<Model<string>>) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = ignoreText;
@@ -88,6 +89,7 @@ pub class TextField : Control, Widget {
 
     /** A field showing `model`, calling `onChange` with the new text after every edit. */
     constructor(own props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = onChange;
@@ -96,6 +98,7 @@ pub class TextField : Control, Widget {
 
     /** A field showing `model`, calling `onChange` after every edit and `onSubmit` when Enter is pressed. */
     constructor(own props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void, onSubmit : (string) => void) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = onChange;

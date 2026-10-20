@@ -43,6 +43,7 @@ pub class ToggleGroup : Control, Widget {
 
     /** A group of `labels` whose pressed set is held in `model`. */
     constructor(labels : string[], model : Shared<Model<i32>>) {
+        super();
         self.props = ToggleGroupProps { };
         self.labels = labels;
         self.count = Mathx::clampI(labels.length as i32, 0, TOGGLE_MAX);
@@ -51,6 +52,7 @@ pub class ToggleGroup : Control, Widget {
 
     /** A group set as `props` say. */
     constructor(own props : ToggleGroupProps, labels : string[], model : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.labels = labels;
         self.count = Mathx::clampI(labels.length as i32, 0, TOGGLE_MAX);

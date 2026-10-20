@@ -83,6 +83,7 @@ pub class Sidebar : Control, Widget {
 
     /** A sidebar of `items` (`SidebarItem`s), whose chosen entry is held in `model`. */
     constructor(own props : SidebarProps, items : SidebarItem[], model : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.items = items;
         self.count = items.length as i32;
@@ -92,6 +93,7 @@ pub class Sidebar : Control, Widget {
 
     /** As above, telling `onChange` the index when the user chooses. */
     constructor(own props : SidebarProps, items : SidebarItem[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        super();
         self.props = props;
         self.items = items;
         self.count = items.length as i32;

@@ -50,6 +50,7 @@ pub class DonutChart : Control, Widget {
 
     /** A donut of `values` called `labels`. */
     constructor(own props : DonutProps, labels : string[], values : f64[]) {
+        super();
         self.props = props;
         self.labels = labels;
         self.values = values;

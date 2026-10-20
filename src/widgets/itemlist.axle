@@ -71,6 +71,7 @@ pub class ItemList : Control, Widget {
 
     /** A list of `entries` whose picked row is held in `picked`. */
     constructor(own props : ItemListProps, entries : ListEntry[], picked : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.entries = entries;
         self.count = entries.length as i32;
@@ -80,6 +81,7 @@ pub class ItemList : Control, Widget {
 
     /** As above, telling `onPick` the index when a row is clicked. */
     constructor(own props : ItemListProps, entries : ListEntry[], picked : Shared<Model<i32>>, onPick : (i32) => void) {
+        super();
         self.props = props;
         self.entries = entries;
         self.count = entries.length as i32;

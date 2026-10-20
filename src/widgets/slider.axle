@@ -71,6 +71,7 @@ pub class Slider : Control, Widget {
 
     /** A slider set as `props` say showing `model`. */
     constructor(own props : SliderProps, model : Shared<Model<f64>>) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = ignoreNumber;
@@ -78,6 +79,7 @@ pub class Slider : Control, Widget {
 
     /** A slider set as `props` say showing `model`, calling `onChange` as the user moves it. */
     constructor(own props : SliderProps, model : Shared<Model<f64>>, onChange : (f64) => void) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = onChange;

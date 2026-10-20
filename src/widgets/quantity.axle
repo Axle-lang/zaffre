@@ -49,6 +49,7 @@ pub class QuantityInput : Control, Widget {
 
     /** A quantity reading and writing `model`. */
     constructor(own props : QuantityProps, model : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.model = model;
     }

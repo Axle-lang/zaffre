@@ -58,6 +58,7 @@ pub class Card : Control, Widget {
 
     /** A card with a body. */
     constructor(own props : CardProps, own body : dyn Widget) {
+        super();
         let wantsHeader : bool = props.title.byteLength > 0 || props.subtitle.byteLength > 0;
         self.column = Card::sections(props, Card::titleOf(props), body, Card::empty(), wantsHeader, false);
         self.focusable = props.pressable;
@@ -66,6 +67,7 @@ pub class Card : Control, Widget {
 
     /** A card with a body and a footer. */
     constructor(own props : CardProps, own body : dyn Widget, own footer : dyn Widget) {
+        super();
         let wantsHeader : bool = props.title.byteLength > 0 || props.subtitle.byteLength > 0;
         self.column = Card::sections(props, Card::titleOf(props), body, footer, wantsHeader, true);
         self.focusable = props.pressable;
@@ -74,6 +76,7 @@ pub class Card : Control, Widget {
 
     /** A card with a header widget of the program's own, a body and a footer. */
     constructor(own props : CardProps, own header : dyn Widget, own body : dyn Widget, own footer : dyn Widget) {
+        super();
         self.column = Card::sections(props, header, body, footer, true, true);
         self.focusable = props.pressable;
         self.props = props;

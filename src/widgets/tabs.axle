@@ -47,6 +47,7 @@ pub class TabBar : Control {
 
     /** A bar of `titles`, reading and writing `model` (the chosen index). */
     constructor(titles : string[], model : Shared<Model<i32>>) {
+        super();
         self.titles = titles;
         self.count = titles.length as i32;
         self.model = model;
@@ -56,6 +57,7 @@ pub class TabBar : Control {
 
     /** A bar that also tells `onChange` when the user picks a title. */
     constructor(titles : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        super();
         self.titles = titles;
         self.count = titles.length as i32;
         self.model = model;

@@ -47,6 +47,7 @@ pub class Navbar : Control, Widget {
 
     /** A bar of `links` with `trailing` at the far end; the bar takes the widget. */
     constructor(own props : NavbarProps, links : string[], model : Shared<Model<i32>>, own trailing : dyn Widget) {
+        super();
         self.props = props;
         self.links = links;
         self.count = links.length as i32;

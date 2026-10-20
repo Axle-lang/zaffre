@@ -40,6 +40,7 @@ pub class Rating : Control, Widget {
 
     /** A rating reading and writing `model`. */
     constructor(own props : RatingProps, model : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.model = model;
         self.focusable = !props.readOnly;

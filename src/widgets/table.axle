@@ -96,11 +96,12 @@ pub class Table : Control, Widget {
 
     /** A table of `columns` over `cells` (row by row), whose picked row is not tracked. */
     constructor(own props : TableProps, columns : TableColumn[], own cells : dyn Widget[]) {
+        super();
         self.props = props;
         self.columns = columns;
         self.cols = Mathx::clampI(columns.length as i32, 1, TABLE_MAX_COLUMNS);
         self.cells = cells;
-        self.rows = (cells.length as i32) / self.cols;
+        self.rows = (self.cells.length as i32) / self.cols;
         self.picked = new shared Model<i32>(-1);
         self.keys = malloc<f64>(1 as i64);
         self.order = malloc<i32>(self.rows as i64);
@@ -116,11 +117,12 @@ pub class Table : Control, Widget {
 
     /** A table that writes the data index of the picked row to `picked`. */
     constructor(own props : TableProps, columns : TableColumn[], own cells : dyn Widget[], picked : Shared<Model<i32>>) {
+        super();
         self.props = props;
         self.columns = columns;
         self.cols = Mathx::clampI(columns.length as i32, 1, TABLE_MAX_COLUMNS);
         self.cells = cells;
-        self.rows = (cells.length as i32) / self.cols;
+        self.rows = (self.cells.length as i32) / self.cols;
         self.picked = picked;
         self.keys = malloc<f64>(1 as i64);
         self.order = malloc<i32>(self.rows as i64);

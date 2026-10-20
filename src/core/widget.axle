@@ -136,6 +136,12 @@ pub class Control : Base {
     /** 0..1: how far into the focused state it is. */
     pub focusT : Eased = Eased::at(0.0);
 
+    /** The defaults, written here because an object is allocated zeroed and no field initialiser runs without a constructor. */
+    constructor() {
+        self.enabled = true;
+        self.focusable = true;
+    }
+
     /** Take the box, and announce the focus token. */
     pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
         self.area = area;

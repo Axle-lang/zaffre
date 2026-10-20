@@ -275,6 +275,7 @@ pub class Select : Control, Widget {
 
     /** A select over `options`, reading and writing `model` (the chosen index). */
     constructor(options : string[], model : Shared<Model<i32>>) {
+        super();
         self.options = options;
         self.props = SelectProps { };
         self.model = model;
@@ -282,6 +283,7 @@ pub class Select : Control, Widget {
 
     /** A select set as `props` say. */
     constructor(own props : SelectProps, options : string[], model : Shared<Model<i32>>) {
+        super();
         self.options = options;
         self.props = props;
         self.model = model;
@@ -289,6 +291,7 @@ pub class Select : Control, Widget {
 
     /** A select that also tells `onChange` when the user picks. */
     constructor(own props : SelectProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        super();
         self.options = options;
         self.props = props;
         self.model = model;

@@ -212,12 +212,14 @@ pub class Tag : Control, Widget {
 
     /** A tag set as `props` say. */
     constructor(own props : TagProps) {
+        super();
         self.props = props;
         self.focusable = false;
     }
 
     /** A removable tag that calls `onClose` when its button is pressed. */
     constructor(own props : TagProps, onClose : () => void) {
+        super();
         self.props = props;
         self.onClose = onClose;
         self.focusable = false;

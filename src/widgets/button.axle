@@ -69,24 +69,28 @@ pub class Button : Control, Widget {
 
     /** A button labelled `label`, doing nothing yet. */
     constructor(label : string) {
+        super();
         self.props = ButtonProps { label: label };
         self.onPress = doNothing;
     }
 
     /** A button labelled `label` that runs `onPress`. */
     constructor(label : string, onPress : () => void) {
+        super();
         self.props = ButtonProps { label: label };
         self.onPress = onPress;
     }
 
     /** A button set as `props` say, doing nothing yet. */
     constructor(own props : ButtonProps) {
+        super();
         self.props = props;
         self.onPress = doNothing;
     }
 
     /** A button set as `props` say that runs `onPress`. */
     constructor(own props : ButtonProps, onPress : () => void) {
+        super();
         self.props = props;
         self.onPress = onPress;
     }

@@ -118,7 +118,7 @@ pub class PageStack : Base, Widget {
     /** `pages`, which the stack takes, the shown one being the index held in `model`. */
     constructor(model : Shared<Model<i32>>, own pages : dyn Widget[]) {
         self.pages = pages;
-        self.count = pages.length as i32;
+        self.count = self.pages.length as i32;
         self.model = model;
     }
 

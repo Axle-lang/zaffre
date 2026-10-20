@@ -73,12 +73,14 @@ pub class Textarea : Control, Widget {
 
     /** An area reading and writing `model`. */
     constructor(own props : TextareaProps, model : Shared<Model<string>>) {
+        super();
         self.props = props;
         self.model = model;
     }
 
     /** An area that also tells `onChange` the new text on every edit. */
     constructor(own props : TextareaProps, model : Shared<Model<string>>, onChange : (string) => void) {
+        super();
         self.props = props;
         self.model = model;
         self.onChange = onChange;

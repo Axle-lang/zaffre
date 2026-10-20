@@ -73,10 +73,11 @@ pub class Accordion : Control, Widget {
 
     /** `titles` over `pages` (one each), the open set held in `model`; the accordion takes the pages. */
     constructor(titles : string[], model : Shared<Model<i32>>, own pages : dyn Widget[]) {
+        super();
         self.props = AccordionProps { };
         self.titles = titles;
         self.pages = pages;
-        self.count = pages.length as i32;
+        self.count = self.pages.length as i32;
         self.model = model;
         self.openT = malloc<Eased>(self.count as i64);
         self.pageH = malloc<f64>(self.count as i64);
@@ -90,10 +91,11 @@ pub class Accordion : Control, Widget {
 
     /** As above, set as `props` say. */
     constructor(own props : AccordionProps, titles : string[], model : Shared<Model<i32>>, own pages : dyn Widget[]) {
+        super();
         self.props = props;
         self.titles = titles;
         self.pages = pages;
-        self.count = pages.length as i32;
+        self.count = self.pages.length as i32;
         self.model = model;
         self.openT = malloc<Eased>(self.count as i64);
         self.pageH = malloc<f64>(self.count as i64);

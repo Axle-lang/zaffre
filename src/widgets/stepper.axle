@@ -35,6 +35,7 @@ pub class Stepper : Control, Widget {
 
     /** The stages `titles`, the current one held in `model`. */
     constructor(titles : string[], model : Shared<Model<i32>>) {
+        super();
         self.titles = titles;
         self.count = titles.length as i32;
         self.model = model;

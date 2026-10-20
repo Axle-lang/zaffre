@@ -62,6 +62,7 @@ pub class Banner : Control, Widget {
 
     /** A banner saying `text`. */
     constructor(own props : BannerProps, text : string) {
+        super();
         self.props = props;
         self.text = text;
         self.focusable = false;
@@ -69,6 +70,7 @@ pub class Banner : Control, Widget {
 
     /** A banner saying `text`, whose action runs `onAction`. */
     constructor(own props : BannerProps, text : string, onAction : () => void) {
+        super();
         self.props = props;
         self.text = text;
         self.onAction = onAction;
