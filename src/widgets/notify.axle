@@ -140,7 +140,9 @@ pub class Notifications : Base, Widget {
         n.clearToasts();
         for (i of 0..n.dialogCount) {
             let r : DialogRequest = n.dialogs[i as i64];
-            ctx.openOverlay(new Dialog(r.props, r.onConfirm, r.onCancel));
+            // A value of its own: the request still releases the one it holds.
+            let mine : DialogProps = DialogProps { ..r.props };
+            ctx.openOverlay(new Dialog(mine, r.onConfirm, r.onCancel));
         }
         n.clearDialogs();
         return moving;
