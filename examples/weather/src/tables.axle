@@ -67,6 +67,7 @@ pub class HourRows : Control, Widget {
     hot : i32 = -1;
 
     constructor(wx : Shared<Weather>) {
+        super();
         self.wx = wx;
         self.focusable = false;
     }
@@ -145,6 +146,7 @@ pub class WeekList : Control, Widget {
     hot : i32 = -1;
 
     constructor(wx : Shared<Weather>) {
+        super();
         self.wx = wx;
         self.focusable = false;
     }

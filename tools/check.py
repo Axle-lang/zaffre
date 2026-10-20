@@ -112,11 +112,15 @@ class Index:
         self.decls = {}        # file -> {name}
         self.types = {}        # type name -> members
         self.methods = set(BUILTIN_METHODS)
+        self.ctor_classes = set()   # classes that declare a constructor
         for f in files_under(self.src):
             rel = os.path.relpath(f, self.src)[:-5].split(os.sep)
             self.modules[tuple(rel)] = f
             text = code_of(f)
             self.decls[f] = {m.group(2) for m in DECL.finditer(text)}
+            for cm in re.finditer(r"\bclass\s+(\w+)[^{]*\{", text):
+                if re.search(r"\bconstructor\s*\(", text[cm.end():matching_brace(text, cm.end() - 1)]):
+                    self.ctor_classes.add(cm.group(1))
             for k, v in members_of(text).items():
                 self.types.setdefault(k, set()).update(v)
             self.methods |= set(FN.findall(text))
@@ -295,6 +299,28 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
         if arrow.search(text[m.end():i]):
             line = text.count("\n", 0, m.start()) + 1
             err("line %d: a lambda nested in a lambda is not supported (E0700): pass what it needs to a function" % line)
+    # a derived constructor must reach its base's constructor with super(...): the base's fields start zeroed
+    for m in re.finditer(r"\bclass\s+(\w+)\s*:\s*([\w\s,]+?)\s*\{", text):
+        bases = [b.strip() for b in m.group(2).split(",")]
+        end = matching_brace(text, m.end() - 1)
+        body = text[m.end():end]
+        for b in bases:
+            if b in idx.ctor_classes:
+                for c in re.finditer(r"\bconstructor\s*\([^)]*\)\s*\{(?!\s*super\s*\()", body):
+                    line = text.count("\n", 0, m.end() + c.start()) + 1
+                    err("line %d: a constructor of `%s` must begin with super(…) — its base `%s` has a constructor that sets the inherited fields" % (line, m.group(1), b))
+    # a value given to an `own` parameter and moved into a field cannot be read afterwards (E0501)
+    for fm in re.finditer(r"\b(?:fn|constructor)\s*(?:\w+)?\s*\(([^)]*)\)[^{;]*\{", text):
+        owns = re.findall(r"\bown\s+(\w+)\s*:", fm.group(1))
+        if not owns:
+            continue
+        end = matching_brace(text, fm.end() - 1)
+        body = text[fm.end():end]
+        for name in owns:
+            mv = re.search(r"self\.\w+\s*=\s*%s\s*;" % re.escape(name), body)
+            if mv and re.search(r"(?<![.\w])%s\b" % re.escape(name), body[mv.end():]):
+                line = text.count("\n", 0, fm.end() + mv.end()) + 1
+                err("line %d: `%s` was moved into a field; read it through the field afterwards (E0501)" % (line, name))
     for m in re.finditer(r"\bfn\s+(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|string|void)\s*\(", text):
         err("`fn %s` — a primitive type's name cannot name a method" % m.group(1))
     for i, line in enumerate(text.split("\n"), 1):

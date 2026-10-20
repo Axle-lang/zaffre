@@ -59,6 +59,7 @@ pub class HourChart : Control, Widget {
     step : f64 = 1.0;
 
     constructor(wx : Shared<Weather>) {
+        super();
         self.wx = wx;
         self.focusable = false;
     }

@@ -270,16 +270,27 @@ class Emitter:
                 w.append("        self.%s = %s" % (attr(f.name), self.zero_of(f.type)))
         if not any_field:
             w.append("        pass")
+        # An object is allocated zeroed; initialisers run only in a constructor, and a base's only when the
+        # derived constructor reaches it with `super(...)`. `_zero_*` is the zeroed state a class starts from.
+        w.append("    def _zero_%s(self):" % cname)
+        w.append("        pass")
+        base_decl0 = self.decls.get(base_name) if base_name else None
+        if base_decl0 is not None and self.class_has_ctor_dispatch(base_decl0):
+            w.append("        %s._zero_%s(self)" % (mangle(base_name), mangle(base_name)))
+        for f in fields:
+            self.fn_ctx = FnCtx(self)
+            w.append("        self.%s = %s" % (attr(f.name), self.zero_of(f.type)))
         # constructors
         ctors = self.class_ctors(d)
         base_decl = self.decls.get(base_name) if base_name else None
         cinfo = []
         if not ctors:
             w.append("    def _c0(self):")
-            if base_decl is not None and self.class_has_ctor_dispatch(base_decl):
-                w.append("        %s._dispatch(self, ())" % mangle(base_name))
-            elif base_name in RUNTIME_NAMES:
+            if base_name in RUNTIME_NAMES:
                 w.append("        %s.__init__(self)" % base_name)
+            elif base_decl is not None and self.class_has_ctor_dispatch(base_decl):
+                w.append("        %s._zero_%s(self)" % (mangle(base_name), mangle(base_name)))
+            # `new C()` on a class with no constructor runs the field initialisers (the implicit one)
             w.append("        self._fi_%s()" % cname)
             cinfo.append((0, []))
         for i, c in enumerate(ctors):
@@ -349,7 +360,8 @@ class Emitter:
                 lines.append("%s._dispatch(self, (%s))" % (mangle(base_name), "".join(a + ", " for a in args)))
             stmts = stmts[1:]
         elif base_decl is not None and self.class_has_ctor_dispatch(base_decl):
-            lines.append("%s._dispatch(self, ())" % mangle(base_name))
+            # no `super()`: the base's fields stay zeroed, as the compiler leaves them
+            lines.append("%s._zero_%s(self)" % (mangle(base_name), mangle(base_name)))
         lines.append("self._fi_%s()" % cname)
         body = ctx.block_lines(stmts)
         lines.extend(body)

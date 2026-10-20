@@ -43,7 +43,7 @@ pub class Rating : Control, Widget {
         super();
         self.props = props;
         self.model = model;
-        self.focusable = !props.readOnly;
+        self.focusable = !self.props.readOnly;
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
