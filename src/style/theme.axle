@@ -281,10 +281,10 @@ pub class Theme {
             return (m.controlSm, m.fontSm, 12.0);
         }
         if (z == 3) {
-            return (m.controlLg, m.fontMd + 1.0, 20.0);
+            return (m.controlLg, m.fontLg, 20.0);
         }
         if (z == 4) {
-            return (m.controlXl, m.fontLg, 24.0);
+            return (m.controlXl, m.fontLg + 2.0, 24.0);
         }
         return (m.controlMd, m.fontMd, 16.0);
     }

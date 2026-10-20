@@ -3,8 +3,8 @@
 //     let day : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
 //     new Calendar(DateProps { today: Dates::ymd(2026, 10, 20) }, day)
 //
-// Arrows turn the month; the title opens a grid of months (and turns years) so a far date is three
-// clicks away rather than fifty. A click chooses a day: it is filled with the brand colour, today is
+// Arrows turn the month; the title opens a grid of months, and that title a grid of years, so a far
+// date is three clicks away rather than fifty. A click chooses a day: it is filled with the brand colour, today is
 // outlined, and days outside `min` and `max` are dimmed and cannot be chosen. With a second model the
 // calendar chooses a range — the first click sets the start, the second the end — and the days between
 // are tinted as one band, previewed under the pointer while the end is still open.
@@ -44,11 +44,21 @@ const CAL_NAV : f64 = 28.0;
 /** Height of the row of weekday letters. */
 const CAL_DAYS : f64 = 28.0;
 
-/** Height of a week. */
-const CAL_ROW : f64 = 34.0;
+/** Height of a week: a day and the gap under it. */
+const CAL_ROW : f64 = 38.0;
 
-/** Diameter of a day. */
-const CAL_DISC : f64 = 32.0;
+/** Height of a day. */
+const CAL_CELL : f64 = 36.0;
+
+/** Space between neighbouring days of a calendar that chooses one day (a range joins them). */
+const CAL_GAP : f64 = 4.0;
+
+/** Height of a month or a year in the grids that jump to one, and the space between them. */
+const CAL_PICK : f64 = 56.0;
+const CAL_PICK_GAP : f64 = 4.0;
+
+/** Years in a page of the grid of years. */
+const CAL_YEARS : i32 = 12;
 
 /** Height of the footer of a picker's calendar. */
 const CAL_FOOT : f64 = 48.0;
@@ -66,7 +76,7 @@ pub class Calendar : Control, Widget {
     picker : bool;
     year : i32 = 2026;
     month : i32 = 1;
-    months : bool = false;
+    panel : i32 = 0;
     cursor : i32 = -2000000000;
     seen : i32 = -2000000000;
     hot : i32 = -1;
@@ -175,17 +185,30 @@ pub class Calendar : Control, Widget {
         return Bounds::make(x, a.y + CAL_PAD + (CAL_HEAD - CAL_NAV) * 0.5, CAL_NAV, CAL_NAV);
     }
 
-    /** The text in the bar: the month and year, or the year over the month grid. */
+    /** The first year of the page of years that holds the year on show. */
+    pub(file) fn firstYear(self) : i32 {
+        return (self.year / CAL_YEARS) * CAL_YEARS;
+    }
+
+    /** The text in the bar: the month and year, the year over the months, or the span of the years. */
     pub(file) fn title(self) : string {
-        if (self.months) {
+        if (self.panel == 1) {
             return Format::whole(self.year as f64);
+        }
+        if (self.panel == 2) {
+            return Format::whole(self.firstYear() as f64) + " – " + Format::whole((self.firstYear() + CAL_YEARS - 1) as f64);
         }
         return Dates::monthName(self.month) + " " + Format::whole(self.year as f64);
     }
 
+    /** Whether the title is a button: all but the page of years have somewhere further to go. */
+    pub(file) fn titleLive(self) : bool {
+        return self.panel != 2;
+    }
+
     /** The box of the title, which is a button. */
     pub(file) fn titleBox(self, ctx : Context) : Bounds {
-        let w : f64 = ctx.textWidth(FaceKind::Bold, self.title(), 14.0) + 34.0;
+        let w : f64 = ctx.textWidth(FaceKind::Bold, self.title(), 14.0) + (self.titleLive() ? 34.0 : 20.0);
         let a : Bounds = self.area;
         return Bounds::make(a.midX() - w * 0.5, a.y + CAL_PAD + (CAL_HEAD - CAL_NAV) * 0.5, w, CAL_NAV);
     }
@@ -203,11 +226,12 @@ pub class Calendar : Control, Widget {
         return Bounds::make(self.area.x + CAL_PAD + w * col, self.gridTop() + CAL_DAYS + CAL_ROW * row, w, CAL_ROW);
     }
 
-    /** The box of cell `i` (0..11) of the grid of months. */
-    pub(file) fn monthBox(self, i : i32) : Bounds {
-        let w : f64 = (self.area.w - 2.0 * CAL_PAD) / 3.0;
-        let h : f64 = (CAL_DAYS + CAL_ROW * 6.0) / 4.0;
-        return Bounds::make(self.area.x + CAL_PAD + w * ((i % 3) as f64), self.gridTop() + h * ((i / 3) as f64), w, h);
+    /** The box of cell `i` (0..11) of the grid of months or of years. */
+    pub(file) fn pickBox(self, i : i32) : Bounds {
+        let w : f64 = (self.area.w - 2.0 * CAL_PAD - 2.0 * CAL_PICK_GAP) / 3.0;
+        let x : f64 = self.area.x + CAL_PAD + (w + CAL_PICK_GAP) * ((i % 3) as f64);
+        let y : f64 = self.gridTop() + (CAL_PICK + CAL_PICK_GAP) * ((i / 3) as f64);
+        return Bounds::make(x, y, w, CAL_PICK);
     }
 
     /** The box of the footer button `which`: 0 for Clear, 1 for Today. */
@@ -238,14 +262,34 @@ pub class Calendar : Control, Widget {
         return -1;
     }
 
-    /** The month (0..11) of the grid of months under (`x`, `y`), or -1. */
-    pub(file) fn monthAt(self, x : f64, y : f64) : i32 {
+    /** The cell (0..11) of the grid of months or years under (`x`, `y`), or -1. */
+    pub(file) fn pickAt(self, x : f64, y : f64) : i32 {
         for (i of 0..12) {
-            if (self.monthBox(i).contains(x, y)) {
+            if (self.pickBox(i).contains(x, y)) {
                 return i;
             }
         }
         return -1;
+    }
+
+    /** Whether no day of month `m` of year `y` may be chosen. */
+    pub(file) fn monthOff(self, y : i32, m : i32) : bool {
+        let first : i32 = Dates::ymd(y, m, 1);
+        let last : i32 = first + Dates::daysIn(y, m) - 1;
+        return (self.props.min != Dates::NONE && last < self.props.min) || (self.props.max != Dates::NONE && first > self.props.max);
+    }
+
+    /** Whether no day of year `y` may be chosen. */
+    pub(file) fn yearOff(self, y : i32) : bool {
+        return (self.props.min != Dates::NONE && y < Dates::year(self.props.min)) || (self.props.max != Dates::NONE && y > Dates::year(self.props.max));
+    }
+
+    /** Whether cell `i` of the grid on show may be chosen. */
+    pub(file) fn pickAllowed(self, i : i32) : bool {
+        if (self.panel == 1) {
+            return !self.monthOff(self.year, i + 1);
+        }
+        return !self.yearOff(self.firstYear() + i);
     }
 
     /** Whether day `d` may be chosen. */
@@ -255,10 +299,14 @@ pub class Calendar : Control, Widget {
 
     // ─── Choosing ────────────────────────────────────────────────
 
-    /** Turn the month by `step`; over the grid of months, the year. */
+    /** Turn the month by `step`; over the grid of months, the year; over the years, a page of them. */
     pub(file) fn turn(mut self, step : i32) : void {
-        if (self.months) {
+        if (self.panel == 1) {
             self.year = self.year + step;
+            return;
+        }
+        if (self.panel == 2) {
+            self.year = self.year + step * CAL_YEARS;
             return;
         }
         let at : i32 = Dates::addMonths(Dates::ymd(self.year, self.month, 1), step);
@@ -319,7 +367,7 @@ pub class Calendar : Control, Widget {
             at = Dates::ymd(self.year, self.month, 1);
         }
         self.cursor = at + by;
-        self.months = false;
+        self.panel = 0;
         self.showMonthOf(self.cursor);
         ctx.invalidate();
     }
@@ -359,8 +407,11 @@ pub class Calendar : Control, Widget {
         self.hotFoot = 0;
         self.hotTitle = false;
         if (self.hovered) {
-            if (self.months) {
-                self.hot = self.monthAt(e.x, e.y);
+            if (self.panel != 0) {
+                self.hot = self.pickAt(e.x, e.y);
+                if (self.hot >= 0 && !self.pickAllowed(self.hot)) {
+                    self.hot = -1;
+                }
             } else {
                 self.hot = self.cellAt(e.x, e.y);
                 if (self.hot >= 0 && !self.allowed(self.dayAt(self.hot))) {
@@ -372,7 +423,7 @@ pub class Calendar : Control, Widget {
             } else if (self.navBox(1).contains(e.x, e.y)) {
                 self.hotNav = 2;
             }
-            self.hotTitle = self.titleBox(ctx).contains(e.x, e.y);
+            self.hotTitle = self.titleLive() && self.titleBox(ctx).contains(e.x, e.y);
             if (self.picker && self.footBox(0).contains(e.x, e.y)) {
                 self.hotFoot = 1;
             } else if (self.picker && !self.ranged && self.footBox(1).contains(e.x, e.y)) {
@@ -397,8 +448,8 @@ pub class Calendar : Control, Widget {
             self.turn(1);
             return true;
         }
-        if (self.titleBox(ctx).contains(e.x, e.y)) {
-            self.months = !self.months;
+        if (self.titleLive() && self.titleBox(ctx).contains(e.x, e.y)) {
+            self.panel = self.panel + 1;
             return true;
         }
         if (self.picker && self.footBox(0).contains(e.x, e.y)) {
@@ -410,14 +461,19 @@ pub class Calendar : Control, Widget {
             self.showMonthOf(self.props.today);
             return true;
         }
-        if (self.months) {
-            let m : i32 = self.monthAt(e.x, e.y);
-            if (m >= 0) {
-                self.month = m + 1;
-                self.months = false;
-                return true;
+        if (self.panel != 0) {
+            let k : i32 = self.pickAt(e.x, e.y);
+            if (k < 0 || !self.pickAllowed(k)) {
+                return false;
             }
-            return false;
+            if (self.panel == 1) {
+                self.month = k + 1;
+                self.panel = 0;
+            } else {
+                self.year = self.firstYear() + k;
+                self.panel = 1;
+            }
+            return true;
         }
         let i : i32 = self.cellAt(e.x, e.y);
         if (i >= 0) {
@@ -451,7 +507,7 @@ pub class Calendar : Control, Widget {
             self.seen = now;
             if (now != Dates::NONE) {
                 self.showMonthOf(now);
-                self.months = false;
+                self.panel = 0;
             }
             self.cursor = Dates::NONE;
             ctx.invalidate();
@@ -466,15 +522,16 @@ pub class Calendar : Control, Widget {
         let pal = ctx.theme.palette;
         let radius : f64 = ctx.theme.metrics.radiusInline;
         let tb : Bounds = self.titleBox(ctx);
-        if (self.hotTitle || self.months) {
+        if (self.hotTitle) {
             p.fillRound(tb.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
         }
         let title : string = self.title();
         let tw : f64 = ctx.textWidth(FaceKind::Bold, title, 14.0);
         let base : f64 = ctx.baselineIn(FaceKind::Bold, 14.0, tb.y, tb.h);
         p.text(FaceKind::Bold, title, tb.x + 10.0, base, 14.0, pal.text);
-        let chevron : IconKind = self.months ? IconKind::ChevronUp : IconKind::ChevronDown;
-        Icons::draw(p, chevron, tb.x + 10.0 + tw + 4.0, tb.midY() - 6.0, 12.0, pal.textFaint);
+        if (self.titleLive()) {
+            Icons::draw(p, IconKind::ChevronDown, tb.x + 10.0 + tw + 4.0, tb.midY() - 6.0, 12.0, pal.textFaint);
+        }
         for (n of 0..2) {
             let box : Bounds = self.navBox(n);
             if (self.hotNav == n + 1) {
@@ -485,44 +542,58 @@ pub class Calendar : Control, Widget {
         }
     }
 
-    /** The grid of months, with the current one filled. */
-    pub(file) fn paintMonths(self, ctx : Context, p : Painter) : void {
+    /** The grid of months or of years: the one on show filled, this one's today outlined. */
+    pub(file) fn paintPicks(self, ctx : Context, p : Painter) : void {
         let pal = ctx.theme.palette;
         let radius : f64 = ctx.theme.metrics.radiusControl;
-        let (cy, cm, cd) = Dates::civil(self.chosen.get() == Dates::NONE ? 0 : self.chosen.get());
         let (ty, tm, td) = Dates::civil(self.props.today == Dates::NONE ? 0 : self.props.today);
+        let todayOn : bool = self.props.today != Dates::NONE;
         for (i of 0..12) {
-            let cell : Bounds = self.monthBox(i);
-            let box : Bounds = Bounds::make(cell.x + 4.0, cell.y + 7.0, cell.w - 8.0, cell.h - 14.0);
-            let label : string = Dates::monthShort(i + 1);
-            let isChosen : bool = self.chosen.get() != Dates::NONE && cy == self.year && cm == i + 1;
-            let isToday : bool = self.props.today != Dates::NONE && ty == self.year && tm == i + 1;
+            let box : Bounds = self.pickBox(i);
+            let label : string = self.panel == 1 ? Dates::monthShort(i + 1) : Format::whole((self.firstYear() + i) as f64);
+            let shown : bool = self.panel == 1 ? self.month == i + 1 : self.year == self.firstYear() + i;
+            let current : bool = todayOn && (self.panel == 1 ? (ty == self.year && tm == i + 1) : ty == self.firstYear() + i);
             let mut ink : Tint = pal.text;
-            let mut kind : FaceKind = FaceKind::Medium;
-            if (isChosen) {
+            let mut kind : FaceKind = FaceKind::Sans;
+            if (shown) {
                 p.fillRound(box.round(radius), Brush::solid(pal.primary.s500.rgb, 255));
                 ink = Tint::hex(0xFFFFFF);
                 kind = FaceKind::Bold;
             } else if (i == self.hot) {
                 p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
             }
-            if (isToday && !isChosen) {
+            if (current && !shown) {
                 p.strokeRound(box.round(radius), 1.0, Brush::solid(pal.primary.s500.rgb, 255));
                 ink = pal.softPrimary.fg;
+                kind = FaceKind::Bold;
+            }
+            if (!self.pickAllowed(i)) {
+                ink = pal.textOff;
             }
             let lw : f64 = ctx.textWidth(kind, label, 14.0);
             p.text(kind, label, box.midX() - lw * 0.5, ctx.baselineIn(kind, 14.0, box.y, box.h), 14.0, ink);
         }
     }
 
-    /** The band behind a run of days, as a stripe across the cells it covers. */
-    pub(file) fn paintBand(self, ctx : Context, p : Painter, cell : Bounds, left : bool, right : bool) : void {
-        let tone = ctx.theme.palette.softPrimary.hover;
-        let top : f64 = cell.midY() - CAL_DISC * 0.5;
-        // Whole cells overlap their neighbours by half a pixel, so no seam shows between them.
-        let x0 : f64 = left ? cell.x - 0.5 : cell.midX();
-        let x1 : f64 = right ? cell.right() + 0.5 : cell.midX();
-        p.fillRound(Bounds::make(x0, top, x1 - x0, CAL_DISC).round(0.0), Brush::solid(tone.rgb, tone.a));
+    /** The outline of day `d` in `cell`: rounded on the sides where a run of days starts or ends. */
+    pub(file) fn dayShape(self, ctx : Context, cell : Bounds, i : i32, d : i32, start : i32, reach : i32) : RRect {
+        let r : f64 = ctx.theme.metrics.radiusControl;
+        let gap : f64 = self.ranged ? 0.0 : CAL_GAP;
+        let face : Bounds = Bounds::make(cell.x + gap * 0.5, cell.y + 1.0, cell.w - gap, CAL_CELL);
+        let run : bool = reach != Dates::NONE && start != Dates::NONE && reach > start;
+        if (!run || d < start || d > reach) {
+            return face.round(r);
+        }
+        // Inside a run the cells overlap by half a pixel so no seam shows between them.
+        let weekStart : bool = i % 7 == 0 || Dates::day(d) == 1;
+        let weekEnd : bool = i % 7 == 6 || d == Dates::ymd(self.year, self.month, Dates::daysIn(self.year, self.month));
+        let roundL : bool = d == start || weekStart;
+        let roundR : bool = d == reach || weekEnd;
+        let left : f64 = roundL ? r : 0.0;
+        let right : f64 = roundR ? r : 0.0;
+        let x : f64 = roundL ? face.x : face.x - 0.5;
+        let w : f64 = face.right() - x + (roundR ? 0.0 : 0.5);
+        return RRect::corners(x, face.y, w, face.h, left, right, right, left);
     }
 
     /** One day cell. */
@@ -531,51 +602,53 @@ pub class Calendar : Control, Widget {
         let start : i32 = self.chosen.get();
         let stop : i32 = self.ranged ? self.ending.get() : Dates::NONE;
         let cell : Bounds = self.cellBox(i);
-        let disc : RRect = RRect::uniform(cell.midX() - CAL_DISC * 0.5, cell.midY() - CAL_DISC * 0.5, CAL_DISC, CAL_DISC, CAL_DISC * 0.5);
+        let shape : RRect = self.dayShape(ctx, cell, i, d, start, reach);
         let isStart : bool = d == start;
         let isStop : bool = stop != Dates::NONE && d == stop;
         let inside : bool = reach != Dates::NONE && start != Dates::NONE && d > start && d < reach;
+        let previewing : bool = stop == Dates::NONE;
         let mut ink : Tint = pal.text;
         let mut kind : FaceKind = FaceKind::Sans;
-        let off : bool = !self.allowed(d);
-        if (inside) {
-            self.paintBand(ctx, p, cell, true, true);
-            ink = pal.softPrimary.fg;
-        }
-        if (reach != Dates::NONE && start != Dates::NONE && reach > start) {
-            if (isStart) {
-                self.paintBand(ctx, p, cell, false, true);
-            } else if (d == reach) {
-                self.paintBand(ctx, p, cell, true, false);
-            }
-        }
-        if (isStart || isStop) {
-            p.fillRound(disc, Brush::solid(pal.primary.s500.rgb, 255));
+        if (isStart && self.ranged) {
+            p.fillRound(shape, Brush::solid(pal.primary.s700.rgb, 255));
             ink = Tint::hex(0xFFFFFF);
             kind = FaceKind::Bold;
+        } else if (isStart && !self.ranged) {
+            p.fillRound(shape, Brush::solid(pal.primary.s500.rgb, 255));
+            ink = Tint::hex(0xFFFFFF);
+            kind = FaceKind::Bold;
+        } else if (isStop || (previewing && reach != Dates::NONE && d == reach)) {
+            let fill = previewing ? pal.softPrimary.hover : pal.primary.s700;
+            p.fillRound(shape, Brush::solid(fill.rgb, previewing ? fill.a : 255));
+            ink = previewing ? pal.softPrimary.fg : Tint::hex(0xFFFFFF);
+            kind = previewing ? FaceKind::Medium : FaceKind::Bold;
+        } else if (inside) {
+            let fill = previewing ? pal.softPrimary.hover : pal.primary.s500;
+            p.fillRound(shape, Brush::solid(fill.rgb, previewing ? fill.a : 255));
+            ink = previewing ? pal.softPrimary.fg : Tint::hex(0xFFFFFF);
         } else if (i == self.hot) {
-            p.fillRound(disc, Brush::solid(pal.hover.rgb, pal.hover.a));
+            p.fillRound(shape, Brush::solid(pal.hover.rgb, pal.hover.a));
         }
-        if (d == self.props.today && !isStart && !isStop) {
-            p.strokeRound(disc, 1.0, Brush::solid(pal.primary.s500.rgb, 255));
+        if (d == self.props.today && !isStart && !isStop && !inside) {
+            p.strokeRound(shape, 1.0, Brush::solid(pal.primary.s500.rgb, 255));
             ink = pal.softPrimary.fg;
             kind = FaceKind::Bold;
         }
         if (d == self.cursor && (self.isFocused(ctx) || self.picker)) {
-            p.strokeRound(RRect::uniform(disc.x - 2.0, disc.y - 2.0, CAL_DISC + 4.0, CAL_DISC + 4.0, CAL_DISC * 0.5 + 2.0), 2.0, Brush::solid(pal.primary.s500.rgb, 160));
+            p.strokeRound(shape.grown(2.0), 2.0, Brush::solid(pal.primary.s500.rgb, 160));
         }
-        if (off) {
+        if (!self.allowed(d)) {
             ink = pal.textOff;
         }
         let label : string = Format::whole(Dates::day(d) as f64);
         let lw : f64 = ctx.textWidth(kind, label, 14.0);
-        p.text(kind, label, cell.midX() - lw * 0.5, ctx.baselineIn(kind, 14.0, cell.y, cell.h), 14.0, ink);
+        p.text(kind, label, cell.midX() - lw * 0.5, ctx.baselineIn(kind, 14.0, cell.y + 1.0, CAL_CELL), 14.0, ink);
     }
 
     /** The weekday letters and the days. */
     pub(file) fn paintDays(self, ctx : Context, p : Painter) : void {
         let pal = ctx.theme.palette;
-        let letters : string[] = ["M", "T", "W", "T", "F", "S", "S"];
+        let letters : string[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
         let w : f64 = self.cellW();
         for (c of 0..7) {
             let lw : f64 = ctx.textWidth(FaceKind::Medium, letters[c as i64], 11.0);
@@ -628,8 +701,8 @@ pub class Calendar : Control, Widget {
             Surfaces::draw(p, rr, self.area, ctx.theme.panel(Elevation::Raised));
         }
         self.paintHead(ctx, p);
-        if (self.months) {
-            self.paintMonths(ctx, p);
+        if (self.panel != 0) {
+            self.paintPicks(ctx, p);
         } else {
             self.paintDays(ctx, p);
         }
