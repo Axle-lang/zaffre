@@ -1,0 +1,248 @@
+// donut — shares of a whole as a ring, and a ranked list of bars.
+//
+//     new DonutChart(DonutProps { size: 168.0 }, ["Direct", "Search", "Social"], [48.0, 31.0, 21.0])
+//     new BarList(["Chrome", "Firefox", "Safari"], [62.0, 21.0, 17.0], Tone::Accent)
+//
+// A donut draws one arc per value, each in the next colour of the chart palette, with a legend that
+// gives the value and its share. Under the pointer an arc steps out and the middle shows its
+// figure instead of the total. A bar list is the plain alternative for ranked data: one row per
+// item, the label and the value on one line and a bar under them, scaled to the largest.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::chartkit::ChartKit;
+
+/** How a donut looks. */
+pub struct DonutProps {
+    /** The ring's diameter. */
+    pub size : f64 = 168.0;
+
+    /** The ring's thickness. */
+    pub thickness : f64 = 22.0;
+
+    /** What the total is called in the middle. */
+    pub caption : string = "Total";
+
+    /** Whether the legend shows beside the ring. */
+    pub legend : bool = true;
+}
+
+/** Width of the legend. */
+const DONUT_LEGEND : f64 = 200.0;
+
+/** A ring of shares. */
+pub class DonutChart : Control, Widget {
+    props : DonutProps;
+    labels : string[];
+    values : f64[];
+    n : i32;
+    total : f64 = 0.0;
+    hot : i32 = -1;
+
+    /** A donut of `values` called `labels`. */
+    constructor(own props : DonutProps, labels : string[], values : f64[]) {
+        self.props = props;
+        self.labels = labels;
+        self.values = values;
+        self.n = Mathx::clampI(Mathx::clampI(labels.length as i32, 0, values.length as i32), 0, 12);
+        self.focusable = false;
+        for (i of 0..self.n) {
+            self.total = self.total + values[i as i64];
+        }
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut w : f64 = self.props.size;
+        if (self.props.legend) {
+            w = w + 28.0 + DONUT_LEGEND;
+        }
+        return limits.constrain(Size { w: w, h: self.props.size });
+    }
+
+    /** The centre of the ring. */
+    pub(file) fn centre(self) : (x: f64, y: f64) {
+        return (self.area.x + self.props.size * 0.5, self.area.y + self.props.size * 0.5);
+    }
+
+    /** The arc under (`x`, `y`), or -1. */
+    pub(file) fn arcAt(self, x : f64, y : f64) : i32 {
+        let (cx, cy) = self.centre();
+        let dx : f64 = x - cx;
+        let dy : f64 = y - cy;
+        let d : f64 = (dx * dx + dy * dy).sqrt();
+        let outer : f64 = self.props.size * 0.5 + 4.0;
+        if (d > outer || d < outer - self.props.thickness - 8.0 || self.total <= 0.0) {
+            return -1;
+        }
+        // The angle from the top, clockwise, as a fraction of a turn.
+        let mut t : f64 = Mathx::atan2(dy, dx) / 6.283185307179586 + 0.25;
+        if (t < 0.0) {
+            t = t + 1.0;
+        }
+        let mut acc : f64 = 0.0;
+        for (i of 0..self.n) {
+            acc = acc + self.values[i as i64] / self.total;
+            if (t < acc) {
+                return i;
+            }
+        }
+        return self.n - 1;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.arcAt(e.x, e.y);
+            }
+            if (before != self.hot) {
+                ctx.invalidate();
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let (cx, cy) = self.centre();
+        let t : f64 = self.props.thickness;
+        let outer : f64 = self.props.size * 0.5 - 4.0;
+        let radius : f64 = outer - t * 0.5;
+        // The track, for an empty chart; then one arc per value with a small gap between.
+        if (self.total <= 0.0) {
+            self.arc(p, cx, cy, radius, 0.0, 1.0, t, pal.track);
+        }
+        let mut start : f64 = 0.0;
+        for (i of 0..self.n) {
+            let share : f64 = self.total > 0.0 ? self.values[i as i64] / self.total : 0.0;
+            let gap : f64 = Mathx::fmin(0.006, share * 0.3);
+            let mut r : f64 = radius;
+            let mut w : f64 = t;
+            if (i == self.hot) {
+                r = radius + 2.0;
+                w = t + 4.0;
+            }
+            self.arc(p, cx, cy, r, start + gap, start + share - gap, w, ChartKit::color(ctx, i));
+            start = start + share;
+        }
+        // The middle: the hovered figure, or the total.
+        let mut big : string = Format::fixed(self.total, 0);
+        let mut small : string = self.props.caption;
+        if (self.hot >= 0) {
+            big = Format::fixed(self.values[self.hot as i64], 0);
+            small = self.labels[self.hot as i64];
+        }
+        let bw : f64 = ctx.textWidth(FaceKind::Bold, big, 24.0);
+        p.text(FaceKind::Bold, big, cx - bw * 0.5, ctx.baselineIn(FaceKind::Bold, 24.0, cy - 22.0, 28.0), 24.0, pal.text);
+        let sw : f64 = ctx.textWidth(FaceKind::Sans, small, 12.0);
+        p.text(FaceKind::Sans, small, cx - sw * 0.5, ctx.baselineIn(FaceKind::Sans, 12.0, cy + 6.0, 18.0), 12.0, pal.textFaint);
+        if (self.props.legend) {
+            self.paintLegend(ctx, p);
+        }
+    }
+
+    /** An arc from turn `a0` to turn `a1` (0 is the top, clockwise) on the circle of radius `r`. */
+    pub(file) fn arc(self, p : Painter, cx : f64, cy : f64, r : f64, a0 : f64, a1 : f64, width : f64, ink : Tint) : void {
+        if (a1 <= a0) {
+            return;
+        }
+        let steps : i32 = Mathx::clampI(Mathx::roundI((a1 - a0) * 120.0), 2, 120);
+        let mut px : f64 = 0.0;
+        let mut py : f64 = 0.0;
+        for (k of 0..(steps + 1)) {
+            let turn : f64 = a0 + (a1 - a0) * (k as f64) / (steps as f64);
+            let ang : f64 = turn * 6.283185307179586 - 1.5707963267948966;
+            let x : f64 = cx + r * ang.cos();
+            let y : f64 = cy + r * ang.sin();
+            if (k > 0) {
+                p.line(px, py, x, y, width, ink);
+            }
+            px = x;
+            py = y;
+        }
+    }
+
+    /** The legend: a dot, the label, the value and the share, a row each. */
+    pub(file) fn paintLegend(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let x : f64 = a.x + self.props.size + 28.0;
+        let step : f64 = 28.0;
+        let top : f64 = a.y + (self.props.size - step * (self.n as f64)) * 0.5;
+        for (i of 0..self.n) {
+            let y : f64 = top + step * (i as f64);
+            if (i == self.hot) {
+                p.fillRound(RRect::uniform(x - 8.0, y, DONUT_LEGEND + 8.0, step, 6.0), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            p.line(x + 4.0, y + step * 0.5, x + 4.0, y + step * 0.5, 8.0, ChartKit::color(ctx, i));
+            p.text(FaceKind::Sans, self.labels[i as i64], x + 18.0, ctx.baselineIn(FaceKind::Sans, 13.0, y, step), 13.0, pal.text);
+            let share : string = Format::percent(self.total > 0.0 ? self.values[i as i64] / self.total : 0.0);
+            let value : string = Format::fixed(self.values[i as i64], 0);
+            let sw : f64 = ctx.textWidth(FaceKind::Sans, share, 12.0);
+            p.text(FaceKind::Sans, share, x + DONUT_LEGEND - sw, ctx.baselineIn(FaceKind::Sans, 12.0, y, step), 12.0, pal.textFaint);
+            let vw : f64 = ctx.textWidth(FaceKind::Bold, value, 13.0);
+            p.text(FaceKind::Bold, value, x + DONUT_LEGEND - 56.0 - vw, ctx.baselineIn(FaceKind::Bold, 13.0, y, step), 13.0, pal.text);
+        }
+    }
+}
+
+/** Height of a row of a bar list. */
+const BARLIST_ROW : f64 = 44.0;
+
+/** One bar per item, scaled to the largest. */
+pub class BarList : Base, Widget {
+    labels : string[];
+    values : f64[];
+    n : i32;
+    tone : Tone;
+
+    /** A list of `values` called `labels`, drawn in `tone`. */
+    constructor(labels : string[], values : f64[], tone : Tone) {
+        self.labels = labels;
+        self.values = values;
+        self.n = Mathx::clampI(labels.length as i32, 0, values.length as i32);
+        self.tone = tone;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : 320.0, h: BARLIST_ROW * (self.n as f64) });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let mut top : f64 = 0.0;
+        for (i of 0..self.n) {
+            top = Mathx::fmax(top, self.values[i as i64]);
+        }
+        let ink : Tint = ctx.theme.hue(self.tone).s500;
+        for (i of 0..self.n) {
+            let y : f64 = a.y + BARLIST_ROW * (i as f64);
+            p.text(FaceKind::Sans, self.labels[i as i64], a.x, ctx.baselineIn(FaceKind::Sans, 14.0, y, 22.0), 14.0, pal.text);
+            let value : string = Format::fixed(self.values[i as i64], 0);
+            let vw : f64 = ctx.textWidth(FaceKind::Bold, value, 14.0);
+            p.text(FaceKind::Bold, value, a.right() - vw, ctx.baselineIn(FaceKind::Bold, 14.0, y, 22.0), 14.0, pal.text);
+            let track : RRect = RRect::uniform(a.x, y + 26.0, a.w, 8.0, 4.0);
+            p.fillRound(track, Brush::solid(pal.track.rgb, pal.track.a));
+            let share : f64 = top > 0.0 ? self.values[i as i64] / top : 0.0;
+            if (share > 0.0) {
+                p.fillRound(RRect::uniform(a.x, y + 26.0, Mathx::fmax(8.0, a.w * share), 8.0, 4.0), Brush::solid(ink.rgb, 255));
+            }
+        }
+    }
+}

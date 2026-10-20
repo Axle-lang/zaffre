@@ -1,0 +1,152 @@
+// togglegroup — a row of joined buttons, each of which can be on or off.
+//
+//     let styles : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new ToggleGroup(["Bold", "Italic", "Underline"], styles)
+//
+// The model holds the buttons that are on as a bit mask (bit 0 is the first). With `single` set,
+// pressing a button turns the others off, which makes the group an exclusive choice — but unlike a
+// `Segmented` control, pressing the one that is on turns it off again.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** How a toggle group behaves and looks. */
+pub struct ToggleGroupProps {
+    /** Whether turning one button on turns the others off. */
+    pub single : bool = false;
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Sm;
+}
+
+/** The most buttons a group holds. */
+const TOGGLE_MAX : i32 = 12;
+
+/** A row of buttons that stay pressed. */
+pub class ToggleGroup : Control, Widget {
+    props : ToggleGroupProps;
+    labels : string[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    hot : i32 = -1;
+    left : f64[] = malloc<f64>(12 as i64);
+    right : f64[] = malloc<f64>(12 as i64);
+
+    /** A group of `labels` whose pressed set is held in `model`. */
+    constructor(labels : string[], model : Shared<Model<i32>>) {
+        self.props = ToggleGroupProps { };
+        self.labels = labels;
+        self.count = Mathx::clampI(labels.length as i32, 0, TOGGLE_MAX);
+        self.model = model;
+    }
+
+    /** A group set as `props` say. */
+    constructor(own props : ToggleGroupProps, labels : string[], model : Shared<Model<i32>>) {
+        self.props = props;
+        self.labels = labels;
+        self.count = Mathx::clampI(labels.length as i32, 0, TOGGLE_MAX);
+        self.model = model;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut x : f64 = 0.0;
+        for (i of 0..self.count) {
+            let w : f64 = ctx.textWidth(FaceKind::Bold, self.labels[i as i64], 13.0) + 28.0;
+            self.left[i as i64] = x;
+            self.right[i as i64] = x + w;
+            x = x + w;
+        }
+        return limits.constrain(Size { w: x, h: ctx.theme.heightOf(self.props.size) });
+    }
+
+    /** The button under `x`, or -1. */
+    pub(file) fn indexAt(self, x : f64) : i32 {
+        let rel : f64 = x - self.area.x;
+        for (i of 0..self.count) {
+            if (rel >= self.left[i as i64] && rel < self.right[i as i64]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Press button `i`. */
+    pub(file) fn flip(mut self, ctx : Context, i : i32) : void {
+        let mask : i32 = self.model.get();
+        let on : bool = ((mask >> i) & 1) == 1;
+        let mut next : i32 = 0;
+        if (!self.props.single) {
+            next = mask;
+        }
+        if (on) {
+            next = next & ~(1 << i);
+        } else {
+            next = next | (1 << i);
+        }
+        self.model.set(next);
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.indexAt(e.x);
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.indexAt(e.x);
+            if (i >= 0) {
+                self.flip(ctx, i);
+            }
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusControl;
+        let mask : i32 = self.model.get();
+        p.fillRound(a.round(r), Brush::solid(pal.surface.rgb, pal.surface.a));
+        for (i of 0..self.count) {
+            let box : Bounds = Bounds::make(a.x + self.left[i as i64], a.y, self.right[i as i64] - self.left[i as i64], a.h);
+            let first : bool = i == 0;
+            let last : bool = i == self.count - 1;
+            let tl : f64 = first ? r : 0.0;
+            let tr : f64 = last ? r : 0.0;
+            let on : bool = ((mask >> i) & 1) == 1;
+            let shape : RRect = RRect::corners(box.x, box.y, box.w, box.h, tl, tr, tr, tl);
+            let mut ink : Tint = pal.textDim;
+            if (on) {
+                p.fillRound(shape, Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+                ink = pal.softPrimary.fg;
+            } else if (i == self.hot) {
+                p.fillRound(shape, Brush::solid(pal.hover.rgb, pal.hover.a));
+                ink = pal.text;
+            }
+            if (!last) {
+                p.line(box.right() - 0.5, a.y + 1.0, box.right() - 0.5, a.bottom() - 1.0, 1.0, pal.lineStrong);
+            }
+            let w : f64 = ctx.textWidth(FaceKind::Bold, self.labels[i as i64], 13.0);
+            p.text(FaceKind::Bold, self.labels[i as i64], box.x + (box.w - w) * 0.5, ctx.baselineIn(FaceKind::Bold, 13.0, box.y, box.h), 13.0, ink);
+        }
+        p.strokeRound(a.round(r), 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+    }
+}

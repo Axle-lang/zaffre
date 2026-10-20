@@ -1,0 +1,124 @@
+// timeline — a vertical record of what happened, newest first or last as the program lists it.
+//
+//     let events : TimelineEntry[] = [
+//         TimelineEntry { title: "Deployed to production", time: "2 min ago", tone: Tone::Ok, icon: IconKind::Check },
+//         TimelineEntry { title: "Review requested", detail: "Two reviewers assigned.", time: "1 h ago" },
+//     ];
+//     new Timeline(events)
+//
+// Each entry is a coloured disc on a rail, with a title, an optional line of detail (wrapped to the
+// width) and the time at the end of the title line.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::palette::Soft;
+use crate::style::variants::Tone;
+use crate::text::fonts::{Fonts, FaceKind};
+use crate::text::typeset::Lines;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** One event on a timeline. */
+pub struct TimelineEntry {
+    /** What happened. */
+    pub title : string = "";
+
+    /** More about it. */
+    pub detail : string = "";
+
+    /** When, as the program words it. */
+    pub time : string = "";
+
+    /** The colour of the disc. */
+    pub tone : Tone = Tone::Neutral;
+
+    /** The picture in the disc; a dot when none. */
+    pub icon : IconKind = IconKind::None;
+}
+
+/** Diameter of a disc. */
+const TL_DISC : f64 = 28.0;
+
+/** Space between the disc and the text. */
+const TL_GAP : f64 = 14.0;
+
+/** Space under an entry. */
+const TL_AFTER : f64 = 20.0;
+
+/** A vertical timeline. */
+pub class Timeline : Base, Widget {
+    entries : TimelineEntry[];
+    count : i32;
+    heights : f64[];
+    lines : Lines = new Lines();
+
+    /** A timeline of `entries`. */
+    constructor(entries : TimelineEntry[]) {
+        self.entries = entries;
+        self.count = entries.length as i32;
+        self.heights = malloc<f64>(self.count as i64);
+    }
+
+    /** The height of the text of entry `i` at `width`. */
+    pub(file) fn textHeight(mut self, ctx : Context, i : i32, width : f64) : f64 {
+        let e : TimelineEntry = self.entries[i as i64];
+        let mut h : f64 = ctx.lineHeight(FaceKind::Bold, 14.0);
+        if (e.detail.byteLength > 0) {
+            ctx.fonts.wrap(FaceKind::Sans, e.detail, 13.0, width, self.lines);
+            h = h + 4.0 + 13.0 * ctx.theme.metrics.leading * (self.lines.count as f64);
+        }
+        return h;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = limits.boundedW() ? limits.maxW : 420.0;
+        let mut h : f64 = 0.0;
+        for (i of 0..self.count) {
+            let own : f64 = Mathx::fmax(TL_DISC, self.textHeight(ctx, i, w - TL_DISC - TL_GAP));
+            self.heights[i as i64] = own;
+            h = h + own;
+            if (i < self.count - 1) {
+                h = h + TL_AFTER;
+            }
+        }
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let mut top : f64 = a.y;
+        let textX : f64 = a.x + TL_DISC + TL_GAP;
+        for (i of 0..self.count) {
+            let e : TimelineEntry = self.entries[i as i64];
+            let h : f64 = self.heights[i as i64];
+            let soft : Soft = ctx.theme.soft(e.tone);
+            if (i < self.count - 1) {
+                let cx : f64 = a.x + TL_DISC * 0.5;
+                p.line(cx, top + TL_DISC + 4.0, cx, top + h + TL_AFTER - 4.0, 2.0, pal.line);
+            }
+            let disc : RRect = RRect::uniform(a.x, top, TL_DISC, TL_DISC, TL_DISC * 0.5);
+            p.fillRound(disc, Brush::solid(soft.fill.rgb, soft.fill.a));
+            let icon : IconKind = e.icon == IconKind::None ? IconKind::Dot : e.icon;
+            Icons::draw(p, icon, a.x + (TL_DISC - 16.0) * 0.5, top + (TL_DISC - 16.0) * 0.5, 16.0, soft.fg);
+            let lh : f64 = ctx.lineHeight(FaceKind::Bold, 14.0);
+            p.text(FaceKind::Bold, e.title, textX, ctx.baselineIn(FaceKind::Bold, 14.0, top, lh), 14.0, pal.text);
+            if (e.time.byteLength > 0) {
+                let tw : f64 = ctx.textWidth(FaceKind::Sans, e.time, 12.0);
+                p.text(FaceKind::Sans, e.time, a.right() - tw, ctx.baselineIn(FaceKind::Sans, 12.0, top, lh), 12.0, pal.textFaint);
+            }
+            if (e.detail.byteLength > 0) {
+                ctx.fonts.wrap(FaceKind::Sans, e.detail, 13.0, a.w - TL_DISC - TL_GAP, self.lines);
+                let step : f64 = 13.0 * ctx.theme.metrics.leading;
+                for (n of 0..self.lines.count) {
+                    let y : f64 = top + lh + 4.0 + step * (n as f64);
+                    p.textSpan(FaceKind::Sans, e.detail, self.lines.startOf(n), self.lines.stopOf(n), textX, ctx.baselineIn(FaceKind::Sans, 13.0, y, step), 13.0, pal.textDim);
+                }
+            }
+            top = top + h + TL_AFTER;
+        }
+    }
+}

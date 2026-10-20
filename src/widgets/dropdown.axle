@@ -1,0 +1,448 @@
+// dropdown — a list of actions that opens from a button.
+//
+//     let entries : MenuEntry[] = [
+//         MenuEntry { label: "Rename", icon: IconKind::Edit, shortcut: "F2" },
+//         MenuEntry { label: "Duplicate", icon: IconKind::Copy },
+//         MenuEntry { separator: true },
+//         MenuEntry { label: "Delete", icon: IconKind::Trash, danger: true },
+//     ];
+//     new MenuButton(ButtonProps { label: "Actions", kind: ButtonKind::Outline }, entries, (i) => act(i))
+//
+// A `MenuButton` is a button that opens the menu under itself. For a trigger that is not a button —
+// an avatar, an icon — `DropdownMenu` wraps any widget and opens the menu when it is clicked. The
+// menu is an overlay like a select's: it fades in under the trigger (over it when there is no room
+// below), closes on Escape or a click outside, and is driven from the keyboard with Up, Down and
+// Enter. A `danger` entry is drawn in red; a separator is a hairline; a disabled entry is dimmed and
+// skipped. The handler receives the index of the entry in the array.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::variants::Elevation;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::button::{Button, ButtonProps};
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
+
+/** One row of a menu: an action, or a separator. */
+pub struct MenuEntry {
+    /** What it says. */
+    pub label : string = "";
+
+    /** A picture before the label. */
+    pub icon : IconKind = IconKind::None;
+
+    /** A key combination shown at the end of the row. */
+    pub shortcut : string = "";
+
+    /** Whether it is destructive: drawn in red. */
+    pub danger : bool = false;
+
+    /** Whether it is switched off. */
+    pub disabled : bool = false;
+
+    /** Whether it is a hairline between groups rather than an action. */
+    pub separator : bool = false;
+}
+
+/** Height of an action row. */
+const MENU_ROW : f64 = 36.0;
+
+/** Height of a separator, with its margin. */
+const MENU_RULE : f64 = 9.0;
+
+/** Space between the sheet's edge and its rows. */
+const MENU_PAD : f64 = 6.0;
+
+/** The least wide a menu is. */
+const MENU_MIN : f64 = 208.0;
+
+/** The handler a menu without one runs. */
+fn ignoreAction(i : i32) : void {
+}
+
+/** The list that floats under its trigger. */
+pub class ActionMenu : Base, Widget {
+    anchor : Bounds;
+    entries : MenuEntry[];
+    count : i32;
+    onPick : (i32) => void;
+    isOpen : Shared<Model<bool>>;
+    alignEnd : bool;
+    hot : i32 = -1;
+    armed : i32 = -1;
+    tops : f64[];
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+    above : bool = false;
+
+    /** A menu of `entries` under `anchor`, telling `onPick` the index chosen; `isOpen` is cleared when it goes away. */
+    constructor(anchor : Bounds, entries : MenuEntry[], onPick : (i32) => void, isOpen : Shared<Model<bool>>, alignEnd : bool) {
+        self.anchor = anchor;
+        self.count = entries.length as i32;
+        // The menu keeps its own list: the button that opened it still owns `entries`.
+        self.entries = malloc<MenuEntry>(self.count as i64);
+        for (i of 0..self.count) {
+            self.entries[i as i64] = entries[i as i64];
+        }
+        self.tops = malloc<f64>(self.count as i64);
+        self.onPick = onPick;
+        self.isOpen = isOpen;
+        self.alignEnd = alignEnd;
+    }
+
+    /** Start closing: fade out, then finish. */
+    pub fn close(mut self, ctx : Context) : void {
+        self.closing = true;
+        self.isOpen.set(false);
+        ctx.invalidate();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let mut widest : f64 = MENU_MIN;
+        let mut h : f64 = 2.0 * MENU_PAD;
+        for (i of 0..self.count) {
+            let entry : MenuEntry = self.entries[i as i64];
+            self.tops[i as i64] = h;
+            if (entry.separator) {
+                h = h + MENU_RULE;
+                continue;
+            }
+            let mut w : f64 = ctx.textWidth(FaceKind::Sans, entry.label, 14.0) + 2.0 * MENU_PAD + 20.0;
+            if (entry.icon != IconKind::None) {
+                w = w + 26.0;
+            }
+            if (entry.shortcut.byteLength > 0) {
+                w = w + 28.0 + ctx.textWidth(FaceKind::Mono, entry.shortcut, 11.0);
+            }
+            widest = Mathx::fmax(widest, w);
+            h = h + MENU_ROW;
+        }
+        let mut y : f64 = self.anchor.bottom() + 6.0;
+        self.above = false;
+        if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
+            y = self.anchor.y - 6.0 - h;
+            self.above = true;
+        }
+        let mut x : f64 = self.anchor.x;
+        if (self.alignEnd) {
+            x = self.anchor.right() - widest;
+        }
+        x = Mathx::clampF(x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - widest));
+        self.sheet = Bounds::make(x, y, widest, h);
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished && self.sheet.contains(x, y);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    /** The action row under (`x`, `y`), or -1 over a separator, the padding, or outside. */
+    pub(file) fn rowAt(self, x : f64, y : f64) : i32 {
+        if (!self.sheet.contains(x, y)) {
+            return -1;
+        }
+        let rel : f64 = y - self.sheet.y;
+        for (i of 0..self.count) {
+            if (self.entries[i as i64].separator) {
+                continue;
+            }
+            if (rel >= self.tops[i as i64] && rel < self.tops[i as i64] + MENU_ROW) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The row after `start` going `step`, skipping separators and disabled rows; `start` when there is none. */
+    pub(file) fn neighbour(self, start : i32, step : i32) : i32 {
+        let mut i : i32 = start + step;
+        while (i >= 0 && i < self.count) {
+            let entry : MenuEntry = self.entries[i as i64];
+            if (!entry.separator && !entry.disabled) {
+                return i;
+            }
+            i = i + step;
+        }
+        return start;
+    }
+
+    /** Take the pick: tell the handler, close. */
+    pub(file) fn pick(mut self, ctx : Context, i : i32) : void {
+        if (self.entries[i as i64].disabled) {
+            return;
+        }
+        let h : (i32) => void = self.onPick;
+        h(i);
+        self.close(ctx);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return false;
+        }
+        if (e.kind == EventKind::PointerMove) {
+            let r : i32 = self.rowAt(e.x, e.y);
+            if (r != self.hot) {
+                self.hot = r;
+                ctx.invalidate();
+            }
+            if (r >= 0 && !self.entries[r as i64].disabled) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+            return self.sheet.contains(e.x, e.y);
+        }
+        if (e.kind == EventKind::PointerDown) {
+            let r : i32 = self.rowAt(e.x, e.y);
+            if (!self.sheet.contains(e.x, e.y)) {
+                self.close(ctx);
+                return true;
+            }
+            self.armed = r;
+            return true;
+        }
+        if (e.kind == EventKind::PointerUp) {
+            let r : i32 = self.rowAt(e.x, e.y);
+            let armed : i32 = self.armed;
+            self.armed = -1;
+            if (r >= 0 && r == armed) {
+                self.pick(ctx, r);
+            }
+            return self.sheet.contains(e.x, e.y);
+        }
+        if (e.kind == EventKind::Wheel) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Escape) {
+                self.close(ctx);
+                return true;
+            }
+            if (e.key == Key::Down) {
+                self.hot = self.neighbour(self.hot, 1);
+                ctx.invalidate();
+                return true;
+            }
+            if (e.key == Key::Up) {
+                self.hot = self.neighbour(self.hot < 0 ? self.count : self.hot, -1);
+                ctx.invalidate();
+                return true;
+            }
+            if ((e.key == Key::Enter || e.key == Key::Space) && self.hot >= 0) {
+                self.pick(ctx, self.hot);
+                return true;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.5);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let mut dy : f64 = (1.0 - k) * 6.0;
+        if (self.above) {
+            dy = 0.0 - dy;
+        }
+        dy = 0.0 - dy;
+        let b : Bounds = self.sheet.moved(0.0, dy);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusSurface);
+        Surfaces::draw(p, rr, b, ctx.theme.panel(Elevation::Overlay));
+        for (i of 0..self.count) {
+            let entry : MenuEntry = self.entries[i as i64];
+            let top : f64 = b.y + self.tops[i as i64];
+            if (entry.separator) {
+                p.line(b.x + 2.0, top + MENU_RULE * 0.5, b.right() - 2.0, top + MENU_RULE * 0.5, 1.0, pal.line);
+                continue;
+            }
+            let row : Bounds = Bounds::make(b.x + MENU_PAD, top, b.w - 2.0 * MENU_PAD, MENU_ROW);
+            let mut ink : Tint = pal.text;
+            let mut iconInk : Tint = pal.textFaint;
+            if (entry.danger) {
+                ink = pal.softDanger.fg;
+                iconInk = pal.softDanger.fg;
+            }
+            if (i == self.hot && !entry.disabled) {
+                let wash : Tint = entry.danger ? pal.softDanger.fill : pal.hover;
+                p.fillRound(row.round(ctx.theme.metrics.radiusInline), Brush::solid(wash.rgb, wash.a));
+            }
+            if (entry.disabled) {
+                ink = pal.textOff;
+                iconInk = pal.textOff;
+            }
+            let mut x : f64 = row.x + 10.0;
+            if (entry.icon != IconKind::None) {
+                Icons::draw(p, entry.icon, x, row.midY() - 8.0, 16.0, iconInk);
+                x = x + 26.0;
+            }
+            p.text(FaceKind::Sans, entry.label, x, ctx.baselineIn(FaceKind::Sans, 14.0, row.y, row.h), 14.0, ink);
+            if (entry.shortcut.byteLength > 0) {
+                let w : f64 = ctx.textWidth(FaceKind::Mono, entry.shortcut, 11.0);
+                p.text(FaceKind::Mono, entry.shortcut, row.right() - 10.0 - w, ctx.baselineIn(FaceKind::Mono, 11.0, row.y, row.h), 11.0, pal.textFaint);
+            }
+        }
+        p.setOpacity(prev);
+    }
+}
+
+/** A button that opens a menu under itself. */
+pub class MenuButton : Base, Widget {
+    button : Button;
+    entries : MenuEntry[];
+    onPick : (i32) => void;
+    want : Shared<Model<bool>>;
+    isOpen : Shared<Model<bool>>;
+    alignEnd : bool = false;
+
+    /** A button set as `props` say, whose menu lists `entries` and tells `onPick` the index chosen. */
+    constructor(own props : ButtonProps, entries : MenuEntry[], onPick : (i32) => void) {
+        self.want = new shared Model<bool>(false);
+        self.isOpen = new shared Model<bool>(false);
+        let ask : Shared<Model<bool>> = self.want;
+        self.button = new Button(props, () => ask.set(true));
+        self.entries = entries;
+        self.onPick = onPick;
+    }
+
+    /** Open the menu with its right edge under the button's, for a button at the right of a page. */
+    pub fn alignRight(mut self) : void {
+        self.alignEnd = true;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return self.button.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.button.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let used : bool = self.button.event(ctx, e);
+        if (self.want.get()) {
+            self.want.set(false);
+            if (!self.isOpen.get()) {
+                self.isOpen.set(true);
+                let ok : bool = ctx.openOverlay(new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, self.alignEnd));
+                if (!ok) {
+                    self.isOpen.set(false);
+                }
+            }
+        }
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.button.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.button.paint(ctx, p);
+    }
+}
+
+/** Any widget that opens a menu when it is clicked. */
+pub class DropdownMenu : Base, Widget {
+    kid : dyn Widget[];
+    entries : MenuEntry[];
+    onPick : (i32) => void;
+    isOpen : Shared<Model<bool>>;
+    armed : bool = false;
+    alignEnd : bool = false;
+
+    /** `trigger`, which the wrapper takes, opening a menu of `entries`. */
+    constructor(own trigger : dyn Widget, entries : MenuEntry[], onPick : (i32) => void) {
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = trigger;
+        self.entries = entries;
+        self.onPick = onPick;
+        self.isOpen = new shared Model<bool>(false);
+    }
+
+    /** Open the menu with its right edge under the trigger's. */
+    pub fn alignRight(mut self) : void {
+        self.alignEnd = true;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        let used : bool = c.event(ctx, e);
+        let inside : bool = self.area.contains(e.x, e.y) && !ctx.blocked;
+        if (e.kind == EventKind::PointerDown && e.button == 0) {
+            self.armed = inside;
+        }
+        if (e.kind == EventKind::PointerUp && e.button == 0) {
+            let was : bool = self.armed;
+            self.armed = false;
+            if (was && inside && !self.isOpen.get()) {
+                self.isOpen.set(true);
+                let ok : bool = ctx.openOverlay(new ActionMenu(self.area, self.entries, self.onPick, self.isOpen, self.alignEnd));
+                if (!ok) {
+                    self.isOpen.set(false);
+                }
+                return true;
+            }
+        }
+        if (e.kind == EventKind::PointerMove && inside) {
+            ctx.wantCursor(Cursor::Hand);
+        }
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+}

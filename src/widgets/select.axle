@@ -359,7 +359,13 @@ pub class Select : Control, Widget {
             fill = st.fillOff;
         }
         p.fillRound(rr, fill.brush(a.y, a.h));
-        let edge : Tint = st.border.mixed(st.borderHover, hv).mixed(st.borderFocus, act);
+        let mut focusEdge : Tint = st.borderFocus;
+        let mut rest : Tint = st.border.mixed(st.borderHover, hv);
+        if (ctx.invalid) {
+            focusEdge = st.borderInvalid;
+            rest = st.borderInvalid;
+        }
+        let edge : Tint = rest.mixed(focusEdge, act);
         p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
         if (self.ringShown(ctx) || act > 0) {
             let ring : Tint = st.ring.faded(act);

@@ -78,4 +78,31 @@ pub class Mathx {
     pub static fn smooth(t : f64) : f64 {
         return t * t * (3.0 - 2.0 * t);
     }
+
+    /** The angle in radians of the point (`x`, `y`) from the positive x axis, in (-pi, pi]; no standard library needed. */
+    pub static fn atan2(y : f64, x : f64) : f64 {
+        let ax : f64 = x.abs();
+        let ay : f64 = y.abs();
+        if (ax == 0.0 && ay == 0.0) {
+            return 0.0;
+        }
+        // The arctangent of a ratio in [0, 1], by a polynomial good to about 1e-5.
+        let swap : bool = ay > ax;
+        let mut z : f64 = ay / ax;
+        if (swap) {
+            z = ax / ay;
+        }
+        let z2 : f64 = z * z;
+        let mut a : f64 = z * (0.9998660 + z2 * (-0.3302995 + z2 * (0.1801410 + z2 * (-0.0851330 + z2 * 0.0208351))));
+        if (swap) {
+            a = 1.5707963267948966 - a;
+        }
+        if (x < 0.0) {
+            a = 3.141592653589793 - a;
+        }
+        if (y < 0.0) {
+            a = 0.0 - a;
+        }
+        return a;
+    }
 }

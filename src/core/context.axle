@@ -80,6 +80,9 @@ pub class Context {
     /** Whether the focus ring should show: after a key press yes, after a click no. */
     pub focusVisible : bool = false;
 
+    /** True while a form field in error paints its control: bordered controls draw in the danger colour. */
+    pub invalid : bool = false;
+
     /** Whether something changed that needs a new frame. */
     pub dirty : bool = true;
 

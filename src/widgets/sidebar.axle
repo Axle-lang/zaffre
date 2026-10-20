@@ -1,0 +1,245 @@
+// sidebar — the navigation of an application: a brand, groups of items, and optionally a footer.
+//
+//     let items : SidebarItem[] = [
+//         SidebarItem { label: "Workspace", heading: true },
+//         SidebarItem { label: "Overview", icon: IconKind::Home },
+//         SidebarItem { label: "Reports", icon: IconKind::Chart, badge: "3" },
+//         SidebarItem { label: "Account", heading: true },
+//         SidebarItem { label: "Settings", icon: IconKind::Settings },
+//     ];
+//     new Sidebar(SidebarProps { title: "Zaffre" }, items, page)
+//
+// The model holds the index of the chosen entry in the array; headings are labels over a group and
+// cannot be chosen. The chosen item is filled with the hover wash and set in the main text colour;
+// the others are muted and light up under the pointer. Up and Down move the choice while the
+// sidebar has the keyboard. The sidebar takes the height it is offered, so it sits at the side of
+// an `AppShell`.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** One entry of a sidebar: an item, or a heading over the items that follow. */
+pub struct SidebarItem {
+    /** What it says. */
+    pub label : string = "";
+
+    /** A picture before the label. */
+    pub icon : IconKind = IconKind::None;
+
+    /** A small count at the end of the row; none when empty. */
+    pub badge : string = "";
+
+    /** Whether the entry is a heading rather than an item. */
+    pub heading : bool = false;
+}
+
+/** How a sidebar looks. */
+pub struct SidebarProps {
+    /** The brand's name, at the top. */
+    pub title : string = "";
+
+    /** The mark beside the brand. */
+    pub logo : IconKind = IconKind::Cloud;
+
+    /** The sidebar's width. */
+    pub width : f64 = 256.0;
+}
+
+/** Height of the brand bar. */
+const SIDE_HEAD : f64 = 56.0;
+
+/** Height of an item. */
+const SIDE_ITEM : f64 = 36.0;
+
+/** Height of a heading, with its gap above. */
+const SIDE_HEADING : f64 = 34.0;
+
+/** Space around the list. */
+const SIDE_PAD : f64 = 12.0;
+
+/** The handler a sidebar without one runs. */
+fn ignoreEntry(i : i32) : void {
+}
+
+/** A column of navigation. */
+pub class Sidebar : Control, Widget {
+    props : SidebarProps;
+    items : SidebarItem[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    onChange : (i32) => void = ignoreEntry;
+    tops : f64[];
+    hot : i32 = -1;
+
+    /** A sidebar of `items` (`SidebarItem`s), whose chosen entry is held in `model`. */
+    constructor(own props : SidebarProps, items : SidebarItem[], model : Shared<Model<i32>>) {
+        self.props = props;
+        self.items = items;
+        self.count = items.length as i32;
+        self.model = model;
+        self.tops = malloc<f64>(self.count as i64);
+    }
+
+    /** As above, telling `onChange` the index when the user chooses. */
+    constructor(own props : SidebarProps, items : SidebarItem[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        self.props = props;
+        self.items = items;
+        self.count = items.length as i32;
+        self.model = model;
+        self.onChange = onChange;
+        self.tops = malloc<f64>(self.count as i64);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut y : f64 = SIDE_HEAD + SIDE_PAD;
+        for (i of 0..self.count) {
+            self.tops[i as i64] = y;
+            if (self.items[i as i64].heading) {
+                y = y + SIDE_HEADING;
+            } else {
+                y = y + SIDE_ITEM + 2.0;
+            }
+        }
+        return limits.constrain(Size { w: self.props.width, h: limits.boundedH() ? limits.maxH : y + SIDE_PAD });
+    }
+
+    /** The item under `y`, or -1. */
+    pub(file) fn itemAt(self, y : f64) : i32 {
+        let rel : f64 = y - self.area.y;
+        for (i of 0..self.count) {
+            if (self.items[i as i64].heading) {
+                continue;
+            }
+            let top : f64 = self.tops[i as i64];
+            if (rel >= top && rel < top + SIDE_ITEM) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Choose entry `i`. */
+    pub(file) fn choose(mut self, ctx : Context, i : i32) : void {
+        if (i < 0 || i >= self.count || self.items[i as i64].heading || i == self.model.get()) {
+            return;
+        }
+        self.model.set(i);
+        let h : (i32) => void = self.onChange;
+        h(i);
+        ctx.invalidate();
+    }
+
+    /** The next item after `start` going `step` (1 or -1), skipping headings; `start` when there is none. */
+    pub(file) fn neighbour(self, start : i32, step : i32) : i32 {
+        let mut i : i32 = start + step;
+        while (i >= 0 && i < self.count) {
+            if (!self.items[i as i64].heading) {
+                return i;
+            }
+            i = i + step;
+        }
+        return start;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.itemAt(e.y);
+                if (self.hot >= 0) {
+                    ctx.wantCursor(Cursor::Hand);
+                }
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.itemAt(e.y);
+            if (i >= 0) {
+                self.choose(ctx, i);
+                return true;
+            }
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            if (e.key == Key::Down) {
+                self.choose(ctx, self.neighbour(self.model.get(), 1));
+                return true;
+            }
+            if (e.key == Key::Up) {
+                self.choose(ctx, self.neighbour(self.model.get(), -1));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        p.fillRound(a.round(0.0), Brush::solid(pal.surface.rgb, pal.surface.a));
+        p.line(a.right() - 0.5, a.y, a.right() - 0.5, a.bottom(), 1.0, pal.line);
+        // The brand bar.
+        p.line(a.x, a.y + SIDE_HEAD - 0.5, a.right(), a.y + SIDE_HEAD - 0.5, 1.0, pal.line);
+        let mark : RRect = RRect::uniform(a.x + 16.0, a.y + 14.0, 28.0, 28.0, ctx.theme.metrics.radiusControl);
+        p.fillRound(mark, Brush::solid(pal.primary.s600.rgb, 255));
+        Icons::draw(p, self.props.logo, a.x + 20.0, a.y + 18.0, 20.0, Tint::hex(0xFFFFFF));
+        let base : f64 = ctx.baselineIn(FaceKind::Bold, 16.0, a.y, SIDE_HEAD);
+        p.text(FaceKind::Bold, self.props.title, a.x + 54.0, base, 16.0, pal.text);
+        let chosen : i32 = self.model.get();
+        for (i of 0..self.count) {
+            let item : SidebarItem = self.items[i as i64];
+            let top : f64 = a.y + self.tops[i as i64];
+            if (item.heading) {
+                let label : string = Strings::upper(item.label);
+                p.text(FaceKind::Bold, label, a.x + SIDE_PAD + 8.0, ctx.baselineIn(FaceKind::Bold, 11.0, top + 8.0, SIDE_HEADING - 8.0), 11.0, pal.textFaint);
+                continue;
+            }
+            let row : Bounds = Bounds::make(a.x + SIDE_PAD, top, a.w - 2.0 * SIDE_PAD, SIDE_ITEM);
+            let rr : RRect = row.round(ctx.theme.metrics.radiusInline);
+            let mut ink : Tint = pal.textDim;
+            if (i == chosen) {
+                p.fillRound(rr, Brush::solid(pal.hover.rgb, pal.hover.a));
+                ink = pal.text;
+            } else if (i == self.hot) {
+                p.fillRound(rr, Brush::solid(pal.hover.rgb, pal.hover.a));
+                ink = pal.text;
+            }
+            let mut x : f64 = row.x + 10.0;
+            if (item.icon != IconKind::None) {
+                let mut tint : Tint = pal.textFaint;
+                if (i == chosen) {
+                    tint = pal.accentTop;
+                }
+                Icons::draw(p, item.icon, x, row.midY() - 8.0, 16.0, tint);
+                x = x + 26.0;
+            }
+            p.text(FaceKind::Bold, item.label, x, ctx.baselineIn(FaceKind::Bold, 13.0, row.y, row.h), 13.0, ink);
+            if (item.badge.byteLength > 0) {
+                let bw : f64 = ctx.textWidth(FaceKind::Bold, item.badge, 11.0) + 14.0;
+                let pill : RRect = RRect::uniform(row.right() - 10.0 - bw, row.midY() - 9.0, bw, 18.0, 9.0);
+                p.fillRound(pill, Brush::solid(pal.softNeutral.fill.rgb, pal.softNeutral.fill.a));
+                p.text(FaceKind::Bold, item.badge, pill.x + 7.0, ctx.baselineIn(FaceKind::Bold, 11.0, pill.y, pill.h), 11.0, pal.softNeutral.fg);
+            }
+            if (self.ringShown(ctx) && i == chosen) {
+                let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+                p.strokeRound(rr.grown(-1.0), 2.0, Brush::solid(ring.rgb, ring.a));
+            }
+        }
+    }
+}

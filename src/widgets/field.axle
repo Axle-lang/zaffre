@@ -57,6 +57,9 @@ pub struct FieldProps {
 
     /** Whether the value is wrong: a red outline and halo. */
     pub invalid : bool = false;
+
+    /** Whether a cross at the right end clears the text, while there is some. */
+    pub clearable : bool = false;
 }
 
 /** The handler a field without one runs. */
@@ -111,7 +114,21 @@ pub class TextField : Control, Widget {
         if (self.props.icon != IconKind::None) {
             left = left + st.px * 1.3 + 6.0;
         }
-        return Bounds { x: self.area.x + left, y: self.area.y, w: Mathx::fmax(0.0, self.area.w - left - st.padX), h: self.area.h };
+        let mut right : f64 = st.padX;
+        if (self.showsClear()) {
+            right = right + 22.0;
+        }
+        return Bounds { x: self.area.x + left, y: self.area.y, w: Mathx::fmax(0.0, self.area.w - left - right), h: self.area.h };
+    }
+
+    /** Whether the clear cross is showing: asked for, and there is text to clear. */
+    pub(file) fn showsClear(self) : bool {
+        return self.props.clearable && self.model.get().byteLength > 0 && !self.props.disabled;
+    }
+
+    /** The box of the clear cross. */
+    pub(file) fn clearBox(self) : Bounds {
+        return Bounds::make(self.area.right() - 34.0, self.area.y, 34.0, self.area.h);
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
@@ -271,10 +288,21 @@ pub class TextField : Control, Widget {
         let st : FieldStyle = ctx.theme.field(self.props.size);
         let kind : FaceKind = FaceKind::Sans;
         let g : Gesture = self.pointer(ctx, e);
+        let overClear : bool = self.showsClear() && self.clearBox().contains(e.x, e.y);
         if (e.kind == EventKind::PointerMove && self.hovered) {
-            ctx.wantCursor(Cursor::Beam);
+            if (overClear) {
+                ctx.wantCursor(Cursor::Hand);
+            } else {
+                ctx.wantCursor(Cursor::Beam);
+            }
         }
         let fieldBox : Bounds = self.inner(st);
+        if (g == Gesture::Press && overClear) {
+            self.anchor = 0;
+            self.caret = 0;
+            self.commit(ctx, "");
+            return true;
+        }
         if (g == Gesture::Press) {
             let at : i64 = ctx.fonts.indexAt(kind, self.model.get(), st.px, e.x - fieldBox.x + self.scroll) as i64;
             let s : string = self.model.get();
@@ -347,7 +375,7 @@ pub class TextField : Control, Widget {
         let mut focusEdge : Tint = st.borderFocus;
         let mut halo : Tint = st.ring;
         let mut rest : Tint = st.border.mixed(st.borderHover, hv);
-        if (self.props.invalid) {
+        if (self.props.invalid || ctx.invalid) {
             focusEdge = st.borderInvalid;
             halo = st.ringInvalid;
             rest = st.borderInvalid;
@@ -359,6 +387,14 @@ pub class TextField : Control, Widget {
             p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
         }
         let kind : FaceKind = FaceKind::Sans;
+        if (self.showsClear()) {
+            let cb : Bounds = self.clearBox();
+            let mut cross : Tint = ctx.theme.palette.textFaint;
+            if (cb.contains(ctx.pointerX, ctx.pointerY)) {
+                cross = ctx.theme.palette.text;
+            }
+            Icons::draw(p, IconKind::Close, cb.midX() - 7.0, cb.midY() - 7.0, 14.0, cross);
+        }
         if (self.props.icon != IconKind::None) {
             let isz : f64 = st.px * 1.3;
             Icons::draw(p, self.props.icon, a.x + st.padX, a.midY() - isz * 0.5, isz, ctx.theme.palette.textFaint);

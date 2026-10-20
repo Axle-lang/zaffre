@@ -1,0 +1,155 @@
+// quantity — a number with a minus and a plus beside it.
+//
+//     let seats : Shared<Model<i32>> = new shared Model<i32>(3);
+//     new QuantityInput(QuantityProps { min: 1, max: 20 }, seats)
+//
+// The two buttons change the number by `step`, clamped to `min` and `max`; a button that can go no
+// further is dimmed. Up and Down do the same from the keyboard.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a quantity input behaves and looks. */
+pub struct QuantityProps {
+    /** The least the number goes. */
+    pub min : i32 = 0;
+
+    /** The most the number goes. */
+    pub max : i32 = 99;
+
+    /** What one press adds or takes away. */
+    pub step : i32 = 1;
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+}
+
+/** Width of each button. */
+const QTY_BUTTON : f64 = 40.0;
+
+/** Width of the number between them. */
+const QTY_VALUE : f64 = 56.0;
+
+/** A stepper for a whole number. */
+pub class QuantityInput : Control, Widget {
+    props : QuantityProps;
+    model : Shared<Model<i32>>;
+    hot : i32 = -1;
+
+    /** A quantity reading and writing `model`. */
+    constructor(own props : QuantityProps, model : Shared<Model<i32>>) {
+        self.props = props;
+        self.model = model;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: 2.0 * QTY_BUTTON + QTY_VALUE, h: ctx.theme.heightOf(self.props.size) });
+    }
+
+    /** The part under `x`: 0 for minus, 1 for the number, 2 for plus. */
+    pub(file) fn partAt(self, x : f64) : i32 {
+        let rel : f64 = x - self.area.x;
+        if (rel < QTY_BUTTON) {
+            return 0;
+        }
+        if (rel >= QTY_BUTTON + QTY_VALUE) {
+            return 2;
+        }
+        return 1;
+    }
+
+    /** Add `delta` to the number, within its bounds. */
+    pub(file) fn bump(mut self, ctx : Context, delta : i32) : void {
+        self.model.set(Mathx::clampI(self.model.get() + delta, self.props.min, self.props.max));
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                let part : i32 = self.partAt(e.x);
+                if (part != 1) {
+                    self.hot = part;
+                    ctx.wantCursor(Cursor::Hand);
+                }
+            }
+        }
+        if (g == Gesture::Click) {
+            let part : i32 = self.partAt(e.x);
+            if (part == 0) {
+                self.bump(ctx, 0 - self.props.step);
+            } else if (part == 2) {
+                self.bump(ctx, self.props.step);
+            }
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            if (e.key == Key::Up) {
+                self.bump(ctx, self.props.step);
+                return true;
+            }
+            if (e.key == Key::Down) {
+                self.bump(ctx, 0 - self.props.step);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusControl;
+        let frame : RRect = a.round(r);
+        p.fillRound(frame, Brush::solid(pal.surface.rgb, pal.surface.a));
+        let v : i32 = self.model.get();
+        let minus : Bounds = Bounds::make(a.x, a.y, QTY_BUTTON, a.h);
+        let plus : Bounds = Bounds::make(a.right() - QTY_BUTTON, a.y, QTY_BUTTON, a.h);
+        if (self.hot == 0 && v > self.props.min) {
+            p.fillRound(RRect::corners(minus.x, minus.y, minus.w, minus.h, r, 0.0, 0.0, r), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        if (self.hot == 2 && v < self.props.max) {
+            p.fillRound(RRect::corners(plus.x, plus.y, plus.w, plus.h, 0.0, r, r, 0.0), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        let mut edge : Tint = pal.lineStrong;
+        if (self.ringShown(ctx)) {
+            edge = ctx.theme.ringTint();
+        }
+        p.strokeRound(frame, 1.0, Brush::solid(edge.rgb, edge.a));
+        p.line(a.x + QTY_BUTTON - 0.5, a.y + 1.0, a.x + QTY_BUTTON - 0.5, a.bottom() - 1.0, 1.0, pal.line);
+        p.line(a.right() - QTY_BUTTON + 0.5, a.y + 1.0, a.right() - QTY_BUTTON + 0.5, a.bottom() - 1.0, 1.0, pal.line);
+        let mut minusInk : Tint = pal.textDim;
+        if (v <= self.props.min) {
+            minusInk = pal.textOff;
+        }
+        let mut plusInk : Tint = pal.textDim;
+        if (v >= self.props.max) {
+            plusInk = pal.textOff;
+        }
+        Icons::draw(p, IconKind::Minus, minus.midX() - 9.0, minus.midY() - 9.0, 18.0, minusInk);
+        Icons::draw(p, IconKind::Plus, plus.midX() - 9.0, plus.midY() - 9.0, 18.0, plusInk);
+        let text : string = Format::whole(v as f64);
+        let w : f64 = ctx.textWidth(FaceKind::Bold, text, 14.0);
+        p.text(FaceKind::Bold, text, a.midX() - w * 0.5, ctx.baselineIn(FaceKind::Bold, 14.0, a.y, a.h), 14.0, pal.text);
+    }
+}

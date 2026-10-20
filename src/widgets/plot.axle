@@ -1,0 +1,308 @@
+// plot — the line chart and the bar chart: values over a row of labels, with a grid and a hover card.
+//
+//     let months : string[] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
+//     let sales : f64[] = [12.0, 18.5, 15.2, 22.0, 26.4, 24.1];
+//     new LineChart(ChartProps { height: 220.0, unit: " k" }, months, sales)
+//     new BarChart(ChartProps { }, months, sales)
+//
+// Several series go in one array, series after series: with six labels, twelve values are two
+// series (the first six, then the next six) and `names` — given to the longer constructor — says
+// what each is called in the legend and in the card that follows the pointer. A line chart can
+// round its corners (`smooth`) and fill under its lines (`area`); a bar chart always starts at zero
+// and draws series side by side.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::fill::Fill;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::chartkit::{ChartKit, ChartProps, Scale};
+
+/** Room at the left for the value labels. */
+const PLOT_LEFT : f64 = 46.0;
+
+/** Room at the bottom for the labels of the points. */
+const PLOT_BOTTOM : f64 = 26.0;
+
+/** Room at the top. */
+const PLOT_TOP : f64 = 8.0;
+
+/** What the line and the bar chart share: the data, the scale, the pointer. */
+pub class Plot : Control {
+    pub(derived) props : ChartProps;
+    pub(derived) labels : string[];
+    pub(derived) values : f64[];
+    pub(derived) names : string[];
+    pub(derived) n : i32;
+    pub(derived) m : i32;
+    pub(derived) hot : i32 = -1;
+    pub(derived) scale : Scale = Scale { lo: 0.0, hi: 1.0, step: 1.0 };
+
+    /** A plot of `values` (series after series) over `labels`, the series called `names`. */
+    constructor(own props : ChartProps, labels : string[], values : f64[], names : string[]) {
+        self.props = props;
+        self.labels = labels;
+        self.values = values;
+        self.names = names;
+        self.n = Mathx::clampI(labels.length as i32, 1, 1000000);
+        self.m = Mathx::clampI((values.length as i32) / self.n, 1, 6);
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : 480.0, h: self.props.height });
+    }
+
+    /** Whether the legend shows. */
+    pub(derived) fn hasLegend(self) : bool {
+        return self.props.legend && self.m > 1 && self.names.length >= (self.m as i64);
+    }
+
+    /** The box the data is drawn in. */
+    pub(derived) fn plotArea(self) : Bounds {
+        let a : Bounds = self.area;
+        let mut top : f64 = a.y + PLOT_TOP;
+        if (self.hasLegend()) {
+            top = top + 26.0;
+        }
+        return Bounds::make(a.x + PLOT_LEFT, top, Mathx::fmax(1.0, a.w - PLOT_LEFT - 8.0), Mathx::fmax(1.0, a.bottom() - PLOT_BOTTOM - top));
+    }
+
+    /** The smallest and the largest value. */
+    pub(derived) fn extent(self) : (lo: f64, hi: f64) {
+        let mut lo : f64 = self.values[0];
+        let mut hi : f64 = self.values[0];
+        for (i of 0..(self.n * self.m)) {
+            lo = Mathx::fmin(lo, self.values[i as i64]);
+            hi = Mathx::fmax(hi, self.values[i as i64]);
+        }
+        return (lo, hi);
+    }
+
+    /** Fit the scale to the data; `zero` keeps zero on the axis. */
+    pub(derived) fn fit(mut self, zero : bool) : void {
+        let (lo, hi) = self.extent();
+        let mut bottom : f64 = lo;
+        let mut top : f64 = hi;
+        if (zero) {
+            bottom = Mathx::fmin(0.0, lo);
+            top = Mathx::fmax(0.0, hi);
+        } else {
+            let pad : f64 = Mathx::fmax((hi - lo) * 0.1, 0.5);
+            bottom = lo - pad;
+            top = hi + pad;
+        }
+        self.scale = ChartKit::scale(bottom, top);
+    }
+
+    /** The value of series `s` at point `i`. */
+    pub(derived) fn valueAt(self, s : i32, i : i32) : f64 {
+        return self.values[(s * self.n + i) as i64];
+    }
+
+    /** The x of the middle of point `i`. */
+    pub(derived) fn xOf(self, pl : Bounds, i : f64) : f64 {
+        return pl.x + pl.w * (i + 0.5) / (self.n as f64);
+    }
+
+    /** The point under `x`. */
+    pub(derived) fn pointAt(self, pl : Bounds, x : f64) : i32 {
+        return Mathx::clampI(Mathx::floorI((x - pl.x) / pl.w * (self.n as f64)), 0, self.n - 1);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = -1;
+            if (self.hovered && self.plotArea().contains(e.x, e.y)) {
+                self.hot = self.pointAt(self.plotArea(), e.x);
+            }
+            if (before != self.hot) {
+                ctx.invalidate();
+            }
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.hot = -1;
+        }
+        return false;
+    }
+
+    /** The labels of the points along the bottom, as many as fit. */
+    pub(derived) fn paintLabels(self, ctx : Context, p : Painter, pl : Bounds) : void {
+        let pal = ctx.theme.palette;
+        let every : i32 = Mathx::clampI(Mathx::floorI((self.n as f64) / 8.0 + 0.999), 1, 1000);
+        for (i of 0..self.n) {
+            if (i % every != 0) {
+                continue;
+            }
+            let w : f64 = ctx.textWidth(FaceKind::Sans, self.labels[i as i64], 11.0);
+            p.text(FaceKind::Sans, self.labels[i as i64], self.xOf(pl, i as f64) - w * 0.5, ctx.baselineIn(FaceKind::Sans, 11.0, pl.bottom() + 6.0, 16.0), 11.0, pal.textFaint);
+        }
+    }
+
+    /** The card of figures for point `i`. */
+    pub(derived) fn paintCard(self, ctx : Context, p : Painter, pl : Bounds, i : i32) : void {
+        let names : string[] = malloc<string>(self.m as i64);
+        let values : string[] = malloc<string>(self.m as i64);
+        let colors : Tint[] = malloc<Tint>(self.m as i64);
+        for (s of 0..self.m) {
+            if (self.names.length > (s as i64)) {
+                names[s as i64] = self.names[s as i64];
+            } else {
+                names[s as i64] = self.labels[i as i64];
+            }
+            values[s as i64] = Format::fixed(self.valueAt(s, i), self.props.decimals) + self.props.unit;
+            colors[s as i64] = ChartKit::color(ctx, s);
+        }
+        let x : f64 = self.xOf(pl, i as f64) + 14.0;
+        ChartKit::card(ctx, p, self.area, x, pl.y + 4.0, self.labels[i as i64], names, values, colors, self.m);
+    }
+}
+
+/** Values joined by lines. */
+pub class LineChart : Plot, Widget {
+    /** A line chart of one or more series. */
+    constructor(own props : ChartProps, labels : string[], values : f64[]) {
+        super(props, labels, values, malloc<string>(0 as i64));
+    }
+
+    /** A line chart whose series are called `names`. */
+    constructor(own props : ChartProps, labels : string[], values : f64[], names : string[]) {
+        super(props, labels, values, names);
+    }
+
+    /** The value of series `s` at the fractional point `u`, by Catmull-Rom when the chart is smooth. */
+    pub(file) fn curve(self, s : i32, u : f64) : f64 {
+        let uu : f64 = Mathx::clampF(u, 0.0, (self.n - 1) as f64);
+        let i : i32 = Mathx::clampI(Mathx::floorI(uu), 0, Mathx::clampI(self.n - 2, 0, self.n));
+        let t : f64 = uu - (i as f64);
+        let p1 : f64 = self.valueAt(s, i);
+        let p2 : f64 = self.valueAt(s, Mathx::clampI(i + 1, 0, self.n - 1));
+        if (!self.props.smooth) {
+            return Mathx::lerp(p1, p2, t);
+        }
+        let p0 : f64 = self.valueAt(s, Mathx::clampI(i - 1, 0, self.n - 1));
+        let p3 : f64 = self.valueAt(s, Mathx::clampI(i + 2, 0, self.n - 1));
+        let t2 : f64 = t * t;
+        let t3 : f64 = t2 * t;
+        let r : f64 = 0.5 * ((2.0 * p1) + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3);
+        return Mathx::clampF(r, Mathx::fmin(self.scale.lo, Mathx::fmin(p1, p2)), Mathx::fmax(self.scale.hi, Mathx::fmax(p1, p2)));
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        self.fit(false);
+        let pl : Bounds = self.plotArea();
+        let a : Bounds = self.area;
+        ChartKit::grid(ctx, p, pl, self.scale, self.props.decimals);
+        self.paintLabels(ctx, p, pl);
+        if (self.hasLegend()) {
+            ChartKit::legend(ctx, p, Bounds::make(pl.x, a.y, pl.w, 24.0), self.names, self.m);
+        }
+        let x0 : f64 = self.xOf(pl, 0.0);
+        let x1 : f64 = self.xOf(pl, (self.n - 1) as f64);
+        for (s of 0..self.m) {
+            let ink : Tint = ChartKit::color(ctx, s);
+            if (self.props.area) {
+                self.paintArea(p, pl, s, ink, x0, x1);
+            }
+            self.paintLine(p, pl, s, ink, x0, x1);
+        }
+        if (self.hot >= 0) {
+            let x : f64 = self.xOf(pl, self.hot as f64);
+            p.line(x, pl.y, x, pl.bottom(), 1.0, pal.lineStrong);
+            for (s of 0..self.m) {
+                let ink : Tint = ChartKit::color(ctx, s);
+                let y : f64 = ChartKit::yOf(self.scale, pl, self.valueAt(s, self.hot));
+                p.line(x, y, x, y, 11.0, ink.faded(60));
+                p.line(x, y, x, y, 7.0, pal.surface);
+                p.line(x, y, x, y, 4.0, ink);
+            }
+            self.paintCard(ctx, p, pl, self.hot);
+        }
+    }
+
+    /** The wash under series `s`: thin columns from the line to the floor, fading downward. */
+    pub(file) fn paintArea(self, p : Painter, pl : Bounds, s : i32, ink : Tint, x0 : f64, x1 : f64) : void {
+        let brush : Brush = Fill::vertical(ink.faded(80), ink.faded(0)).brush(pl.y, pl.h);
+        let mut x : f64 = x0;
+        let span : f64 = Mathx::fmax(1.0, x1 - x0);
+        while (x <= x1) {
+            let u : f64 = (x - x0) / span * ((self.n - 1) as f64);
+            let y : f64 = ChartKit::yOf(self.scale, pl, self.curve(s, u));
+            p.fillRound(RRect::uniform(x, y, 1.0, pl.bottom() - y, 0.0), brush);
+            x = x + 1.0;
+        }
+    }
+
+    /** Series `s` as a run of short capsules. */
+    pub(file) fn paintLine(self, p : Painter, pl : Bounds, s : i32, ink : Tint, x0 : f64, x1 : f64) : void {
+        let per : i32 = 6;
+        let steps : i32 = (self.n - 1) * per;
+        let mut px : f64 = x0;
+        let mut py : f64 = ChartKit::yOf(self.scale, pl, self.curve(s, 0.0));
+        for (k of 1..(steps + 1)) {
+            let u : f64 = (k as f64) / (per as f64);
+            let nx : f64 = x0 + (x1 - x0) * u / ((self.n - 1) as f64);
+            let ny : f64 = ChartKit::yOf(self.scale, pl, self.curve(s, u));
+            p.line(px, py, nx, ny, 2.4, ink);
+            px = nx;
+            py = ny;
+        }
+    }
+}
+
+/** Values as bars, series side by side. */
+pub class BarChart : Plot, Widget {
+    /** A bar chart of one or more series. */
+    constructor(own props : ChartProps, labels : string[], values : f64[]) {
+        super(props, labels, values, malloc<string>(0 as i64));
+    }
+
+    /** A bar chart whose series are called `names`. */
+    constructor(own props : ChartProps, labels : string[], values : f64[], names : string[]) {
+        super(props, labels, values, names);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        self.fit(true);
+        let pl : Bounds = self.plotArea();
+        let a : Bounds = self.area;
+        ChartKit::grid(ctx, p, pl, self.scale, self.props.decimals);
+        self.paintLabels(ctx, p, pl);
+        if (self.hasLegend()) {
+            ChartKit::legend(ctx, p, Bounds::make(pl.x, a.y, pl.w, 24.0), self.names, self.m);
+        }
+        let cell : f64 = pl.w / (self.n as f64);
+        let group : f64 = cell * 0.64;
+        let bar : f64 = Mathx::fmin(group / (self.m as f64), 40.0);
+        let floor : f64 = ChartKit::yOf(self.scale, pl, 0.0);
+        for (i of 0..self.n) {
+            if (i == self.hot) {
+                p.fillRound(RRect::uniform(pl.x + cell * (i as f64), pl.y, cell, pl.h, 6.0), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            let start : f64 = self.xOf(pl, i as f64) - bar * (self.m as f64) * 0.5;
+            for (s of 0..self.m) {
+                let ink : Tint = ChartKit::color(ctx, s);
+                let v : f64 = self.valueAt(s, i);
+                let y : f64 = ChartKit::yOf(self.scale, pl, v);
+                let top : f64 = Mathx::fmin(y, floor);
+                let h : f64 = Mathx::fmax((floor - y).abs(), 1.0);
+                let x : f64 = start + bar * (s as f64) + 1.0;
+                let r : f64 = Mathx::fmin(5.0, bar * 0.4);
+                p.fillRound(RRect::corners(x, top, bar - 2.0, h, r, r, 0.0, 0.0), Brush::solid(ink.rgb, 255));
+            }
+        }
+        if (self.hot >= 0) {
+            self.paintCard(ctx, p, pl, self.hot);
+        }
+    }
+}

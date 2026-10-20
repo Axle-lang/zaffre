@@ -1,0 +1,136 @@
+// rating — a row of stars the user fills to give a score.
+//
+//     let score : Shared<Model<i32>> = new shared Model<i32>(4);
+//     new Rating(RatingProps { stars: 5 }, score)
+//
+// The model holds the score, 0 to `stars`. The stars under the pointer preview the score a click
+// would give. A rating with `readOnly` set only shows a value: no hand, no hover.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::style::variants::ControlSize;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a rating looks and behaves. */
+pub struct RatingProps {
+    /** How many stars there are. */
+    pub stars : i32 = 5;
+
+    /** The size of a star in pixels. */
+    pub size : f64 = 24.0;
+
+    /** Whether the rating only shows a value. */
+    pub readOnly : bool = false;
+}
+
+/** Space between stars. */
+const STAR_GAP : f64 = 4.0;
+
+/** A row of stars. */
+pub class Rating : Control, Widget {
+    props : RatingProps;
+    model : Shared<Model<i32>>;
+    preview : i32 = 0;
+
+    /** A rating reading and writing `model`. */
+    constructor(own props : RatingProps, model : Shared<Model<i32>>) {
+        self.props = props;
+        self.model = model;
+        self.focusable = !props.readOnly;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let n : f64 = self.props.stars as f64;
+        return limits.constrain(Size { w: n * self.props.size + (n - 1.0) * STAR_GAP, h: self.props.size });
+    }
+
+    /** The score a click at `x` would give: the star under it, 1 up. */
+    pub(file) fn scoreAt(self, x : f64) : i32 {
+        let step : f64 = self.props.size + STAR_GAP;
+        return Mathx::clampI(Mathx::floorI((x - self.area.x) / step) + 1, 1, self.props.stars);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.props.readOnly) {
+            return false;
+        }
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.preview = 0;
+            if (self.hovered) {
+                self.preview = self.scoreAt(e.x);
+                ctx.wantCursor(Cursor::Hand);
+            }
+            ctx.invalidate();
+        }
+        if (g == Gesture::Click) {
+            let mut s : i32 = self.scoreAt(e.x);
+            // Clicking the score that is already given takes it back.
+            if (s == self.model.get()) {
+                s = 0;
+            }
+            self.model.set(s);
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.preview = 0;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            if (e.key == Key::Right || e.key == Key::Up) {
+                self.model.set(Mathx::clampI(self.model.get() + 1, 0, self.props.stars));
+                return true;
+            }
+            if (e.key == Key::Left || e.key == Key::Down) {
+                self.model.set(Mathx::clampI(self.model.get() - 1, 0, self.props.stars));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    /** Draw one star at (`x`, `y`); filled stars are the outline repeated at smaller sizes. */
+    pub static fn star(p : Painter, x : f64, y : f64, size : f64, ink : Tint, filled : bool) : void {
+        Icons::draw(p, IconKind::Star, x, y, size, ink);
+        if (!filled) {
+            return;
+        }
+        let mut f : f64 = 0.86;
+        while (f > 0.1) {
+            let inset : f64 = size * (1.0 - f) * 0.5;
+            Icons::draw(p, IconKind::Star, x + inset, y + inset + size * 0.02, size * f, ink);
+            f = f - 0.14;
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let mut shown : i32 = self.model.get();
+        if (self.preview > 0) {
+            shown = self.preview;
+        }
+        for (i of 0..self.props.stars) {
+            let x : f64 = a.x + (self.props.size + STAR_GAP) * (i as f64);
+            let on : bool = i < shown;
+            let mut ink : Tint = pal.textOff;
+            if (on) {
+                ink = pal.warning.s500;
+            }
+            Rating::star(p, x, a.y, self.props.size, ink, on);
+        }
+    }
+}

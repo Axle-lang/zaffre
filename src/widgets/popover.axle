@@ -1,0 +1,203 @@
+// popover — a floating panel of content that opens from a trigger and closes on a click elsewhere.
+//
+//     fn filters(group : Shared<Model<i32>>) : dyn Widget { … }
+//
+//     new Popover(new Button("Filters"), () => filters(group))
+//
+// Like a menu, but holding whatever the program builds: a form, a colour picker, a few switches.
+// The content is made by the function each time the popover opens. The panel sits under its trigger
+// (over it when there is no room), takes the content's size plus 16 px of padding, and unlike a
+// sheet does not dim the page: it is closed by Escape or by pressing anywhere outside it.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::variants::Elevation;
+use crate::core::geometry::{Size, Bounds, Limits, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::panel::Surfaces;
+
+/** Space between the panel's edge and its content. */
+const POP_PAD : f64 = 16.0;
+
+/** The widest a popover's content is. */
+const POP_MAX_WIDTH : f64 = 360.0;
+
+/** The panel itself, as an overlay. */
+pub class PopoverSheet : Base, Widget {
+    anchor : Bounds;
+    kid : dyn Widget[];
+    isOpen : Shared<Model<bool>>;
+    alignEnd : bool;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+
+    /** A panel under `anchor` holding what `content` builds; `isOpen` is cleared when it goes away. */
+    constructor(anchor : Bounds, content : () => dyn Widget, isOpen : Shared<Model<bool>>, alignEnd : bool) {
+        self.anchor = anchor;
+        self.isOpen = isOpen;
+        self.alignEnd = alignEnd;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        let build : () => dyn Widget = content;
+        self.kid[0] = build();
+    }
+
+    pub fn close(mut self, ctx : Context) : void {
+        self.closing = true;
+        self.isOpen.set(false);
+        ctx.invalidate();
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished && self.sheet.contains(x, y);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, Limits { minW: 0.0, maxW: POP_MAX_WIDTH, minH: 0.0, maxH: UNBOUNDED });
+        let w : f64 = s.w + 2.0 * POP_PAD;
+        let h : f64 = s.h + 2.0 * POP_PAD;
+        let mut y : f64 = self.anchor.bottom() + 6.0;
+        if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
+            y = self.anchor.y - 6.0 - h;
+        }
+        let mut x : f64 = self.anchor.x;
+        if (self.alignEnd) {
+            x = self.anchor.right() - w;
+        }
+        x = Mathx::clampF(x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - w));
+        let k : f64 = 1.0 - Mathx::smooth(self.openT.value);
+        self.sheet = Bounds::make(x, y, w, h);
+        c.arrange(ctx, Bounds::make(x + POP_PAD, y + POP_PAD + 6.0 * k, s.w, s.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return false;
+        }
+        if (e.kind == EventKind::PointerDown && !self.sheet.contains(e.x, e.y)) {
+            self.close(ctx);
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && e.key == Key::Escape) {
+            self.close(ctx);
+            return true;
+        }
+        let c : dyn Widget = self.kid[0];
+        // The panel covers its own content; the content must see the pointer as its own.
+        let covered : bool = ctx.blocked;
+        ctx.blocked = false;
+        let used : bool = c.event(ctx, e);
+        ctx.blocked = covered;
+        return used || self.sheet.contains(e.x, e.y);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.5);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let b : Bounds = self.sheet;
+        Surfaces::draw(p, b.round(ctx.theme.metrics.radiusSurface), b, ctx.theme.panel(Elevation::Overlay));
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+        p.setOpacity(prev);
+    }
+}
+
+/** A widget that opens a popover when it is clicked. */
+pub class Popover : Base, Widget {
+    kid : dyn Widget[];
+    content : () => dyn Widget;
+    isOpen : Shared<Model<bool>>;
+    armed : bool = false;
+    alignEnd : bool = false;
+
+    /** `trigger`, which the wrapper takes, opening a panel of what `content` builds. */
+    constructor(own trigger : dyn Widget, content : () => dyn Widget) {
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = trigger;
+        self.content = content;
+        self.isOpen = new shared Model<bool>(false);
+    }
+
+    /** Open the panel with its right edge under the trigger's. */
+    pub fn alignRight(mut self) : void {
+        self.alignEnd = true;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        let used : bool = c.event(ctx, e);
+        let inside : bool = self.area.contains(e.x, e.y) && !ctx.blocked;
+        if (e.kind == EventKind::PointerDown && e.button == 0) {
+            self.armed = inside;
+        }
+        if (e.kind == EventKind::PointerUp && e.button == 0) {
+            let was : bool = self.armed;
+            self.armed = false;
+            if (was && inside && !self.isOpen.get()) {
+                self.isOpen.set(true);
+                let ok : bool = ctx.openOverlay(new PopoverSheet(self.area, self.content, self.isOpen, self.alignEnd));
+                if (!ok) {
+                    self.isOpen.set(false);
+                }
+                return true;
+            }
+        }
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+}

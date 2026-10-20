@@ -1,0 +1,179 @@
+// chartkit — what every chart in the library shares: the colours of the series, a scale that counts
+// in round steps, the grid with its value labels, and the card of figures that follows the pointer.
+//
+// None of it is a widget. A chart is a widget that draws with these, so a program's own chart — the
+// weather example has one — can use the same scale, grid and card and look like the rest.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Elevation;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::Bounds;
+use crate::core::context::Context;
+use crate::paint::painter::Painter;
+use crate::widgets::panel::Surfaces;
+
+/** How a chart is set. */
+pub struct ChartProps {
+    /** The chart's height in pixels, legend included. */
+    pub height : f64 = 240.0;
+
+    /** Whether a line chart fills under its lines. */
+    pub area : bool = true;
+
+    /** Whether a line chart rounds the corners between points. */
+    pub smooth : bool = true;
+
+    /** Whether a legend names the series. */
+    pub legend : bool = true;
+
+    /** Text after a value in the labels and the card ("°C", " %"). */
+    pub unit : string = "";
+
+    /** Decimals in the value labels. */
+    pub decimals : i32 = 0;
+}
+
+/** The scale of an axis: the least and the most it shows, and the step between lines. */
+pub struct Scale {
+    /** The value at the bottom. */
+    pub lo : f64;
+
+    /** The value at the top. */
+    pub hi : f64;
+
+    /** The step between grid lines. */
+    pub step : f64;
+}
+
+/** The tools charts draw with. */
+pub class ChartKit {
+    /** The colour of series `i`: the brand colour, then the other tones, then back to the start. */
+    pub static fn color(ctx : Context, i : i32) : Tint {
+        let p = ctx.theme.palette;
+        let k : i32 = i % 6;
+        if (k == 1) {
+            return p.success.s500;
+        }
+        if (k == 2) {
+            return p.warning.s500;
+        }
+        if (k == 3) {
+            return p.info.s500;
+        }
+        if (k == 4) {
+            return Tint::hex(0x8B5CF6);
+        }
+        if (k == 5) {
+            return p.danger.s500;
+        }
+        return p.primary.s500;
+    }
+
+    /** `raw` rounded up to 1, 2, 5 or 10 times a power of ten: a step an axis can count in. */
+    pub static fn niceStep(raw : f64) : f64 {
+        if (raw <= 0.0) {
+            return 1.0;
+        }
+        let mut mag : f64 = 1.0;
+        while (raw >= mag * 10.0) {
+            mag = mag * 10.0;
+        }
+        while (raw < mag) {
+            mag = mag / 10.0;
+        }
+        let f : f64 = raw / mag;
+        if (f <= 1.0) {
+            return mag;
+        }
+        if (f <= 2.0) {
+            return mag * 2.0;
+        }
+        if (f <= 5.0) {
+            return mag * 5.0;
+        }
+        return mag * 10.0;
+    }
+
+    /** A scale that contains `lo` to `hi` with about four lines between. */
+    pub static fn scale(lo : f64, hi : f64) : Scale {
+        let step : f64 = ChartKit::niceStep((hi - lo) / 4.0);
+        let mut bottom : f64 = ((lo / step).floorToInt() as f64) * step;
+        let mut top : f64 = ((hi / step).ceilToInt() as f64) * step;
+        if (top <= bottom) {
+            top = bottom + step;
+        }
+        return Scale { lo: bottom, hi: top, step: step };
+    }
+
+    /** The decimals a value on `s` needs to be told from its neighbours. */
+    pub static fn decimalsOf(s : Scale) : i32 {
+        if (s.step >= 1.0) {
+            return 0;
+        }
+        if (s.step >= 0.1) {
+            return 1;
+        }
+        return 2;
+    }
+
+    /** The y of `v` on `s` in the plot `pl`. */
+    pub static fn yOf(s : Scale, pl : Bounds, v : f64) : f64 {
+        return pl.bottom() - pl.h * (v - s.lo) / (s.hi - s.lo);
+    }
+
+    /** Draw the horizontal grid of `s` across `pl`, with value labels at its left. */
+    pub static fn grid(ctx : Context, p : Painter, pl : Bounds, s : Scale, decimals : i32) : void {
+        let pal = ctx.theme.palette;
+        let lines : i32 = (((s.hi - s.lo) / s.step) + 0.5).floorToInt() as i32;
+        for (k of 0..(lines + 1)) {
+            let v : f64 = s.lo + s.step * (k as f64);
+            let y : f64 = ChartKit::yOf(s, pl, v);
+            let mut ink : Tint = pal.line;
+            if (k > 0) {
+                ink = pal.line.faded(150);
+            }
+            p.line(pl.x, y, pl.right(), y, 1.0, ink);
+            let text : string = Format::fixed(v, decimals);
+            let w : f64 = ctx.textWidth(FaceKind::Sans, text, 11.0);
+            p.text(FaceKind::Sans, text, pl.x - 8.0 - w, ctx.baselineIn(FaceKind::Sans, 11.0, y - 8.0, 16.0), 11.0, pal.textFaint);
+        }
+    }
+
+    /** Draw a card with a heading and rows of (`name`, `value`, colour) near (`x`, `y`), kept inside `within`. */
+    pub static fn card(ctx : Context, p : Painter, within : Bounds, x : f64, y : f64, head : string, names : string[], values : string[], colors : Tint[], rows : i32) : void {
+        let pal = ctx.theme.palette;
+        let mut w : f64 = ctx.textWidth(FaceKind::Bold, head, 12.0);
+        for (i of 0..rows) {
+            w = Mathx::fmax(w, ctx.textWidth(FaceKind::Sans, names[i as i64], 12.0) + ctx.textWidth(FaceKind::Bold, values[i as i64], 12.0) + 34.0);
+        }
+        w = w + 24.0;
+        let h : f64 = 16.0 + 22.0 + 20.0 * (rows as f64);
+        let cx : f64 = Mathx::clampF(x, within.x, Mathx::fmax(within.x, within.right() - w));
+        let cy : f64 = Mathx::clampF(y, within.y, Mathx::fmax(within.y, within.bottom() - h));
+        let box : Bounds = Bounds::make(cx, cy, w, h);
+        Surfaces::draw(p, box.round(ctx.theme.metrics.radiusControl), box, ctx.theme.panel(Elevation::Overlay));
+        p.text(FaceKind::Bold, head, cx + 12.0, ctx.baselineIn(FaceKind::Bold, 12.0, cy + 8.0, 18.0), 12.0, pal.textDim);
+        for (i of 0..rows) {
+            let ry : f64 = cy + 30.0 + 20.0 * (i as f64);
+            p.line(cx + 16.0, ry + 8.0, cx + 16.0, ry + 8.0, 8.0, colors[i as i64]);
+            p.text(FaceKind::Sans, names[i as i64], cx + 28.0, ctx.baselineIn(FaceKind::Sans, 12.0, ry, 16.0), 12.0, pal.text);
+            let vw : f64 = ctx.textWidth(FaceKind::Bold, values[i as i64], 12.0);
+            p.text(FaceKind::Bold, values[i as i64], box.right() - 12.0 - vw, ctx.baselineIn(FaceKind::Bold, 12.0, ry, 16.0), 12.0, pal.text);
+        }
+    }
+
+    /** Draw a legend of `names` along the top of `a`, left to right; answers its height. */
+    pub static fn legend(ctx : Context, p : Painter, a : Bounds, names : string[], count : i32) : f64 {
+        let pal = ctx.theme.palette;
+        let mut x : f64 = a.x;
+        for (i of 0..count) {
+            p.line(x + 4.0, a.y + 9.0, x + 4.0, a.y + 9.0, 8.0, ChartKit::color(ctx, i));
+            let end : f64 = p.text(FaceKind::Sans, names[i as i64], x + 14.0, ctx.baselineIn(FaceKind::Sans, 12.0, a.y, 18.0), 12.0, pal.textDim);
+            x = end + 18.0;
+        }
+        return 26.0;
+    }
+}

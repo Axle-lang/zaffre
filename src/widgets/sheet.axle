@@ -1,0 +1,216 @@
+// sheet — a panel of the program's own content that slides or fades over the page: a modal or a drawer.
+//
+//     fn profileForm(name : Shared<Model<string>>) : dyn Widget { … }
+//
+//     notes.openSheet(SheetProps { title: "Edit profile", side: SheetSide::Right }, () => profileForm(name))
+//
+// A dialog (`dialog`) asks a question and has two buttons. A sheet holds whatever the program puts
+// in it: a form, a list, a settings page. The content is built when the sheet opens, by a function
+// the program passes — so closing and opening it again starts from fresh widgets — and the sheet
+// draws a header with the title and a close button around it. It is modal: the page behind is
+// dimmed and out of reach, a click on the dim area or Escape closes it. `SheetSide::Center` is a
+// modal card; `Left` and `Right` are drawers that take the full height and slide in from that edge.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::variants::{Elevation, TextRole};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Insets, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
+
+/** Where a sheet sits. */
+pub enum SheetSide : i32 {
+    /** A card in the middle of the page. */
+    Center = 0,
+
+    /** A drawer along the left edge. */
+    Left = 1,
+
+    /** A drawer along the right edge. */
+    Right = 2,
+}
+
+/** How a sheet looks. */
+pub struct SheetProps {
+    /** The title in the header. */
+    pub title : string = "";
+
+    /** Where the sheet sits. */
+    pub side : SheetSide = SheetSide::Center;
+
+    /** The sheet's width in pixels. */
+    pub width : f64 = 480.0;
+}
+
+/** Height of the header. */
+const SHEET_HEAD : f64 = 56.0;
+
+/** Space around the content. */
+const SHEET_PAD : f64 = 24.0;
+
+/** A modal panel of content. */
+pub class Sheet : Base, Widget {
+    props : SheetProps;
+    kid : dyn Widget[];
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+    overClose : bool = false;
+
+    /** A sheet as `props` say, holding what `content` builds. */
+    constructor(own props : SheetProps, content : () => dyn Widget) {
+        self.props = props;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        let build : () => dyn Widget = content;
+        self.kid[0] = build();
+    }
+
+    pub fn modal(self) : bool {
+        return true;
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished;
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    /** Start closing: slide or fade out, then finish. */
+    pub fn close(mut self, ctx : Context) : void {
+        self.closing = true;
+        ctx.invalidate();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        let w : f64 = Mathx::fmin(self.props.width, area.w - 32.0);
+        let inner : f64 = w - 2.0 * SHEET_PAD;
+        if (self.props.side == SheetSide::Center) {
+            let s : Size = c.measure(ctx, Limits::loose(inner, area.h - SHEET_HEAD - 2.0 * SHEET_PAD - 64.0));
+            let h : f64 = SHEET_HEAD + s.h + 2.0 * SHEET_PAD;
+            self.sheet = Bounds::make(area.midX() - w * 0.5, area.midY() - h * 0.5 - 12.0, w, h);
+            let off : Size = self.offset();
+            c.arrange(ctx, Bounds::make(self.sheet.x + SHEET_PAD + off.w, self.sheet.y + SHEET_HEAD + SHEET_PAD + off.h, inner, s.h));
+            return;
+        }
+        let x : f64 = self.props.side == SheetSide::Left ? area.x : area.right() - w;
+        self.sheet = Bounds::make(x, area.y, w, area.h);
+        let s : Size = c.measure(ctx, Limits { minW: 0.0, maxW: inner, minH: 0.0, maxH: UNBOUNDED });
+        let off : Size = self.offset();
+        c.arrange(ctx, Bounds::make(x + SHEET_PAD + off.w, area.y + SHEET_HEAD + SHEET_PAD + off.h, inner, s.h));
+    }
+
+    /** The box of the close button. */
+    pub(file) fn closeBox(self) : Bounds {
+        let b : Bounds = self.sheet;
+        return Bounds::make(b.right() - 48.0, b.y + 12.0, 32.0, 32.0);
+    }
+
+    /** How far the sheet is offset from its resting place while it slides. */
+    pub(file) fn offset(self) : Size {
+        let k : f64 = 1.0 - Mathx::smooth(self.openT.value);
+        if (self.props.side == SheetSide::Left) {
+            return Size { w: 0.0 - self.sheet.w * k, h: 0.0 };
+        }
+        if (self.props.side == SheetSide::Right) {
+            return Size { w: self.sheet.w * k, h: 0.0 };
+        }
+        return Size { w: 0.0, h: 10.0 * k };
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return true;
+        }
+        if (e.kind == EventKind::PointerMove) {
+            self.overClose = self.closeBox().contains(e.x, e.y);
+            if (self.overClose) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0) {
+            if (self.closeBox().contains(e.x, e.y) || !self.sheet.contains(e.x, e.y)) {
+                self.close(ctx);
+                return true;
+            }
+        }
+        if (e.kind == EventKind::KeyDown && e.key == Key::Escape) {
+            self.close(ctx);
+            return true;
+        }
+        let c : dyn Widget = self.kid[0];
+        // The sheet covers the whole interface; its content is part of what covers it.
+        let covered : bool = ctx.blocked;
+        ctx.blocked = false;
+        c.event(ctx, e);
+        ctx.blocked = covered;
+        return true;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.3);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let a : Bounds = self.area;
+        p.fillRound(a.round(0.0), Brush::solid(pal.scrim.rgb, Mathx::roundI((pal.scrim.a as f64) * k)));
+        let off : Size = self.offset();
+        let mut opacity : i32 = 255;
+        if (self.props.side == SheetSide::Center) {
+            opacity = Mathx::roundI(k * 255.0);
+        }
+        let prev : i32 = p.setOpacity(opacity);
+        let b : Bounds = self.sheet.moved(off.w, off.h);
+        let radius : f64 = self.props.side == SheetSide::Center ? ctx.theme.metrics.radiusOverlay : 0.0;
+        Surfaces::draw(p, b.round(radius), b, ctx.theme.panel(Elevation::Floating));
+        p.line(b.x, b.y + SHEET_HEAD - 0.5, b.right(), b.y + SHEET_HEAD - 0.5, 1.0, pal.line);
+        p.text(FaceKind::Bold, self.props.title, b.x + SHEET_PAD, ctx.baselineIn(FaceKind::Bold, 16.0, b.y, SHEET_HEAD), 16.0, pal.text);
+        let cb : Bounds = self.closeBox().moved(off.w, off.h);
+        if (self.overClose) {
+            p.fillRound(cb.round(ctx.theme.metrics.radiusInline), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        let mut ink : Tint = pal.textFaint;
+        if (self.overClose) {
+            ink = pal.text;
+        }
+        Icons::draw(p, IconKind::Close, cb.midX() - 9.0, cb.midY() - 9.0, 18.0, ink);
+        let c : dyn Widget = self.kid[0];
+        // The content was arranged at rest; while the sheet slides it moves with it.
+        p.pushClip(b.x, b.y + SHEET_HEAD, b.w, b.h - SHEET_HEAD);
+        c.paint(ctx, p);
+        p.popClip();
+        p.setOpacity(prev);
+    }
+}

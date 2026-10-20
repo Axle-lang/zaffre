@@ -1,0 +1,108 @@
+// shell — the frame of an application: a sidebar at the left, a top bar over the content, and the
+// content itself, which scrolls.
+//
+//     new AppShell(sidebar, navbar, content)
+//     new AppShell(sidebar, content)
+//
+// The shell gives the sidebar its full height and its own width, the top bar the rest of the width
+// at the height it asks for, and the content what is left — padded, and inside a scroll area, so a
+// page taller than the window is reached with the wheel. It adds nothing else: the sidebar, the
+// bar and the page are the program's own widgets.
+
+use crate::core::geometry::{Size, Bounds, Limits, Insets, Length};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::band::{Band, BandProps};
+use crate::widgets::scroll::{Scroll, ScrollProps};
+use crate::widgets::spacer::Spacer;
+
+/** The frame of an application. */
+pub class AppShell : Base, Widget {
+    side : dyn Widget[];
+    head : dyn Widget[];
+    body : Scroll;
+    hasHead : bool;
+    sideW : f64 = 0.0;
+    headH : f64 = 0.0;
+
+    /** A shell with a sidebar, a top bar and a page. */
+    constructor(own sidebar : dyn Widget, own header : dyn Widget, own page : dyn Widget) {
+        self.side = malloc<dyn Widget>(1 as i64);
+        self.side[0] = sidebar;
+        self.head = malloc<dyn Widget>(1 as i64);
+        self.head[0] = header;
+        self.hasHead = true;
+        self.body = AppShell::scrolling(page);
+    }
+
+    /** A shell with a sidebar and a page. */
+    constructor(own sidebar : dyn Widget, own page : dyn Widget) {
+        self.side = malloc<dyn Widget>(1 as i64);
+        self.side[0] = sidebar;
+        self.head = malloc<dyn Widget>(1 as i64);
+        self.head[0] = new Spacer(0.0, 0.0);
+        self.hasHead = false;
+        self.body = AppShell::scrolling(page);
+    }
+
+    /** `page`, padded and in a scroll area that fills the room it is given. */
+    pub(file) static fn scrolling(own page : dyn Widget) : Scroll {
+        let padded = new Band(BandProps { padding: Insets::all(24.0) }, page);
+        return new Scroll(ScrollProps { height: Length::Fill, width: Length::Fill }, padded);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = limits.boundedW() ? limits.maxW : 1024.0;
+        let h : f64 = limits.boundedH() ? limits.maxH : 720.0;
+        let s : dyn Widget = self.side[0];
+        self.sideW = s.measure(ctx, Limits::loose(w, h)).w;
+        let t : dyn Widget = self.head[0];
+        self.headH = t.measure(ctx, Limits::loose(w - self.sideW, h)).h;
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let s : dyn Widget = self.side[0];
+        s.measure(ctx, Limits::tight(self.sideW, area.h));
+        s.arrange(ctx, Bounds::make(area.x, area.y, self.sideW, area.h));
+        let t : dyn Widget = self.head[0];
+        let rest : f64 = area.w - self.sideW;
+        t.measure(ctx, Limits::tight(rest, self.headH));
+        t.arrange(ctx, Bounds::make(area.x + self.sideW, area.y, rest, self.headH));
+        let top : f64 = area.y + self.headH;
+        self.body.measure(ctx, Limits::tight(rest, area.h - self.headH));
+        self.body.arrange(ctx, Bounds::make(area.x + self.sideW, top, rest, area.h - self.headH));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let t : dyn Widget = self.head[0];
+        if (t.event(ctx, e)) {
+            return true;
+        }
+        let s : dyn Widget = self.side[0];
+        if (s.event(ctx, e)) {
+            return true;
+        }
+        return self.body.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let s : dyn Widget = self.side[0];
+        let t : dyn Widget = self.head[0];
+        let a : bool = s.tick(ctx, dt);
+        let b : bool = t.tick(ctx, dt);
+        let c : bool = self.body.tick(ctx, dt);
+        return a || b || c;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.body.paint(ctx, p);
+        let t : dyn Widget = self.head[0];
+        t.paint(ctx, p);
+        let s : dyn Widget = self.side[0];
+        s.paint(ctx, p);
+    }
+}

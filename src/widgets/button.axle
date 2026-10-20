@@ -134,7 +134,11 @@ pub class Button : Control, Widget {
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
         let st : ButtonStyle = ctx.theme.button(self.props.kind, self.props.size);
-        let natural : f64 = Mathx::fmax(st.height, self.contentWidth(ctx, st) + 2.0 * st.padX);
+        let mut natural : f64 = Mathx::fmax(st.height, self.contentWidth(ctx, st) + 2.0 * st.padX);
+        if (self.props.label.byteLength == 0 && (self.props.icon != IconKind::None || self.props.loading)) {
+            // An icon on its own is a square button.
+            natural = st.height;
+        }
         return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, natural), h: st.height });
     }
 

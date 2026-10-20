@@ -129,6 +129,26 @@ pub class Strings {
         return p;
     }
 
+    /** `s` with its ASCII letters in capitals: the small labels over a group of items. */
+    pub static fn upper(s : string) : string {
+        let sb : StringBuilder = new StringBuilder();
+        let mut i : i64 = 0;
+        let len : i64 = s.byteLength;
+        while (i < len) {
+            let (cp, n) = Utf8::next(s, i);
+            if (n <= 0) {
+                break;
+            }
+            if (cp >= 97 && cp <= 122) {
+                sb.appendChar(cp - 32);
+            } else {
+                sb.appendChar(cp);
+            }
+            i = i + (n as i64);
+        }
+        return sb.toString();
+    }
+
     /** `s` with newlines turned into spaces, for pasting into a single-line field. */
     pub static fn singleLine(s : string) : string {
         let sb : StringBuilder = new StringBuilder();

@@ -21,6 +21,7 @@ use crate::core::context::Context;
 use crate::core::widget::{Widget, Base};
 use crate::paint::painter::Painter;
 use crate::widgets::dialog::{Dialog, DialogProps};
+use crate::widgets::sheet::{Sheet, SheetProps};
 use crate::widgets::toast::Toast;
 
 /** Requests the queue holds. */
@@ -50,12 +51,25 @@ pub class DialogRequest {
     }
 }
 
-/** The handle a handler holds to ask for a toast or a dialog. */
+/** One sheet (a modal or a drawer) waiting to be shown. */
+pub class SheetRequest {
+    pub props : SheetProps;
+    pub content : () => dyn Widget;
+
+    constructor(own props : SheetProps, content : () => dyn Widget) {
+        self.props = props;
+        self.content = content;
+    }
+}
+
+/** The handle a handler holds to ask for a toast, a dialog or a sheet. */
 pub class Notifier {
     pub toasts : ToastRequest[] = malloc<ToastRequest>(8 as i64);
     pub toastCount : i32 = 0;
     pub dialogs : DialogRequest[] = malloc<DialogRequest>(8 as i64);
     pub dialogCount : i32 = 0;
+    pub sheets : SheetRequest[] = malloc<SheetRequest>(8 as i64);
+    pub sheetCount : i32 = 0;
 
     /** Show `text` as a toast in `tone`. */
     pub fn toast(mut self, text : string, tone : Tone) : void {
@@ -75,6 +89,20 @@ pub class Notifier {
         self.dialogCount = self.dialogCount + 1;
     }
 
+    /** Open a modal or a drawer as `props` say, holding what `content` builds. */
+    pub fn openSheet(mut self, own props : SheetProps, content : () => dyn Widget) : void {
+        if (self.sheetCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.sheets[self.sheetCount as i64] = new SheetRequest(props, content);
+        self.sheetCount = self.sheetCount + 1;
+    }
+
+    /** Forget the sheets, once they have been shown. */
+    pub fn clearSheets(mut self) : void {
+        self.sheetCount = 0;
+    }
+
     /** Forget the toasts, once they have been shown. */
     pub fn clearToasts(mut self) : void {
         self.toastCount = 0;
@@ -87,7 +115,7 @@ pub class Notifier {
 
     /** Whether anything is waiting. */
     pub fn pending(self) : bool {
-        return self.toastCount > 0 || self.dialogCount > 0;
+        return self.toastCount > 0 || self.dialogCount > 0 || self.sheetCount > 0;
     }
 }
 
@@ -145,6 +173,12 @@ pub class Notifications : Base, Widget {
             ctx.openOverlay(new Dialog(mine, r.onConfirm, r.onCancel));
         }
         n.clearDialogs();
+        for (i of 0..n.sheetCount) {
+            let r : SheetRequest = n.sheets[i as i64];
+            let mine : SheetProps = SheetProps { ..r.props };
+            ctx.openOverlay(new Sheet(mine, r.content));
+        }
+        n.clearSheets();
         return moving;
     }
 }

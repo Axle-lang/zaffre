@@ -1,0 +1,136 @@
+// formfield — a control with its label, a hint under it, and an error that replaces the hint.
+//
+//     new FormField(FieldLabel { label: "Email", hint: "We never share it", required: true }, email)
+//
+// The form field draws the label above the control and one line of help under it: the hint, or the
+// error when there is one (in the danger colour, with the control's own outline turned red for as
+// long as the error shows). The error can change at any time — `setError` — so a program validates
+// as the user types and tells the field what it found.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** What a form field says around its control. */
+pub struct FieldLabel {
+    /** The label above the control. */
+    pub label : string = "";
+
+    /** A line of help under the control. */
+    pub hint : string = "";
+
+    /** The error that replaces the hint; none when empty. */
+    pub error : string = "";
+
+    /** Whether a mark after the label says the field is required. */
+    pub required : bool = false;
+}
+
+/** Text size of the label. */
+const FF_LABEL_PX : f64 = 14.0;
+
+/** Text size of the help line. */
+const FF_HELP_PX : f64 = 12.0;
+
+/** Space between the label, the control and the help. */
+const FF_GAP : f64 = 6.0;
+
+/** A labelled control. */
+pub class FormField : Base, Widget {
+    text : FieldLabel;
+    kid : dyn Widget[];
+    controlTop : f64 = 0.0;
+
+    /** A field around `control`, which it takes. */
+    constructor(own text : FieldLabel, own control : dyn Widget) {
+        self.text = text;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = control;
+    }
+
+    /** Replace the error: an empty string clears it and the hint shows again. */
+    pub fn setError(mut self, error : string) : void {
+        self.text = FieldLabel { error: error, ..self.text };
+    }
+
+    /** Whether the field has an error to show. */
+    pub fn hasError(self) : bool {
+        return self.text.error.byteLength > 0;
+    }
+
+    /** The help line that shows: the error, else the hint. */
+    pub(file) fn helpLine(self) : string {
+        if (self.text.error.byteLength > 0) {
+            return self.text.error;
+        }
+        return self.text.hint;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        let mut top : f64 = 0.0;
+        if (self.text.label.byteLength > 0) {
+            top = ctx.lineHeight(FaceKind::Bold, FF_LABEL_PX) + FF_GAP;
+        }
+        self.controlTop = top;
+        let s : Size = c.measure(ctx, limits.loosened());
+        let mut h : f64 = top + s.h;
+        if (self.helpLine().byteLength > 0) {
+            h = h + FF_GAP + ctx.lineHeight(FaceKind::Sans, FF_HELP_PX);
+        }
+        let mut w : f64 = s.w;
+        if (self.text.label.byteLength > 0) {
+            w = Mathx::fmax(w, ctx.textWidth(FaceKind::Bold, self.text.label, FF_LABEL_PX));
+        }
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, Limits::loose(area.w, area.h));
+        c.arrange(ctx, Bounds::make(area.x, area.y + self.controlTop, area.w, s.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        if (self.text.label.byteLength > 0) {
+            let lh : f64 = ctx.lineHeight(FaceKind::Bold, FF_LABEL_PX);
+            let end : f64 = p.text(FaceKind::Bold, self.text.label, a.x, ctx.baselineIn(FaceKind::Bold, FF_LABEL_PX, a.y, lh), FF_LABEL_PX, pal.text);
+            if (self.text.required) {
+                p.text(FaceKind::Bold, " *", end, ctx.baselineIn(FaceKind::Bold, FF_LABEL_PX, a.y, lh), FF_LABEL_PX, pal.danger.s500);
+            }
+        }
+        let c : dyn Widget = self.kid[0];
+        let wasInvalid : bool = ctx.invalid;
+        ctx.invalid = self.hasError();
+        c.paint(ctx, p);
+        ctx.invalid = wasInvalid;
+        let help : string = self.helpLine();
+        if (help.byteLength > 0) {
+            let hh : f64 = ctx.lineHeight(FaceKind::Sans, FF_HELP_PX);
+            let y : f64 = a.bottom() - hh;
+            let mut ink : Tint = pal.textFaint;
+            if (self.hasError()) {
+                ink = pal.softDanger.fg;
+            }
+            p.text(FaceKind::Sans, help, a.x, ctx.baselineIn(FaceKind::Sans, FF_HELP_PX, y, hh), FF_HELP_PX, ink);
+        }
+    }
+}
