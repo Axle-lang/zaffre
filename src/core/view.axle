@@ -250,6 +250,10 @@ pub class View {
         for (k of 0..self.used) {
             let o : dyn Widget = self.overlays[k as i64];
             if (!o.done()) {
+                // A modal overlay owns the keyboard: what the page announced is forgotten.
+                if (o.modal()) {
+                    self.ctx.beginLayout();
+                }
                 o.measure(self.ctx, Limits::tight(w, h));
                 o.arrange(self.ctx, Bounds::make(0.0, 0.0, w, h));
             }

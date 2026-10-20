@@ -55,6 +55,14 @@ pub trait Widget {
         return false;
     }
 
+    /**
+     * For an overlay: whether it is modal. While one is open the Tab order holds only its own controls,
+     * so the keyboard cannot reach the page beneath. Default: no.
+     */
+    fn modal(self) : bool {
+        return false;
+    }
+
     /** For an overlay: whether it has finished and may be dropped. Default: no. */
     fn done(self) : bool {
         return false;

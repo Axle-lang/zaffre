@@ -87,6 +87,11 @@ pub class Context {
      */
     pub wake : f64 = 1000000000.0;
 
+    /** The toasts showing, oldest first, by id; a toast's place on screen is its place in this list. */
+    toasts : i64[] = malloc<i64>(8 as i64);
+    toastCount : i32 = 0;
+    toastNext : i64 = 1;
+
     pending : dyn Widget[] = malloc<dyn Widget>(CONTEXT_PENDING as i64);
     pendingCount : i32 = 0;
     minted : i64 = 0;
@@ -147,6 +152,47 @@ pub class Context {
     /** Forget the overlays that were waiting, once they have been adopted. */
     pub fn clearWaiting(mut self) : void {
         self.pendingCount = 0;
+    }
+
+    // ─── Toasts ──────────────────────────────────────────────────
+
+    /** Register a toast that has begun to show; answers its id, or 0 when eight are already up. */
+    pub fn toastJoin(mut self) : i64 {
+        if (self.toastCount >= 8) {
+            return 0;
+        }
+        let id : i64 = self.toastNext;
+        self.toastNext = self.toastNext + 1;
+        self.toasts[self.toastCount as i64] = id;
+        self.toastCount = self.toastCount + 1;
+        return id;
+    }
+
+    /** Where toast `id` sits among the ones showing: 0 for the oldest. */
+    pub fn toastSlot(self, id : i64) : i32 {
+        for (i of 0..self.toastCount) {
+            if (self.toasts[i as i64] == id) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    /** A toast has gone: those after it move up. */
+    pub fn toastLeave(mut self, id : i64) : void {
+        let mut at : i32 = -1;
+        for (i of 0..self.toastCount) {
+            if (self.toasts[i as i64] == id) {
+                at = i;
+            }
+        }
+        if (at < 0) {
+            return;
+        }
+        for (i of at..(self.toastCount - 1)) {
+            self.toasts[i as i64] = self.toasts[(i + 1) as i64];
+        }
+        self.toastCount = self.toastCount - 1;
     }
 
     // ─── Focus ───────────────────────────────────────────────────

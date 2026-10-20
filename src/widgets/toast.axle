@@ -1,0 +1,141 @@
+// toast — a message that appears, stays a few seconds and goes by itself.
+//
+//     openToast(ctx, "Saved", Tone::Ok);
+//
+// A toast is an overlay at the bottom centre of the interface: a rounded card with the tone's icon
+// and the message. Several stack upward, oldest at the bottom, and each moves down as the ones
+// beneath it go. It leaves after a few seconds, or when it is clicked; nothing else about the page
+// stops for it, and a press anywhere else reaches the page as it would without one.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::styles::BadgeStyle;
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::alert::Alert;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Seconds a toast stays when not clicked. */
+const TOAST_SECONDS : f64 = 3.6;
+
+/** The card's size and the gap between stacked cards. */
+const TOAST_HEIGHT : f64 = 44.0;
+const TOAST_GAP : f64 = 10.0;
+const TOAST_MARGIN : f64 = 28.0;
+const TOAST_PX : f64 = 14.0;
+
+/** A toast overlay. */
+pub class Toast : Base, Widget {
+    text : string;
+    tone : Tone;
+    id : i64 = 0;
+    born : f64 = -1.0;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+
+    /** A toast saying `text` in `tone`. */
+    constructor(text : string, tone : Tone) {
+        self.text = text;
+        self.tone = tone;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.id == 0 && !self.finished) {
+            self.id = ctx.toastJoin();
+            if (self.id == 0) {
+                // Eight are already up: this one is not shown.
+                self.finished = true;
+                return;
+            }
+        }
+        let w : f64 = Mathx::fmin(area.w - 32.0, ctx.textWidth(FaceKind::Sans, self.text, TOAST_PX) + 64.0);
+        let slot : f64 = ctx.toastSlot(self.id) as f64;
+        let y : f64 = area.bottom() - TOAST_MARGIN - TOAST_HEIGHT - slot * (TOAST_HEIGHT + TOAST_GAP);
+        self.sheet = Bounds::make(area.midX() - w * 0.5, y, w, TOAST_HEIGHT);
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished && self.sheet.contains(x, y);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (e.kind == EventKind::PointerDown && !self.closing && self.sheet.contains(e.x, e.y)) {
+            self.closing = true;
+            ctx.invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        if (self.finished) {
+            return false;
+        }
+        if (self.born < 0.0) {
+            self.born = ctx.now;
+        }
+        if (!self.closing) {
+            let left : f64 = TOAST_SECONDS - (ctx.now - self.born);
+            if (left <= 0.0) {
+                self.closing = true;
+            } else {
+                ctx.wakeIn(left);
+            }
+        }
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.4);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.toastLeave(self.id);
+            ctx.invalidate();
+            return false;
+        }
+        return !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let st : BadgeStyle = ctx.theme.badge(self.tone);
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let b : Bounds = self.sheet.moved(0.0, (1.0 - k) * 12.0);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusMd);
+        p.shadow(rr, 0.0, 8.0, 24.0, -4.0, pal.shadow.faded(130));
+        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
+        p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
+        p.strokeRound(rr, 1.0, Brush::solid(st.border.rgb, st.border.a));
+        Icons::draw(p, Alert::iconOf(self.tone), b.x + 14.0, b.midY() - 9.0, 18.0, st.text);
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, TOAST_PX, b.y, b.h);
+        p.textElided(FaceKind::Sans, self.text, b.x + 42.0, base, TOAST_PX, b.w - 56.0, pal.text);
+        p.setOpacity(prev);
+    }
+}
+
+/** Show a toast; false when the interface has no room for another overlay. */
+pub fn openToast(ctx : Context, text : string, tone : Tone) : bool {
+    return ctx.openOverlay(new Toast(text, tone));
+}

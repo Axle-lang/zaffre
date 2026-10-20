@@ -1,0 +1,138 @@
+// notify — opening toasts and dialogs from a handler, which has no `Context`.
+//
+// A handler is a lambda that captures a few `Shared` handles and nothing else, so it cannot reach
+// the `Context` an overlay is opened through. What it can hold is a `Shared<Notifier>`: a queue of
+// requests. The `Notifications` widget — which wraps the page's root, changing nothing about it —
+// holds the same queue, and on every tick turns the requests into overlays.
+//
+//     let notes = new shared Notifier();
+//     new Notifications(notes, page)
+//     …
+//     new Button("Save", () => notes.toast("Saved", Tone::Ok))
+//     new Button("Delete", () => notes.ask(DialogProps { title: "Delete?", danger: true }, () => remove(), () => keep()))
+//
+// A request that finds the queue full (eight deep) is dropped: a program that asks for nine dialogs
+// in one frame has a bug, and a queue that grew would hide it.
+
+use crate::style::variants::Tone;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::dialog::{Dialog, DialogProps};
+use crate::widgets::toast::Toast;
+
+/** Requests the queue holds. */
+const NOTIFY_SLOTS : i32 = 8;
+
+/** One toast waiting to be shown. */
+pub class ToastRequest {
+    pub text : string;
+    pub tone : Tone;
+
+    constructor(text : string, tone : Tone) {
+        self.text = text;
+        self.tone = tone;
+    }
+}
+
+/** One dialog waiting to be shown. */
+pub class DialogRequest {
+    pub props : DialogProps;
+    pub onConfirm : () => void;
+    pub onCancel : () => void;
+
+    constructor(own props : DialogProps, onConfirm : () => void, onCancel : () => void) {
+        self.props = props;
+        self.onConfirm = onConfirm;
+        self.onCancel = onCancel;
+    }
+}
+
+/** The handle a handler holds to ask for a toast or a dialog. */
+pub class Notifier {
+    pub toasts : ToastRequest[] = malloc<ToastRequest>(8 as i64);
+    pub toastCount : i32 = 0;
+    pub dialogs : DialogRequest[] = malloc<DialogRequest>(8 as i64);
+    pub dialogCount : i32 = 0;
+
+    /** Show `text` as a toast in `tone`. */
+    pub fn toast(mut self, text : string, tone : Tone) : void {
+        if (self.toastCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.toasts[self.toastCount as i64] = new ToastRequest(text, tone);
+        self.toastCount = self.toastCount + 1;
+    }
+
+    /** Ask a question as `props` say, running `onConfirm` or `onCancel` when it is answered. */
+    pub fn ask(mut self, own props : DialogProps, onConfirm : () => void, onCancel : () => void) : void {
+        if (self.dialogCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.dialogs[self.dialogCount as i64] = new DialogRequest(props, onConfirm, onCancel);
+        self.dialogCount = self.dialogCount + 1;
+    }
+
+    /** Whether anything is waiting. */
+    pub fn pending(self) : bool {
+        return self.toastCount > 0 || self.dialogCount > 0;
+    }
+}
+
+/** Wraps the page's root and opens what the program asked the `Notifier` for. */
+pub class Notifications : Base, Widget {
+    notes : Shared<Notifier>;
+    kid : dyn Widget[];
+
+    /** `root`, which it takes, watched for requests on `notes`. */
+    constructor(notes : Shared<Notifier>, own root : dyn Widget) {
+        self.notes = notes;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = root;
+    }
+
+    pub fn flex(self) : f64 {
+        let c : dyn Widget = self.kid[0];
+        return c.flex();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        let n : Shared<Notifier> = self.notes;
+        for (i of 0..n.toastCount) {
+            let r : ToastRequest = n.toasts[i as i64];
+            ctx.openOverlay(new Toast(r.text, r.tone));
+        }
+        n.toastCount = 0;
+        for (i of 0..n.dialogCount) {
+            let r : DialogRequest = n.dialogs[i as i64];
+            ctx.openOverlay(new Dialog(r.props, r.onConfirm, r.onCancel));
+        }
+        n.dialogCount = 0;
+        return moving;
+    }
+}

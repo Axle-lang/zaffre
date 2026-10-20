@@ -1,0 +1,185 @@
+// tooltip — a short note that appears when the pointer rests on something.
+//
+//     new Tooltip("Save the document", new Button("Save"))
+//
+// `Tooltip` wraps one widget and changes nothing about it: it measures, lays out, draws and hands
+// events to it as it would alone. What it adds is a timer. While the pointer is over the wrapped
+// widget it counts; when half a second has passed it opens a small overlay under the widget (over it,
+// where there is no room below) that fades in, and that closes by itself the moment the pointer
+// leaves, a button goes down, a key is pressed or the wheel turns. Moving to another widget and
+// resting there asks again; staying on the same one after the note has closed does not.
+//
+// The wait costs nothing while it runs: the tooltip asks the shell to wake the loop when the delay
+// is up (`Context::wakeIn`) and returns, so an idle program stays idle with a tooltip pending.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** Seconds the pointer rests before the note appears. */
+const TIP_DELAY : f64 = 0.55;
+
+/** Text size and padding of the note. */
+const TIP_PX : f64 = 12.5;
+const TIP_PAD_X : f64 = 10.0;
+const TIP_PAD_Y : f64 = 6.0;
+
+/** The note itself: an overlay that draws a rounded label and takes no input. */
+pub class TipOverlay : Base, Widget {
+    anchor : Bounds;
+    text : string;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+    above : bool = false;
+
+    /** A note saying `text` for the widget at `anchor`. */
+    constructor(anchor : Bounds, text : string) {
+        self.anchor = anchor;
+        self.text = text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let w : f64 = ctx.textWidth(FaceKind::Sans, self.text, TIP_PX) + 2.0 * TIP_PAD_X;
+        let h : f64 = ctx.lineHeight(FaceKind::Sans, TIP_PX) + 2.0 * TIP_PAD_Y;
+        let mut y : f64 = self.anchor.bottom() + 8.0;
+        self.above = false;
+        if (y + h > area.bottom() - 6.0 && self.anchor.y - 8.0 - h >= area.y + 6.0) {
+            y = self.anchor.y - 8.0 - h;
+            self.above = true;
+        }
+        let x : f64 = Mathx::clampF(self.anchor.midX() - w * 0.5, area.x + 6.0, Mathx::fmax(area.x + 6.0, area.right() - 6.0 - w));
+        self.sheet = Bounds::make(x, y, w, h);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing) {
+            return false;
+        }
+        let leaves : bool = e.kind == EventKind::PointerMove && !self.anchor.contains(e.x, e.y);
+        if (leaves || e.kind == EventKind::PointerDown || e.kind == EventKind::KeyDown
+            || e.kind == EventKind::Wheel || e.kind == EventKind::PointerLeave) {
+            self.closing = true;
+            ctx.invalidate();
+        }
+        // A note never takes input: whatever it was pointed at still gets it.
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.5);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let mut rise : f64 = (1.0 - k) * 3.0;
+        if (self.above) {
+            rise = 0.0 - rise;
+        }
+        let b : Bounds = self.sheet.moved(0.0, 0.0 - rise);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusSm + 1.0);
+        p.shadow(rr, 0.0, 4.0, 14.0, -2.0, pal.shadow.faded(110));
+        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, TIP_PX, b.y, b.h);
+        p.text(FaceKind::Sans, self.text, b.x + TIP_PAD_X, base, TIP_PX, pal.text);
+        p.setOpacity(prev);
+    }
+}
+
+/** A widget with a note that appears when the pointer rests on it. */
+pub class Tooltip : Base, Widget {
+    kid : dyn Widget[];
+    text : string;
+    since : f64 = -1.0;
+    shown : bool = false;
+
+    /** `child`, which the tooltip takes, with a note saying `text`. */
+    constructor(text : string, own child : dyn Widget) {
+        self.text = text;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = child;
+    }
+
+    pub fn flex(self) : f64 {
+        let c : dyn Widget = self.kid[0];
+        return c.flex();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        let inside : bool = self.area.contains(ctx.pointerX, ctx.pointerY) && !ctx.blocked;
+        if (!inside) {
+            self.since = -1.0;
+            self.shown = false;
+            return moving;
+        }
+        if (self.since < 0.0) {
+            self.since = ctx.now;
+        }
+        if (!self.shown) {
+            let wait : f64 = TIP_DELAY - (ctx.now - self.since);
+            if (wait <= 0.0) {
+                // Once per rest: if the overlay list is full the note is simply not shown.
+                self.shown = true;
+                ctx.openOverlay(new TipOverlay(self.area, self.text));
+            } else {
+                ctx.wakeIn(wait);
+            }
+        }
+        return moving;
+    }
+}

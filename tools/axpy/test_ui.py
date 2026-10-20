@@ -267,5 +267,64 @@ sel = dm.get()[min(df.anchor, df.caret):max(df.anchor, df.caret)]
 check("double click selects the word", sel.strip() == "beta", repr(sel))
 press(3)
 check("triple click selects the line", min(df.anchor, df.caret) == 0 and max(df.anchor, df.caret) == len(dm.get().encode()))
+
+# ── overlays: tooltip, toast, dialog ───────────────────────────────────────────────
+notes = z.Notifier()
+log = []
+tip_btn = z.Button("Hover me")
+toast_btn = z.Button("Toast", lambda: notes.toast("Saved", z.Tone.Ok))
+ask_btn = z.Button("Ask", lambda: notes.ask(_rt_lit(z.DialogProps, None, title="Delete?", message="This cannot be undone, so think twice before agreeing to it.", confirm="Delete", danger=True), lambda: log.append("yes"), lambda: log.append("no")))
+behind = z.Button("Behind", lambda: log.append("behind"))
+opage = z.Column(_rt_lit(z.FlexProps, None, gap=10.0, padding=z.Insets.all(20.0), width=z.Length.Px(360.0)), [z.Tooltip("A short note", tip_btn), toast_btn, ask_btn, behind])
+ov = z.View(z.Theme.dark(), fonts, z.Notifications(notes, opage))
+ov.resize(480.0, 420.0); settle(ov); ov.layout()
+
+def at(w, fx=0.5, fy=0.5):
+    b = w.bounds(); return b.x + b.w * fx, b.y + b.h * fy
+
+x, y = at(tip_btn)
+ov.input(ev(z.EventKind.PointerMove, x, y)); settle(ov, 20)
+check("no tooltip before the delay", ov.used == 0, ov.used)
+settle(ov, 40)
+check("a tooltip opens after the pointer rests", ov.used == 1, ov.used)
+tipo = ov.overlays[0]
+ov.layout()
+check("the tooltip sits below its widget", tipo.sheet.y >= tip_btn.bounds().bottom(), (tipo.sheet.y, tip_btn.bounds().bottom()))
+ov.input(ev(z.EventKind.PointerMove, 470.0, 410.0)); settle(ov, 40)
+check("the tooltip goes when the pointer leaves", tipo.done())
+ov.layout()
+
+click(ov, toast_btn); settle(ov, 5); ov.layout()
+check("a handler's toast request opens a toast", any(isinstance(o, z.Toast) for o in ov.overlays[:ov.used]) and not notes.pending())
+click(ov, toast_btn); settle(ov, 5); ov.layout()
+toasts = [o for o in ov.overlays[:ov.used] if isinstance(o, z.Toast) and not o.done()]
+check("two toasts stack", len(toasts) == 2 and abs(toasts[0].sheet.y - toasts[1].sheet.y) >= 44, [t.sheet.y for t in toasts])
+settle(ov, 400)
+check("toasts leave by themselves", all(o.done() for o in ov.overlays[:ov.used] if isinstance(o, z.Toast)) and ov.ctx.toastCount == 0, ov.ctx.toastCount)
+
+click(ov, ask_btn); settle(ov, 5); ov.layout(); settle(ov, 40)
+dlg = [o for o in ov.overlays[:ov.used] if isinstance(o, z.Dialog) and not o.done()]
+check("a dialog opens", len(dlg) == 1)
+d = dlg[0]
+check("the dialog is modal: Tab order holds only its buttons", ov.ctx.orderCount == 2, ov.ctx.orderCount)
+bx, by = at(behind)
+ov.input(ev(z.EventKind.PointerMove, bx, by)); ov.input(ev(z.EventKind.PointerDown, bx, by)); ov.input(ev(z.EventKind.PointerUp, bx, by))
+check("a click on the page behind does nothing", "behind" not in log and not behind.hovered, log)
+key(ov, z.Key.Escape); settle(ov, 40)
+check("Escape cancels", log == ["no"] and d.done(), (log, d.done()))
+click(ov, ask_btn); settle(ov, 5); ov.layout(); settle(ov, 40)
+d2 = [o for o in ov.overlays[:ov.used] if isinstance(o, z.Dialog) and not o.done()][0]
+key(ov, z.Key.Enter); settle(ov, 40)
+check("Enter confirms", log == ["no", "yes"] and d2.done(), log)
+click(ov, ask_btn); settle(ov, 5); ov.layout(); settle(ov, 40)
+d3 = [o for o in ov.overlays[:ov.used] if isinstance(o, z.Dialog) and not o.done()][0]
+cb = d3.kid[0].kids[2].kids[2]       # the confirm button of the card's last row
+click(ov, cb); settle(ov, 40)
+check("clicking the confirm button confirms", log == ["no", "yes", "yes"] and d3.done(), log)
+click(ov, ask_btn); settle(ov, 5); ov.layout(); settle(ov, 60)
+sfc = rt.Surface(480, 420); ov.render(sfc.frame())
+import numpy as _np
+from PIL import Image as _Image
+_Image.fromarray(sfc.pixels_rgb()).save("/tmp/dialog.png")
 print("FAIL %d" % len(fails) if fails else "all ok")
 sys.exit(1 if fails else 0)

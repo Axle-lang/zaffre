@@ -1,0 +1,226 @@
+// dialog — a question that must be answered before anything else is touched.
+//
+//     openDialog(ctx, DialogProps { title: "Delete the file?", message: "It cannot be undone.",
+//                                   confirm: "Delete", danger: true }, () => remove(), () => keep());
+//
+// A dialog is an overlay: it dims the page, draws a card in the middle, and takes every event
+// until it is answered — the page beneath neither lights up nor receives a key. Tab cycles only
+// through the dialog's own buttons (it is *modal*, so the page's controls leave the Tab order while
+// it is open), Escape cancels, Enter confirms, and a press on the dimmed page does nothing.
+//
+// The card is composed of the library's own widgets — labels and two buttons — laid out in a
+// column; the dialog adds the scrim, the card, the fade and the two answers. The buttons set a
+// shared answer that the dialog reads on its next tick, which is how a widget reports to the
+// overlay that owns it without either holding the other.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::variants::{ButtonKind, TextRole};
+use crate::core::geometry::{Size, Bounds, Limits, Insets, Align};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::Widget;
+use crate::core::widget::Base;
+use crate::paint::painter::Painter;
+use crate::widgets::button::{Button, ButtonProps};
+use crate::widgets::flex::{Column, Row, FlexProps};
+use crate::widgets::label::{Label, LabelProps};
+use crate::widgets::spacer::Spacer;
+
+/** The card's inner padding. */
+const DIALOG_PAD : f64 = 24.0;
+
+/** What a dialog says and offers. */
+pub struct DialogProps {
+    /** The heading. */
+    pub title : string = "";
+
+    /** The question, wrapped to the card's width. */
+    pub message : string = "";
+
+    /** The label of the button that confirms. */
+    pub confirm : string = "OK";
+
+    /** The label of the button that cancels. */
+    pub cancel : string = "Cancel";
+
+    /** Whether the confirming button is drawn as a warning, for something that cannot be undone. */
+    pub danger : bool = false;
+
+    /** Whether there is a cancel button at all; Escape still closes it. */
+    pub showCancel : bool = true;
+
+    /** The card's width, in pixels. */
+    pub width : f64 = 420.0;
+}
+
+/** The handler a dialog without one runs. */
+fn ignoreAnswer() : void {
+}
+
+/** A dialog overlay. */
+pub class Dialog : Base, Widget {
+    width : f64;
+    kid : dyn Widget[];
+    answer : Shared<Model<i32>>;
+    onConfirm : () => void;
+    onCancel : () => void;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+
+    /** A dialog as `props` say, running `onConfirm` or `onCancel` when it is answered. */
+    constructor(own props : DialogProps, onConfirm : () => void, onCancel : () => void) {
+        self.width = props.width;
+        self.onConfirm = onConfirm;
+        self.onCancel = onCancel;
+        let answer = new shared Model<i32>(0);
+        self.answer = answer;
+
+        let mut kind : ButtonKind = ButtonKind::Primary;
+        if (props.danger) {
+            kind = ButtonKind::Danger;
+        }
+        let buttons : dyn Widget[] = [
+            new Spacer(),
+            new Button(ButtonProps { label: props.cancel }, () => answer.set(2)),
+            new Button(ButtonProps { label: props.confirm, kind: kind }, () => answer.set(1)),
+        ];
+        let buttonsNoCancel : dyn Widget[] = [
+            new Spacer(),
+            new Button(ButtonProps { label: props.confirm, kind: kind }, () => answer.set(1)),
+        ];
+        let mut row : Row = new Row(FlexProps { gap: 10.0, align: Align::Center }, buttons);
+        if (!props.showCancel) {
+            row = new Row(FlexProps { gap: 10.0, align: Align::Center }, buttonsNoCancel);
+        }
+        let parts : dyn Widget[] = [
+            new Label(props.title, TextRole::H3),
+            new Label(LabelProps { role: TextRole::Dim, wrap: true }, props.message),
+            row,
+        ];
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = new Column(FlexProps { gap: 14.0, align: Align::Stretch }, parts);
+    }
+
+    pub fn modal(self) : bool {
+        return true;
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished;
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        let inner : f64 = Mathx::fmin(self.width, area.w - 32.0) - 2.0 * DIALOG_PAD;
+        let s : Size = c.measure(ctx, Limits::loose(inner, area.h - 64.0));
+        let w : f64 = inner + 2.0 * DIALOG_PAD;
+        let h : f64 = s.h + 2.0 * DIALOG_PAD;
+        self.sheet = Bounds::make(area.midX() - w * 0.5, area.midY() - h * 0.5 - 12.0, w, h);
+        c.arrange(ctx, Bounds::make(self.sheet.x + DIALOG_PAD, self.sheet.y + DIALOG_PAD, inner, s.h));
+    }
+
+    /** Take the answer: run its handler once and start closing. */
+    pub(file) fn finish(mut self, ctx : Context, which : i32) : void {
+        if (self.closing) {
+            return;
+        }
+        self.closing = true;
+        ctx.invalidate();
+        if (which == 1) {
+            let h : () => void = self.onConfirm;
+            h();
+        } else {
+            let h : () => void = self.onCancel;
+            h();
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return true;
+        }
+        let c : dyn Widget = self.kid[0];
+        // The dialog covers the whole interface so the page beneath stays dark and still; its own
+        // buttons are part of what is covering it, and must see the pointer as theirs.
+        let covered : bool = ctx.blocked;
+        ctx.blocked = false;
+        let used : bool = c.event(ctx, e);
+        ctx.blocked = covered;
+        if (self.answer.get() != 0) {
+            self.finish(ctx, self.answer.get());
+            return true;
+        }
+        if (!used && e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Escape) {
+                self.finish(ctx, 2);
+            } else if (e.key == Key::Enter) {
+                self.finish(ctx, 1);
+            }
+        }
+        // Modal: nothing reaches the page.
+        return true;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        if (self.answer.get() != 0) {
+            self.finish(ctx, self.answer.get());
+        }
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.3);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let a : Bounds = self.area;
+        p.fillRound(a.round(0.0), Brush::solid(pal.scrim.rgb, Mathx::roundI(pal.scrim.a as f64 * k)));
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let b : Bounds = self.sheet.moved(0.0, (1.0 - k) * 10.0);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusLg);
+        p.shadow(rr, 0.0, 18.0, 44.0, -6.0, pal.shadow.faded(150));
+        p.shadow(rr, 0.0, 3.0, 8.0, 0.0, pal.shadow.faded(70));
+        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+        p.setOpacity(prev);
+    }
+}
+
+/**
+ * Open a dialog; false when the interface has no room for another overlay. A free function for the
+ * reason `openMenu` is one: the compiler drops the type argument of a `Shared<Model<…>>` inside a
+ * class's static function.
+ */
+pub fn openDialog(ctx : Context, own props : DialogProps, onConfirm : () => void, onCancel : () => void) : bool {
+    return ctx.openOverlay(new Dialog(props, onConfirm, onCancel));
+}
