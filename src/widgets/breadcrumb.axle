@@ -1,0 +1,136 @@
+// breadcrumb — where you are, as a path you can walk back along.
+//
+//     new Breadcrumb(["Home", "Projects", "Zaffre"], (i) => nav.goto(i))
+//
+// Every crumb but the last is a link: muted, darker under the pointer, with a hand cursor. The last
+// is the page you are on, set in the main text colour and not clickable. The handler gets the index
+// of the crumb that was clicked.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Text size of a crumb. */
+const CRUMB_PX : f64 = 14.0;
+
+/** Space either side of a separator. */
+const CRUMB_GAP : f64 = 6.0;
+
+/** Size of the separator chevron. */
+const CRUMB_CHEVRON : f64 = 14.0;
+
+/** The handler a breadcrumb without one runs. */
+fn ignoreCrumb(i : i32) : void {
+}
+
+/** A path of crumbs. */
+pub class Breadcrumb : Control, Widget {
+    items : string[];
+    count : i32;
+    onPick : (i32) => void = ignoreCrumb;
+    hot : i32 = -1;
+    left : f64[] = malloc<f64>(16 as i64);
+    right : f64[] = malloc<f64>(16 as i64);
+
+    /** A path of `items`, the last being the current page. */
+    constructor(items : string[]) {
+        self.items = items;
+        self.count = Mathx::clampI(items.length as i32, 0, 16);
+        self.focusable = false;
+    }
+
+    /** A path whose crumbs call `onPick` with their index when clicked. */
+    constructor(items : string[], onPick : (i32) => void) {
+        self.items = items;
+        self.count = Mathx::clampI(items.length as i32, 0, 16);
+        self.onPick = onPick;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut x : f64 = 0.0;
+        for (i of 0..self.count) {
+            let mut kind : FaceKind = FaceKind::Sans;
+            if (i == self.count - 1) {
+                kind = FaceKind::Bold;
+            }
+            let w : f64 = ctx.textWidth(kind, self.items[i as i64], CRUMB_PX);
+            self.left[i as i64] = x;
+            self.right[i as i64] = x + w;
+            x = x + w;
+            if (i < self.count - 1) {
+                x = x + 2.0 * CRUMB_GAP + CRUMB_CHEVRON;
+            }
+        }
+        return limits.constrain(Size { w: x, h: ctx.lineHeight(FaceKind::Sans, CRUMB_PX) + 6.0 });
+    }
+
+    /** The crumb under `x` that can be followed, or -1. */
+    pub(file) fn linkAt(self, x : f64) : i32 {
+        let rel : f64 = x - self.area.x;
+        for (i of 0..self.count - 1) {
+            if (rel >= self.left[i as i64] && rel <= self.right[i as i64]) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.linkAt(e.x);
+                if (self.hot >= 0) {
+                    ctx.wantCursor(Cursor::Hand);
+                }
+            }
+            if (before != self.hot) {
+                ctx.invalidate();
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.linkAt(e.x);
+            if (i >= 0) {
+                let h : (i32) => void = self.onPick;
+                h(i);
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return g == Gesture::Press && self.linkAt(e.x) >= 0;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        for (i of 0..self.count) {
+            let last : bool = i == self.count - 1;
+            let mut kind : FaceKind = FaceKind::Sans;
+            let mut ink : Tint = pal.textDim;
+            if (last) {
+                kind = FaceKind::Bold;
+                ink = pal.text;
+            } else if (i == self.hot) {
+                ink = pal.text;
+            }
+            let x : f64 = a.x + self.left[i as i64];
+            let base : f64 = ctx.baselineIn(kind, CRUMB_PX, a.y, a.h);
+            let end : f64 = p.text(kind, self.items[i as i64], x, base, CRUMB_PX, ink);
+            if (i == self.hot) {
+                p.line(x, base + 2.0, end, base + 2.0, 1.0, ink);
+            }
+            if (!last) {
+                Icons::draw(p, IconKind::ChevronRight, end + CRUMB_GAP, a.midY() - CRUMB_CHEVRON * 0.5, CRUMB_CHEVRON, pal.textFaint);
+            }
+        }
+    }
+}

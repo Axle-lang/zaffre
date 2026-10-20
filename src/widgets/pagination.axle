@@ -1,0 +1,249 @@
+// pagination — previous, next, and the page numbers between, with an ellipsis where they are elided.
+//
+//     let page : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new Pagination(PaginationProps { pages: 24 }, page)
+//
+// The model holds the page as a zero-based index; the buttons show it plus one. Up to seven numbers
+// are shown: the first and the last always, the current one with a neighbour on each side, and an
+// ellipsis for each gap. Left and Right move by one while the control has the keyboard.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a pager is set. */
+pub struct PaginationProps {
+    /** How many pages there are. */
+    pub pages : i32 = 1;
+
+    /** The small size (32 px buttons) or the standard one (36 px). */
+    pub size : ControlSize = ControlSize::Sm;
+}
+
+/** Entry kinds in the strip. */
+const PAGER_GAP : i32 = -1;
+const PAGER_PREV : i32 = -2;
+const PAGER_NEXT : i32 = -3;
+
+/** The handler a pager without one runs. */
+fn ignorePage(i : i32) : void {
+}
+
+/** A strip of page buttons. */
+pub class Pagination : Control, Widget {
+    props : PaginationProps;
+    model : Shared<Model<i32>>;
+    onChange : (i32) => void = ignorePage;
+    entries : i32[] = malloc<i32>(12 as i64);
+    count : i32 = 0;
+    hot : i32 = -1;
+
+    /** A pager over `props.pages` pages reading and writing `model`. */
+    constructor(own props : PaginationProps, model : Shared<Model<i32>>) {
+        self.props = props;
+        self.model = model;
+    }
+
+    /** A pager that also tells `onChange` the new page index. */
+    constructor(own props : PaginationProps, model : Shared<Model<i32>>, onChange : (i32) => void) {
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+    }
+
+    /** The side of a button. */
+    pub(file) fn cell(self, ctx : Context) : f64 {
+        return ctx.theme.heightOf(self.props.size);
+    }
+
+    /** Append entry `e` to the strip. */
+    pub(file) fn push(mut self, e : i32) : void {
+        self.entries[self.count as i64] = e;
+        self.count = self.count + 1;
+    }
+
+    /** Rebuild the strip's entries for the current page. */
+    pub(file) fn build(mut self) : void {
+        let n : i32 = self.props.pages;
+        let cur : i32 = Mathx::clampI(self.model.get(), 0, Mathx::clampI(n - 1, 0, 1000000));
+        self.count = 0;
+        self.push(PAGER_PREV);
+        if (n <= 7) {
+            for (i of 0..n) {
+                self.push(i);
+            }
+        } else if (cur <= 3) {
+            for (i of 0..5) {
+                self.push(i);
+            }
+            self.push(PAGER_GAP);
+            self.push(n - 1);
+        } else if (cur >= n - 4) {
+            self.push(0);
+            self.push(PAGER_GAP);
+            for (i of (n - 5)..n) {
+                self.push(i);
+            }
+        } else {
+            self.push(0);
+            self.push(PAGER_GAP);
+            for (i of (cur - 1)..=(cur + 1)) {
+                self.push(i);
+            }
+            self.push(PAGER_GAP);
+            self.push(n - 1);
+        }
+        self.push(PAGER_NEXT);
+    }
+
+    /** The width of entry `i`. */
+    pub(file) fn widthOf(self, ctx : Context, i : i32) : f64 {
+        let e : i32 = self.entries[i as i64];
+        if (e == PAGER_GAP) {
+            return self.cell(ctx) * 0.7;
+        }
+        return self.cell(ctx);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        self.build();
+        let mut w : f64 = 0.0;
+        for (i of 0..self.count) {
+            w = w + self.widthOf(ctx, i);
+            if (i < self.count - 1) {
+                w = w + 2.0;
+            }
+        }
+        return limits.constrain(Size { w: w, h: self.cell(ctx) });
+    }
+
+    /** The entry under `x`, or -1. */
+    pub(file) fn entryAt(self, ctx : Context, x : f64) : i32 {
+        let mut cx : f64 = self.area.x;
+        for (i of 0..self.count) {
+            let w : f64 = self.widthOf(ctx, i);
+            if (x >= cx && x < cx + w) {
+                return i;
+            }
+            cx = cx + w + 2.0;
+        }
+        return -1;
+    }
+
+    /** Go to page `to`, if it exists. */
+    pub(file) fn go(mut self, ctx : Context, to : i32) : void {
+        if (to < 0 || to >= self.props.pages || to == self.model.get()) {
+            return;
+        }
+        self.model.set(to);
+        let h : (i32) => void = self.onChange;
+        h(to);
+        ctx.invalidate();
+    }
+
+    /** Act on entry `i`. */
+    pub(file) fn choose(mut self, ctx : Context, i : i32) : void {
+        if (i < 0) {
+            return;
+        }
+        let e : i32 = self.entries[i as i64];
+        if (e == PAGER_PREV) {
+            self.go(ctx, self.model.get() - 1);
+        } else if (e == PAGER_NEXT) {
+            self.go(ctx, self.model.get() + 1);
+        } else if (e >= 0) {
+            self.go(ctx, e);
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.entryAt(ctx, e.x);
+                if (self.hot >= 0 && self.entries[self.hot as i64] != PAGER_GAP) {
+                    self.wantHand(ctx);
+                }
+            }
+        }
+        if (g == Gesture::Click) {
+            self.choose(ctx, self.entryAt(ctx, e.x));
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            if (e.key == Key::Left) {
+                self.go(ctx, self.model.get() - 1);
+                return true;
+            }
+            if (e.key == Key::Right) {
+                self.go(ctx, self.model.get() + 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let cur : i32 = self.model.get();
+        let side : f64 = self.cell(ctx);
+        let mut x : f64 = a.x;
+        for (i of 0..self.count) {
+            let e : i32 = self.entries[i as i64];
+            let w : f64 = self.widthOf(ctx, i);
+            let box : Bounds = Bounds::make(x, a.y, w, side);
+            let rr : RRect = box.round(ctx.theme.metrics.radiusInline);
+            let off : bool = (e == PAGER_PREV && cur <= 0) || (e == PAGER_NEXT && cur >= self.props.pages - 1);
+            let active : bool = e == cur;
+            if (active) {
+                p.fillRound(rr, Brush::solid(pal.primary.s600.rgb, 255));
+            } else if (i == self.hot && e != PAGER_GAP && !off) {
+                p.fillRound(rr, Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            if (e == PAGER_GAP) {
+                let dots : f64 = ctx.textWidth(FaceKind::Sans, "…", 14.0);
+                p.text(FaceKind::Sans, "…", box.x + (w - dots) * 0.5, ctx.baselineIn(FaceKind::Sans, 14.0, box.y, box.h), 14.0, pal.textFaint);
+            } else if (e == PAGER_PREV || e == PAGER_NEXT) {
+                let mut ink : Tint = pal.textFaint;
+                if (off) {
+                    ink = pal.textOff;
+                }
+                let icon : IconKind = e == PAGER_PREV ? IconKind::ChevronLeft : IconKind::ChevronRight;
+                Icons::draw(p, icon, box.midX() - 9.0, box.midY() - 9.0, 18.0, ink);
+            } else {
+                let label : string = Format::whole((e + 1) as f64);
+                let mut ink : Tint = pal.textDim;
+                if (active) {
+                    ink = Tint::hex(0xFFFFFF);
+                }
+                let tw : f64 = ctx.textWidth(FaceKind::Bold, label, 14.0);
+                p.text(FaceKind::Bold, label, box.x + (w - tw) * 0.5, ctx.baselineIn(FaceKind::Bold, 14.0, box.y, box.h), 14.0, ink);
+            }
+            if (self.ringShown(ctx) && active) {
+                let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+                p.strokeRound(box.grown(4.0).round(ctx.theme.metrics.radiusInline + 4.0), 2.0, Brush::solid(ring.rgb, ring.a));
+            }
+            x = x + w + 2.0;
+        }
+    }
+}

@@ -1,0 +1,119 @@
+// skeleton — grey placeholders that pulse while the real content loads.
+//
+//     new Skeleton(SkeletonShape::Avatar)
+//     new Skeleton(SkeletonShape::Text, Length::Px(180.0))
+//
+// A skeleton is one block in a shape from the kit — a line of text, an avatar, a button, a media
+// frame — so a loading screen is assembled from the same pieces as the real one and keeps its
+// rhythm. All skeletons on screen pulse together, off the context's clock.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** The shapes of placeholder. */
+pub enum SkeletonShape : i32 {
+    /** A line of body text, as wide as it is offered. */
+    Text = 0,
+
+    /** A short, thin line: a caption. */
+    Line = 1,
+
+    /** A round block, 40 px across. */
+    Circle = 2,
+
+    /** A round block, 36 px across: a list avatar. */
+    Avatar = 3,
+
+    /** A rounded block, 96 px high. */
+    Rect = 4,
+
+    /** A rounded block, 128 px high: a picture. */
+    Media = 5,
+
+    /** A pill, 24 px by 80. */
+    Pill = 6,
+
+    /** A button, 36 px by 96. */
+    Button = 7,
+
+    /** A text field, 36 px high and as wide as it is offered. */
+    Input = 8,
+
+    /** A chip, 24 px by 56. */
+    Chip = 9,
+}
+
+/** A pulsing placeholder block. */
+pub class Skeleton : Base, Widget {
+    shape : SkeletonShape;
+    width : Length;
+
+    /** A placeholder of `shape`, with the width that shape usually has. */
+    constructor(shape : SkeletonShape) {
+        self.shape = shape;
+        self.width = Length::Auto;
+    }
+
+    /** A placeholder of `shape`, `width` wide. */
+    constructor(shape : SkeletonShape, width : Length) {
+        self.shape = shape;
+        self.width = width;
+    }
+
+    /** The natural size of a shape; a width of 0 means as wide as it is offered. */
+    pub(file) fn naturalOf(self) : Size {
+        return match self.shape {
+            SkeletonShape::Line => Size { w: 0.0, h: 10.0 },
+            SkeletonShape::Circle => Size { w: 40.0, h: 40.0 },
+            SkeletonShape::Avatar => Size { w: 36.0, h: 36.0 },
+            SkeletonShape::Rect => Size { w: 0.0, h: 96.0 },
+            SkeletonShape::Media => Size { w: 0.0, h: 128.0 },
+            SkeletonShape::Pill => Size { w: 80.0, h: 24.0 },
+            SkeletonShape::Button => Size { w: 96.0, h: 36.0 },
+            SkeletonShape::Input => Size { w: 0.0, h: 36.0 },
+            SkeletonShape::Chip => Size { w: 56.0, h: 24.0 },
+            _ => Size { w: 0.0, h: 16.0 },
+        };
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let n : Size = self.naturalOf();
+        let mut w : f64 = n.w;
+        if (w == 0.0) {
+            w = limits.boundedW() ? limits.maxW : 160.0;
+        }
+        return limits.constrain(Size { w: self.width.resolve(limits.maxW, w), h: n.h });
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return true;
+    }
+
+    /** The radius of the shape. */
+    pub(file) fn radiusOf(self, ctx : Context, a : Bounds) : f64 {
+        if (self.shape == SkeletonShape::Circle || self.shape == SkeletonShape::Avatar || self.shape == SkeletonShape::Pill) {
+            return a.h * 0.5;
+        }
+        if (self.shape == SkeletonShape::Text || self.shape == SkeletonShape::Line) {
+            return 4.0;
+        }
+        if (self.shape == SkeletonShape::Chip) {
+            return ctx.theme.metrics.radiusInline;
+        }
+        return ctx.theme.metrics.radiusControl;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let track : Tint = ctx.theme.palette.track;
+        // A slow pulse between full and a little over half strength.
+        let beat : f64 = 0.5 + 0.5 * (ctx.now * 3.1).sin();
+        let ink : Tint = track.faded(Mathx::roundI(150.0 + 105.0 * beat));
+        p.fillRound(a.round(self.radiusOf(ctx, a)), Brush::solid(ink.rgb, ink.a));
+    }
+}

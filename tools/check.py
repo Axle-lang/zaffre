@@ -278,11 +278,25 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
         err("`unsafe` outside the files allowed it")
 
 
+def duplicate_names(idx):
+    """Two top-level public declarations with one name collide in the crate root (`Column` the layout, `Column` the table's)."""
+    seen = {}
+    out = []
+    for f in files_under(idx.src):
+        mod = os.path.relpath(f, idx.src)[:-5]
+        for m in re.finditer(r"^pub\s+(?:class|struct|enum|trait|fn|const|static)\s+(\w+)", code_of(f), re.M):
+            name = m.group(1)
+            if name in seen and seen[name] != mod:
+                out.append("`%s` is declared in both %s and %s" % (name, seen[name], mod))
+            seen.setdefault(name, mod)
+    return out
+
+
 def run(root):
     global ROOT
     idx = Index(root)
     smalt, smalt_methods = smalt_index()
-    errors = []
+    errors = duplicate_names(idx)
     for base in ("src", "examples"):
         d = os.path.join(root, base)
         if os.path.isdir(d):

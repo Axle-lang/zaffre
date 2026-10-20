@@ -1,0 +1,255 @@
+// notice — messages that are part of the page rather than on top of it: a banner and a callout.
+//
+//     new Banner(BannerProps { tone: Tone::Info, look: BannerLook::Subtle, dismissible: true }, "Maintenance on Sunday")
+//     new Callout(Tone::Warn, "Heads up", "Changing the plan also changes the invoice date.")
+//
+// A `Banner` is a full-width bar for an announcement or a system status: `Solid` shouts, `Subtle`
+// informs, from the same tones everything else uses. A `Callout` is an aside inside the text —
+// a tinted box with a bar down its left edge, an icon, a title and a paragraph that wraps.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::palette::{Soft, Hue};
+use crate::style::variants::{Tone, TextRole};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Insets};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::alert::Alert;
+use crate::widgets::flex::{Column, FlexProps};
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::label::{Label, LabelProps};
+
+/** How loudly a banner speaks. */
+pub enum BannerLook : i32 {
+    /** A solid fill with white ink (dark ink on yellow). */
+    Solid = 0,
+
+    /** A soft wash with a hairline under it. */
+    Subtle = 1,
+}
+
+/** How a banner looks. */
+pub struct BannerProps {
+    /** The colour. */
+    pub tone : Tone = Tone::Accent;
+
+    /** Solid or subtle. */
+    pub look : BannerLook = BannerLook::Solid;
+
+    /** Whether it carries a close button. */
+    pub dismissible : bool = false;
+
+    /** A link-like action at the end of the message; none when empty. */
+    pub action : string = "";
+}
+
+/** The handler a banner without one runs. */
+fn ignoreAction() : void {
+}
+
+/** A full-width message bar. */
+pub class Banner : Control, Widget {
+    props : BannerProps;
+    text : string;
+    onAction : () => void = ignoreAction;
+    gone : bool = false;
+    overClose : bool = false;
+    overAction : bool = false;
+
+    /** A banner saying `text`. */
+    constructor(own props : BannerProps, text : string) {
+        self.props = props;
+        self.text = text;
+        self.focusable = false;
+    }
+
+    /** A banner saying `text`, whose action runs `onAction`. */
+    constructor(own props : BannerProps, text : string, onAction : () => void) {
+        self.props = props;
+        self.text = text;
+        self.onAction = onAction;
+        self.focusable = false;
+    }
+
+    /** The bar's height. */
+    pub(file) fn barHeight(self) : f64 {
+        return 44.0;
+    }
+
+    /** Whether the bar is a solid one on the yellow tone, which keeps dark ink. */
+    pub(file) fn darkInk(self) : bool {
+        return self.props.look == BannerLook::Solid && self.props.tone == Tone::Warn;
+    }
+
+    /** The colour of the ink. */
+    pub(file) fn ink(self, ctx : Context) : Tint {
+        if (self.props.look == BannerLook::Subtle) {
+            return ctx.theme.soft(self.props.tone).fg;
+        }
+        if (self.darkInk()) {
+            return Tint::hex(0x111827);
+        }
+        return Tint::hex(0xFFFFFF);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        if (self.gone) {
+            return limits.constrain(Size::zero());
+        }
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : 480.0, h: self.barHeight() });
+    }
+
+    /** The box of the close button. */
+    pub(file) fn closeBox(self) : Bounds {
+        let a : Bounds = self.area;
+        return Bounds::make(a.right() - 44.0, a.y, 44.0, a.h);
+    }
+
+    /** The box of the action, from where the message ends. */
+    pub(file) fn actionBox(self, ctx : Context) : Bounds {
+        let a : Bounds = self.area;
+        let x : f64 = a.x + 20.0 + 26.0 + ctx.textWidth(FaceKind::Sans, self.text, 14.0) + 16.0;
+        return Bounds::make(x, a.y, ctx.textWidth(FaceKind::Bold, self.props.action, 14.0), a.h);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.gone) {
+            return false;
+        }
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.overClose = self.hovered && self.props.dismissible && self.closeBox().contains(e.x, e.y);
+            self.overAction = self.hovered && self.props.action.byteLength > 0 && self.actionBox(ctx).contains(e.x, e.y);
+            if (self.overClose || self.overAction) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (g == Gesture::Click) {
+            if (self.props.dismissible && self.closeBox().contains(e.x, e.y)) {
+                self.gone = true;
+                ctx.invalidate();
+                return true;
+            }
+            if (self.props.action.byteLength > 0 && self.actionBox(ctx).contains(e.x, e.y)) {
+                let h : () => void = self.onAction;
+                h();
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.gone) {
+            return;
+        }
+        let a : Bounds = self.area;
+        let soft : Soft = ctx.theme.soft(self.props.tone);
+        let hue : Hue = ctx.theme.hue(self.props.tone);
+        let mut fill : Tint = hue.s600;
+        if (self.props.look == BannerLook::Subtle) {
+            fill = soft.fill;
+        } else if (self.props.tone == Tone::Warn) {
+            fill = hue.s500;
+        } else if (self.props.tone == Tone::Neutral) {
+            fill = Tint::hex(0x111827);
+        }
+        p.fillRound(a.round(0.0), Brush::solid(fill.rgb, fill.a));
+        if (self.props.look == BannerLook::Subtle) {
+            p.line(a.x, a.bottom() - 0.5, a.right(), a.bottom() - 0.5, 1.0, soft.line);
+        }
+        let ink : Tint = self.ink(ctx);
+        Icons::draw(p, Alert::iconOf(self.props.tone), a.x + 20.0, a.midY() - 9.0, 18.0, ink);
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, 14.0, a.y, a.h);
+        p.text(FaceKind::Sans, self.text, a.x + 46.0, base, 14.0, ink);
+        if (self.props.action.byteLength > 0) {
+            let ab : Bounds = self.actionBox(ctx);
+            let end : f64 = p.text(FaceKind::Bold, self.props.action, ab.x, base, 14.0, ink);
+            if (self.overAction) {
+                p.line(ab.x, base + 2.0, end, base + 2.0, 1.0, ink);
+            }
+        }
+        if (self.props.dismissible) {
+            let c : Bounds = self.closeBox();
+            let mut x : Tint = ink.faded(170);
+            if (self.overClose) {
+                x = ink;
+            }
+            Icons::draw(p, IconKind::Close, c.midX() - 9.0, c.midY() - 9.0, 18.0, x);
+        }
+    }
+}
+
+/** Room the icon takes at the left of a callout. */
+const CALLOUT_GUTTER : f64 = 46.0;
+
+/** A tinted aside with a bar down its left edge. */
+pub class Callout : Base, Widget {
+    tone : Tone;
+    kid : dyn Widget[];
+
+    /** A callout of `tone` with a `title` over a `message`. */
+    constructor(tone : Tone, title : string, message : string) {
+        self.tone = tone;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = Callout::content(title, message);
+    }
+
+    /** A callout of `tone` with just a `message`. */
+    constructor(tone : Tone, message : string) {
+        self.tone = tone;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = Callout::content("", message);
+    }
+
+    /** The paragraphs inside. */
+    pub(file) static fn content(title : string, message : string) : dyn Widget {
+        let mut text : Column = new Column(FlexProps { gap: 4.0, padding: Insets { top: 16.0, right: 20.0, bottom: 16.0, left: CALLOUT_GUTTER } });
+        if (title.byteLength > 0) {
+            text.add(new Label(title, TextRole::Strong));
+        }
+        text.add(new Label(LabelProps { role: TextRole::Dim, wrap: true }, message));
+        return text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits.loosened());
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let soft : Soft = ctx.theme.soft(self.tone);
+        let hue : Hue = ctx.theme.hue(self.tone);
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusSurface;
+        p.fillRound(a.round(r), Brush::solid(soft.fill.rgb, soft.fill.a));
+        // The bar is the left edge of the box, clipped to its corners.
+        p.pushClip(a.x, a.y, 3.0, a.h);
+        p.fillRound(a.round(r), Brush::solid(hue.s500.rgb, hue.s500.a));
+        p.popClip();
+        Icons::draw(p, Alert::iconOf(self.tone), a.x + 18.0, a.y + 17.0, 18.0, soft.fg);
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+}

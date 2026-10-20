@@ -29,6 +29,6 @@ use crate::paint::{painter};
 
 use crate::core::{context, event, format, geometry, model, view, widget};
 
-use crate::widgets::{alert, badge, button, dialog, field, flex, icon, label, notify, panel, progress, scroll, segmented, select, slider, spacer, tabs, toast, toggle, tooltip};
+use crate::widgets::{accordion, alert, badge, band, breadcrumb, button, card, chips, dialog, field, flex, icon, label, notice, notify, pagination, panel, progress, ring, scroll, segmented, select, skeleton, slider, spacer, sparkline, stat, stepper, table, tabs, toast, toggle, tooltip};
 
 use crate::shell::{app, keys};

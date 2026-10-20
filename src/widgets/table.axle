@@ -1,0 +1,419 @@
+// table — rows and columns of widgets, with a header that can sort and rows that can be picked.
+//
+//     let columns : TableColumn[] = [
+//         TableColumn { title: "Name", width: Length::Fill, sortable: true },
+//         TableColumn { title: "Status" },
+//         TableColumn { title: "Amount", align: Align::End, sortable: true },
+//     ];
+//     let cells : dyn Widget[] = [
+//         new Label("Ada"), new Badge("Paid", Tone::Ok), new Label("$120"),
+//         new Label("Grace"), new Badge("Due", Tone::Warn), new Label("$85"),
+//     ];
+//     new Table(TableProps { hoverRows: true }, columns, cells)
+//
+// The cells are widgets, laid out row by row — a label, a badge, an avatar beside a name, a button —
+// so a column can hold anything. Column widths are fixed (`Length::Px`), shared out of what is left
+// (`Length::Fill`), or fitted to the widest cell (`Length::Auto`). Clicking the title of a column
+// marked `sortable` orders the rows by that column, ascending and then descending, when the table
+// was given sort keys with `setKeys` (one number per cell, in the order of the cells: text sorts by
+// whatever rank the program gives it). Rows can be picked: the model holds the data index of the
+// picked row, or -1.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length, Align, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** One column of a table. */
+pub struct TableColumn {
+    /** The title in the header. */
+    pub title : string = "";
+
+    /** The column's width: fitted to its widest cell, a fixed number, or a share of what is left. */
+    pub width : Length = Length::Auto;
+
+    /** Where cells sit across the column. */
+    pub align : Align = Align::Start;
+
+    /** Whether clicking the title orders the rows by this column. */
+    pub sortable : bool = false;
+}
+
+/** How a table looks. */
+pub struct TableProps {
+    /** Dense rows (36 px) rather than standard ones (44 px). */
+    pub dense : bool = false;
+
+    /** Whether a row lights up under the pointer. */
+    pub hoverRows : bool = true;
+
+    /** Whether every other row is tinted. */
+    pub striped : bool = false;
+
+    /** Whether the table is drawn inside its own bordered surface. */
+    pub framed : bool = true;
+}
+
+/** Space at either side of a cell. */
+const TABLE_PAD : f64 = 16.0;
+
+/** The most columns a table holds. */
+const TABLE_MAX_COLUMNS : i32 = 16;
+
+/** The handler a table without one runs. */
+fn ignoreRow(i : i32) : void {
+}
+
+/** A grid of widgets. */
+pub class Table : Control, Widget {
+    props : TableProps;
+    columns : TableColumn[];
+    cols : i32;
+    cells : dyn Widget[];
+    rows : i32;
+    picked : Shared<Model<i32>>;
+    onPick : (i32) => void = ignoreRow;
+    keys : f64[];
+    hasKeys : bool = false;
+    order : i32[];
+    widths : f64[];
+    lefts : f64[];
+    rowH : f64[];
+    rowTop : f64[];
+    headH : f64 = 44.0;
+    sortCol : i32 = -1;
+    sortAsc : bool = true;
+    hotRow : i32 = -1;
+    hotHead : i32 = -1;
+
+    /** A table of `columns` over `cells` (row by row), whose picked row is not tracked. */
+    constructor(own props : TableProps, columns : TableColumn[], own cells : dyn Widget[]) {
+        self.props = props;
+        self.columns = columns;
+        self.cols = Mathx::clampI(columns.length as i32, 1, TABLE_MAX_COLUMNS);
+        self.cells = cells;
+        self.rows = (cells.length as i32) / self.cols;
+        self.picked = new shared Model<i32>(-1);
+        self.keys = malloc<f64>(1 as i64);
+        self.order = malloc<i32>(self.rows as i64);
+        self.widths = malloc<f64>(self.cols as i64);
+        self.lefts = malloc<f64>(self.cols as i64);
+        self.rowH = malloc<f64>(self.rows as i64);
+        self.rowTop = malloc<f64>(self.rows as i64);
+        for (r of 0..self.rows) {
+            self.order[r as i64] = r;
+        }
+        self.focusable = false;
+    }
+
+    /** A table that writes the data index of the picked row to `picked`. */
+    constructor(own props : TableProps, columns : TableColumn[], own cells : dyn Widget[], picked : Shared<Model<i32>>) {
+        self.props = props;
+        self.columns = columns;
+        self.cols = Mathx::clampI(columns.length as i32, 1, TABLE_MAX_COLUMNS);
+        self.cells = cells;
+        self.rows = (cells.length as i32) / self.cols;
+        self.picked = picked;
+        self.keys = malloc<f64>(1 as i64);
+        self.order = malloc<i32>(self.rows as i64);
+        self.widths = malloc<f64>(self.cols as i64);
+        self.lefts = malloc<f64>(self.cols as i64);
+        self.rowH = malloc<f64>(self.rows as i64);
+        self.rowTop = malloc<f64>(self.rows as i64);
+        for (r of 0..self.rows) {
+            self.order[r as i64] = r;
+        }
+        self.focusable = false;
+    }
+
+    /** Give the table one sort key per cell (row by row) so that sortable columns can order the rows. */
+    pub fn setKeys(mut self, keys : f64[]) : void {
+        self.keys = keys;
+        self.hasKeys = true;
+    }
+
+    /** Tell `onPick` the data index of a row when the user picks it. */
+    pub fn setHandler(mut self, onPick : (i32) => void) : void {
+        self.onPick = onPick;
+    }
+
+    /** The padding above and below a row's content. */
+    pub(file) fn padY(self) : f64 {
+        if (self.props.dense) {
+            return 8.0;
+        }
+        return 12.0;
+    }
+
+    /** The shortest a row gets. */
+    pub(file) fn minRow(self) : f64 {
+        if (self.props.dense) {
+            return 36.0;
+        }
+        return 44.0;
+    }
+
+    pub fn flex(self) : f64 {
+        return 0.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let total : f64 = limits.boundedW() ? limits.maxW : 640.0;
+        // Natural widths: the widest cell and the header text of each column.
+        let mut fixed : f64 = 0.0;
+        let mut shares : i32 = 0;
+        for (c of 0..self.cols) {
+            let col : TableColumn = self.columns[c as i64];
+            let mut want : f64 = ctx.textWidth(FaceKind::Bold, col.title, 14.0) + 2.0 * TABLE_PAD;
+            if (col.sortable) {
+                want = want + 22.0;
+            }
+            for (r of 0..self.rows) {
+                let cell : dyn Widget = self.cells[(r * self.cols + c) as i64];
+                let s : Size = cell.measure(ctx, Limits { minW: 0.0, maxW: total, minH: 0.0, maxH: UNBOUNDED });
+                want = Mathx::fmax(want, s.w + 2.0 * TABLE_PAD);
+            }
+            let w : f64 = col.width.resolve(total, want);
+            self.widths[c as i64] = w;
+            if (!col.width.isFill()) {
+                fixed = fixed + w;
+            } else {
+                shares = shares + 1;
+            }
+        }
+        if (shares > 0) {
+            let each : f64 = Mathx::fmax(0.0, (total - fixed) / (shares as f64));
+            for (c of 0..self.cols) {
+                if (self.columns[c as i64].width.isFill()) {
+                    self.widths[c as i64] = each;
+                }
+            }
+        }
+        let mut x : f64 = 0.0;
+        for (c of 0..self.cols) {
+            self.lefts[c as i64] = x;
+            x = x + self.widths[c as i64];
+        }
+        // Row heights: the tallest cell at its column's width.
+        let mut y : f64 = self.headH;
+        for (r of 0..self.rows) {
+            let mut h : f64 = self.minRow();
+            for (c of 0..self.cols) {
+                let cell : dyn Widget = self.cells[(self.order[r as i64] * self.cols + c) as i64];
+                let s : Size = cell.measure(ctx, Limits { minW: 0.0, maxW: self.widths[c as i64] - 2.0 * TABLE_PAD, minH: 0.0, maxH: UNBOUNDED });
+                h = Mathx::fmax(h, s.h + 2.0 * self.padY());
+            }
+            self.rowTop[r as i64] = y;
+            self.rowH[r as i64] = h;
+            y = y + h;
+        }
+        return limits.constrain(Size { w: x, h: y });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        for (r of 0..self.rows) {
+            let data : i32 = self.order[r as i64];
+            for (c of 0..self.cols) {
+                let cell : dyn Widget = self.cells[(data * self.cols + c) as i64];
+                let room : f64 = self.widths[c as i64] - 2.0 * TABLE_PAD;
+                let mut s : Size = cell.measure(ctx, Limits { minW: 0.0, maxW: room, minH: 0.0, maxH: UNBOUNDED });
+                let mut x : f64 = area.x + self.lefts[c as i64] + TABLE_PAD;
+                let align : Align = self.columns[c as i64].align;
+                if (align == Align::Center) {
+                    x = x + (room - s.w) * 0.5;
+                } else if (align == Align::End) {
+                    x = x + room - s.w;
+                } else if (align == Align::Stretch) {
+                    s = Size { w: room, h: s.h };
+                }
+                let y : f64 = area.y + self.rowTop[r as i64] + (self.rowH[r as i64] - s.h) * 0.5;
+                cell.arrange(ctx, Bounds::make(x, y, s.w, s.h));
+            }
+        }
+    }
+
+    /** The display row under `y`, or -1. */
+    pub(file) fn rowAt(self, y : f64) : i32 {
+        let rel : f64 = y - self.area.y;
+        for (r of 0..self.rows) {
+            if (rel >= self.rowTop[r as i64] && rel < self.rowTop[r as i64] + self.rowH[r as i64]) {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    /** The column whose header is under `x`, or -1. */
+    pub(file) fn headAt(self, x : f64, y : f64) : i32 {
+        if (y < self.area.y || y >= self.area.y + self.headH) {
+            return -1;
+        }
+        let rel : f64 = x - self.area.x;
+        for (c of 0..self.cols) {
+            if (rel >= self.lefts[c as i64] && rel < self.lefts[c as i64] + self.widths[c as i64]) {
+                return c;
+            }
+        }
+        return -1;
+    }
+
+    /** Order the rows by the keys of column `c`. */
+    pub(file) fn sortBy(mut self, c : i32, ascending : bool) : void {
+        self.sortCol = c;
+        self.sortAsc = ascending;
+        // A stable insertion sort of the display order.
+        for (r of 0..self.rows) {
+            self.order[r as i64] = r;
+        }
+        for (i of 1..self.rows) {
+            let held : i32 = self.order[i as i64];
+            let key : f64 = self.keys[(held * self.cols + c) as i64];
+            let mut j : i32 = i - 1;
+            while (j >= 0) {
+                let other : f64 = self.keys[(self.order[j as i64] * self.cols + c) as i64];
+                let after : bool = ascending ? other > key : other < key;
+                if (!after) {
+                    break;
+                }
+                self.order[(j + 1) as i64] = self.order[j as i64];
+                j = j - 1;
+            }
+            self.order[(j + 1) as i64] = held;
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        for (i of 0..self.cells.length) {
+            let cell : dyn Widget = self.cells[i];
+            if (cell.event(ctx, e)) {
+                return true;
+            }
+        }
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hotRow = -1;
+            self.hotHead = -1;
+            if (self.hovered) {
+                self.hotHead = self.headAt(e.x, e.y);
+                if (self.hotHead >= 0 && self.columns[self.hotHead as i64].sortable && self.hasKeys) {
+                    ctx.wantCursor(Cursor::Hand);
+                } else {
+                    self.hotHead = -1;
+                }
+                self.hotRow = self.rowAt(e.y);
+            }
+        }
+        if (g == Gesture::Click) {
+            let c : i32 = self.headAt(e.x, e.y);
+            if (c >= 0 && self.columns[c as i64].sortable && self.hasKeys) {
+                let flip : bool = c == self.sortCol && self.sortAsc;
+                self.sortBy(c, !flip);
+                ctx.invalidate();
+                return true;
+            }
+            let r : i32 = self.rowAt(e.y);
+            if (r >= 0) {
+                let data : i32 = self.order[r as i64];
+                self.picked.set(data);
+                let h : (i32) => void = self.onPick;
+                h(data);
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut moving : bool = false;
+        for (i of 0..self.cells.length) {
+            let cell : dyn Widget = self.cells[i];
+            if (cell.tick(ctx, dt)) {
+                moving = true;
+            }
+        }
+        return moving;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusSurface;
+        let frame : RRect = a.round(r);
+        if (self.props.framed) {
+            p.fillRound(frame, Brush::solid(pal.surface.rgb, pal.surface.a));
+        }
+        // The header.
+        let head : RRect = RRect::corners(a.x, a.y, a.w, self.headH, r, r, 0.0, 0.0);
+        p.fillRound(head, Brush::solid(pal.raised.rgb, pal.raised.a));
+        for (c of 0..self.cols) {
+            let col : TableColumn = self.columns[c as i64];
+            let x : f64 = a.x + self.lefts[c as i64];
+            if (c == self.hotHead) {
+                p.fillRound(Bounds::make(x, a.y, self.widths[c as i64], self.headH).round(0.0), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            let tw : f64 = ctx.textWidth(FaceKind::Bold, col.title, 14.0);
+            let room : f64 = self.widths[c as i64] - 2.0 * TABLE_PAD;
+            let mut tx : f64 = x + TABLE_PAD;
+            let mut span : f64 = tw;
+            if (col.sortable) {
+                span = span + 22.0;
+            }
+            if (col.align == Align::Center) {
+                tx = tx + (room - span) * 0.5;
+            } else if (col.align == Align::End) {
+                tx = tx + room - span;
+            }
+            p.text(FaceKind::Bold, col.title, tx, ctx.baselineIn(FaceKind::Bold, 14.0, a.y, self.headH), 14.0, pal.textDim);
+            if (col.sortable) {
+                let mut icon : IconKind = IconKind::Sort;
+                let mut ink : Tint = pal.textOff;
+                if (c == self.sortCol) {
+                    icon = IconKind::ArrowDown;
+                    if (self.sortAsc) {
+                        icon = IconKind::ArrowUp;
+                    }
+                    ink = pal.accentTop;
+                }
+                Icons::draw(p, icon, tx + tw + 6.0, a.y + (self.headH - 16.0) * 0.5, 16.0, ink);
+            }
+        }
+        p.line(a.x, a.y + self.headH - 0.5, a.right(), a.y + self.headH - 0.5, 1.0, pal.line);
+        // The rows.
+        let picked : i32 = self.picked.get();
+        for (i of 0..self.rows) {
+            let data : i32 = self.order[i as i64];
+            let top : f64 = a.y + self.rowTop[i as i64];
+            let h : f64 = self.rowH[i as i64];
+            let last : bool = i == self.rows - 1;
+            let bottom : f64 = (last && self.props.framed) ? r : 0.0;
+            let shape : RRect = RRect::corners(a.x, top, a.w, h, 0.0, 0.0, bottom, bottom);
+            if (data == picked) {
+                p.fillRound(shape, Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+            } else if (i == self.hotRow && self.props.hoverRows) {
+                p.fillRound(shape, Brush::solid(pal.hover.rgb, pal.hover.a));
+            } else if (self.props.striped && i % 2 == 1) {
+                p.fillRound(shape, Brush::solid(pal.raised.rgb, pal.raised.a));
+            }
+            if (!last) {
+                p.line(a.x, top + h - 0.5, a.right(), top + h - 0.5, 1.0, pal.line);
+            }
+            for (c of 0..self.cols) {
+                let cell : dyn Widget = self.cells[(data * self.cols + c) as i64];
+                cell.paint(ctx, p);
+            }
+        }
+        if (self.props.framed) {
+            p.strokeRound(frame, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        }
+    }
+}

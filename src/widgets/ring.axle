@@ -1,0 +1,77 @@
+// ring — a circular progress indicator, with its value in the middle.
+//
+//     new ProgressRing(RingProps { size: 96.0, tone: Tone::Ok }, uploaded)
+//
+// The ring reads a `Model<f64>` between 0 and 1. The arc is drawn from the top, clockwise, as a
+// run of short round-ended segments, so it is as smooth as the painter's lines are.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** How a ring looks. */
+pub struct RingProps {
+    /** Its diameter. */
+    pub size : f64 = 72.0;
+
+    /** The thickness of the track and of the arc. */
+    pub thickness : f64 = 8.0;
+
+    /** The colour of the arc. */
+    pub tone : Tone = Tone::Accent;
+
+    /** Whether the percentage is written in the middle. */
+    pub showValue : bool = true;
+}
+
+/** A ring that fills as a model rises. */
+pub class ProgressRing : Base, Widget {
+    props : RingProps;
+    model : Shared<Model<f64>>;
+
+    /** A ring showing `model` (0..1). */
+    constructor(own props : RingProps, model : Shared<Model<f64>>) {
+        self.props = props;
+        self.model = model;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.props.size, h: self.props.size });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let t : f64 = self.props.thickness;
+        let r : f64 = (self.props.size - t) * 0.5;
+        let cx : f64 = a.midX();
+        let cy : f64 = a.midY();
+        let v : f64 = Mathx::clamp01(self.model.get());
+        let ink : Tint = ctx.theme.hue(self.props.tone).s500;
+        let steps : i32 = 72;
+        let sweep : i32 = Mathx::roundI(v * (steps as f64));
+        let step : f64 = 6.283185307179586 / (steps as f64);
+        for (i of 0..steps) {
+            let a0 : f64 = -1.5707963267948966 + step * (i as f64);
+            let a1 : f64 = a0 + step * 1.02;
+            let mut c : Tint = pal.track;
+            if (i < sweep) {
+                c = ink;
+            }
+            p.line(cx + r * a0.cos(), cy + r * a0.sin(), cx + r * a1.cos(), cy + r * a1.sin(), t, c);
+        }
+        if (self.props.showValue) {
+            let text : string = Format::percent(v);
+            let px : f64 = self.props.size * 0.22;
+            let w : f64 = ctx.textWidth(FaceKind::Bold, text, px);
+            p.text(FaceKind::Bold, text, cx - w * 0.5, ctx.baselineIn(FaceKind::Bold, px, cy - px, px * 2.0), px, pal.text);
+        }
+    }
+}

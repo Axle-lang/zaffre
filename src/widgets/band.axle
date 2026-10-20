@@ -1,0 +1,112 @@
+// band — a strip of a surface: the header, the body or the footer of a card.
+//
+// A band pads its child, fills behind it and draws a hairline on the side that faces its neighbour.
+// It knows nothing about cards: a toolbar above a table, a summary row under one, a banner at the
+// top of a dialog are bands too. A band at the edge of a rounded surface asks for the matching
+// corners (`roundTop`, `roundBottom`) so its fill follows the surface's radius, which it reads from
+// the theme when it paints.
+//
+//     new Band(BandProps { fill: BandFill::Raised, edge: BandEdge::Below, roundTop: true }, title)
+
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::core::geometry::{Size, Bounds, Insets, Limits};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** What a band is filled with. */
+pub enum BandFill : i32 {
+    /** Nothing: the surface shows through. */
+    Clear = 0,
+
+    /** One step off the surface: the grey of a card header. */
+    Raised = 1,
+}
+
+/** Which side of a band carries the hairline. */
+pub enum BandEdge : i32 {
+    /** No hairline. */
+    None = 0,
+
+    /** A hairline along the top edge. */
+    Above = 1,
+
+    /** A hairline along the bottom edge. */
+    Below = 2,
+}
+
+/** How a band looks. */
+pub struct BandProps {
+    /** The fill behind the content. */
+    pub fill : BandFill = BandFill::Clear;
+
+    /** The side that carries a hairline. */
+    pub edge : BandEdge = BandEdge::None;
+
+    /** Space between the band's edge and its content. */
+    pub padding : Insets = Insets { top: 12.0, right: 20.0, bottom: 12.0, left: 20.0 };
+
+    /** Whether the top corners follow the surface's radius. */
+    pub roundTop : bool = false;
+
+    /** Whether the bottom corners follow the surface's radius. */
+    pub roundBottom : bool = false;
+}
+
+/** A padded, filled strip around one child. */
+pub class Band : Base, Widget {
+    props : BandProps;
+    kid : dyn Widget[];
+
+    /** A band around `child`, which it takes. */
+    constructor(own props : BandProps, own child : dyn Widget) {
+        self.props = props;
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = child;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let pad : Insets = self.props.padding;
+        let c : dyn Widget = self.kid[0];
+        let s : Size = c.measure(ctx, limits.deflate(pad).loosened());
+        return limits.constrain(Size { w: s.w + pad.horizontal(), h: s.h + pad.vertical() });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area.inset(self.props.padding));
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusSurface;
+        if (self.props.fill == BandFill::Raised) {
+            let top : f64 = self.props.roundTop ? r : 0.0;
+            let bottom : f64 = self.props.roundBottom ? r : 0.0;
+            let shape : RRect = RRect::corners(a.x, a.y, a.w, a.h, top, top, bottom, bottom);
+            p.fillRound(shape, Brush::solid(pal.raised.rgb, pal.raised.a));
+        }
+        if (self.props.edge == BandEdge::Above) {
+            p.line(a.x, a.y + 0.5, a.right(), a.y + 0.5, 1.0, pal.line);
+        }
+        if (self.props.edge == BandEdge::Below) {
+            p.line(a.x, a.bottom() - 0.5, a.right(), a.bottom() - 0.5, 1.0, pal.line);
+        }
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.tick(ctx, dt);
+    }
+}

@@ -1,0 +1,83 @@
+// sparkline — a small line chart with no axes: the shape of a series, at a glance.
+//
+//     let week : f64[] = [12.0, 14.5, 13.2, 18.0, 21.4, 19.8, 24.0];
+//     new Sparkline(week, Tone::Ok)
+//
+// The line is drawn from the series scaled to the widget's own height, with a faint wash under it.
+// It is meant for a stat tile or a table cell, so it asks for no room of its own beyond a height:
+// it takes the width it is offered.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::style::variants::Tone;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** The height a sparkline asks for. */
+const SPARK_HEIGHT : f64 = 40.0;
+
+/** A series drawn as a line. */
+pub class Sparkline : Base, Widget {
+    values : f64[];
+    count : i32;
+    tone : Tone;
+    width : Length;
+
+    /** A sparkline of `values` in `tone`, as wide as it is offered. */
+    constructor(values : f64[], tone : Tone) {
+        self.values = values;
+        self.count = values.length as i32;
+        self.tone = tone;
+        self.width = Length::Fill;
+    }
+
+    /** A sparkline of `values` in `tone`, `width` wide. */
+    constructor(values : f64[], tone : Tone, width : Length) {
+        self.values = values;
+        self.count = values.length as i32;
+        self.tone = tone;
+        self.width = width;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.width.resolve(limits.maxW, 120.0), h: SPARK_HEIGHT });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.count < 2) {
+            return;
+        }
+        let a : Bounds = self.area;
+        let mut lo : f64 = self.values[0];
+        let mut hi : f64 = self.values[0];
+        for (i of 1..self.count) {
+            lo = Mathx::fmin(lo, self.values[i as i64]);
+            hi = Mathx::fmax(hi, self.values[i as i64]);
+        }
+        let span : f64 = Mathx::fmax(hi - lo, 0.000001);
+        let ink : Tint = ctx.theme.hue(self.tone).s500;
+        let top : f64 = a.y + 4.0;
+        let low : f64 = a.bottom() - 4.0;
+        let wash : Tint = ink.faded(Mathx::roundI(ctx.theme.isDark ? 46.0 : 36.0));
+        let mut px : f64 = a.x + 2.0;
+        let mut py : f64 = low - (self.values[0] - lo) / span * (low - top);
+        let step : f64 = (a.w - 4.0) / ((self.count - 1) as f64);
+        for (i of 1..self.count) {
+            let qx : f64 = a.x + 2.0 + step * (i as f64);
+            let qy : f64 = low - (self.values[i as i64] - lo) / span * (low - top);
+            // The wash: thin columns from the line down to the floor.
+            let columns : i32 = Mathx::clampI(Mathx::roundI((qx - px) / 2.0), 1, 4096);
+            for (c of 0..columns) {
+                let t : f64 = ((c as f64) + 0.5) / (columns as f64);
+                let cx : f64 = Mathx::lerp(px, qx, t);
+                let cy : f64 = Mathx::lerp(py, qy, t);
+                p.line(cx, cy, cx, a.bottom(), 2.0, wash);
+            }
+            p.line(px, py, qx, qy, 2.0, ink);
+            px = qx;
+            py = qy;
+        }
+    }
+}

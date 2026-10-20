@@ -1,0 +1,135 @@
+// stepper — the stages of a process, with how far along it is.
+//
+//     let step : Shared<Model<i32>> = new shared Model<i32>(1);
+//     new Stepper(["Account", "Plan", "Payment", "Done"], step)
+//
+// The model holds the current stage as a zero-based index. Stages before it are done and show a
+// tick; the current one is ringed; later ones are outlined and numbered. A done stage can be
+// clicked to go back to it.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Diameter of a stage's circle. */
+const STEP_DISC : f64 = 32.0;
+
+/** Text size of a stage's label. */
+const STEP_PX : f64 = 12.0;
+
+/** A row of stages. */
+pub class Stepper : Control, Widget {
+    titles : string[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    hot : i32 = -1;
+
+    /** The stages `titles`, the current one held in `model`. */
+    constructor(titles : string[], model : Shared<Model<i32>>) {
+        self.titles = titles;
+        self.count = titles.length as i32;
+        self.model = model;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = limits.boundedW() ? limits.maxW : 120.0 * (self.count as f64);
+        return limits.constrain(Size { w: w, h: STEP_DISC + 8.0 + ctx.lineHeight(FaceKind::Bold, STEP_PX) });
+    }
+
+    /** The x of the middle of stage `i`. */
+    pub(file) fn centre(self, i : i32) : f64 {
+        let col : f64 = self.area.w / (self.count as f64);
+        return self.area.x + col * ((i as f64) + 0.5);
+    }
+
+    /** The stage whose circle or label is under (`x`, `y`), or -1. */
+    pub(file) fn stageAt(self, x : f64, y : f64) : i32 {
+        let col : f64 = self.area.w / (self.count as f64);
+        if (!self.area.contains(x, y)) {
+            return -1;
+        }
+        return Mathx::clampI(Mathx::floorI((x - self.area.x) / col), 0, self.count - 1);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                let i : i32 = self.stageAt(e.x, e.y);
+                if (i >= 0 && i < self.model.get()) {
+                    self.hot = i;
+                    ctx.wantCursor(Cursor::Hand);
+                }
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.stageAt(e.x, e.y);
+            if (i >= 0 && i < self.model.get()) {
+                self.model.set(i);
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return g == Gesture::Press && self.hot >= 0;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let cur : i32 = self.model.get();
+        let cy : f64 = a.y + STEP_DISC * 0.5;
+        for (i of 0..self.count) {
+            let cx : f64 = self.centre(i);
+            // The connector runs from this circle to the next.
+            if (i < self.count - 1) {
+                let mut rail : Tint = pal.line;
+                if (i < cur) {
+                    rail = pal.primary.s600;
+                }
+                p.line(cx + STEP_DISC * 0.5 + 6.0, cy, self.centre(i + 1) - STEP_DISC * 0.5 - 6.0, cy, 2.0, rail);
+            }
+            let disc : RRect = RRect::uniform(cx - STEP_DISC * 0.5, a.y, STEP_DISC, STEP_DISC, STEP_DISC * 0.5);
+            let done : bool = i < cur;
+            let active : bool = i == cur;
+            if (done || active) {
+                p.fillRound(disc, Brush::solid(pal.primary.s600.rgb, 255));
+            } else {
+                p.fillRound(disc, Brush::solid(pal.surface.rgb, pal.surface.a));
+                p.strokeRound(disc, 2.0, Brush::solid(pal.line.rgb, pal.line.a));
+            }
+            if (active) {
+                let halo : Tint = pal.primary.s500.withAlpha(51);
+                p.strokeRound(disc.grown(4.0), 4.0, Brush::solid(halo.rgb, halo.a));
+            }
+            if (done) {
+                Icons::draw(p, IconKind::Check, cx - 9.0, cy - 9.0, 18.0, Tint::hex(0xFFFFFF));
+            } else {
+                let n : string = Format::whole((i + 1) as f64);
+                let w : f64 = ctx.textWidth(FaceKind::Bold, n, 14.0);
+                let mut ink : Tint = pal.textFaint;
+                if (active) {
+                    ink = Tint::hex(0xFFFFFF);
+                }
+                p.text(FaceKind::Bold, n, cx - w * 0.5, ctx.baselineIn(FaceKind::Bold, 14.0, a.y, STEP_DISC), 14.0, ink);
+            }
+            let mut ink : Tint = pal.textFaint;
+            if (done || active) {
+                ink = pal.text;
+            }
+            let lw : f64 = ctx.textWidth(FaceKind::Bold, self.titles[i as i64], STEP_PX);
+            let ly : f64 = a.y + STEP_DISC + 8.0;
+            p.text(FaceKind::Bold, self.titles[i as i64], cx - lw * 0.5, ctx.baselineIn(FaceKind::Bold, STEP_PX, ly, a.bottom() - ly), STEP_PX, ink);
+        }
+    }
+}

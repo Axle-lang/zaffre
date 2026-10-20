@@ -1,0 +1,281 @@
+// chips — small things that sit inline with text: a key cap, a status dot, a status pill, a tag.
+//
+//     new Kbd("Ctrl K")
+//     new StatusPill("Operational", Tone::Ok)
+//     new Tag(TagProps { text: "design", tone: Tone::Accent, removable: true }, () => tags.remove("design"))
+//
+// They share one ladder of heights with `Badge` (20, 24 and 28 px), so a row that mixes them lines
+// up. A `Dot` pulses when asked, with a halo that grows and fades the way a "live" indicator does.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::palette::{Palette, Soft, Hue};
+use crate::style::variants::{Tone, BadgeSize};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** The height of a chip at `size`. */
+fn chipHeight(size : BadgeSize) : f64 {
+    return match size {
+        BadgeSize::Sm => 20.0,
+        BadgeSize::Lg => 28.0,
+        _ => 24.0,
+    };
+}
+
+/** The text size of a chip at `size`. */
+fn chipText(size : BadgeSize) : f64 {
+    return match size {
+        BadgeSize::Sm => 11.0,
+        BadgeSize::Lg => 14.0,
+        _ => 12.0,
+    };
+}
+
+/** The space at either side of a chip's content at `size`. */
+fn chipPad(size : BadgeSize) : f64 {
+    return match size {
+        BadgeSize::Sm => 8.0,
+        BadgeSize::Lg => 12.0,
+        _ => 10.0,
+    };
+}
+
+/** The colour a tone's dot is drawn in. */
+fn dotTint(pal : Palette, tone : Tone) : Tint {
+    return match tone {
+        Tone::Accent => pal.primary.s500,
+        Tone::Ok => pal.success.s500,
+        Tone::Warn => pal.warning.s500,
+        Tone::Danger => pal.danger.s500,
+        Tone::Info => pal.info.s500,
+        _ => pal.textOff,
+    };
+}
+
+/** A key cap: a short label in a small bordered box, set in the monospace face. */
+pub class Kbd : Base, Widget {
+    text : string;
+
+    /** A key cap saying `text`. */
+    constructor(text : string) {
+        self.text = text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = ctx.textWidth(FaceKind::Mono, self.text, 11.0) + 14.0;
+        return limits.constrain(Size { w: Mathx::fmax(w, 22.0), h: 22.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(ctx.theme.metrics.radiusInline - 2.0);
+        p.fillRound(rr, Brush::solid(pal.raised.rgb, pal.raised.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        let w : f64 = ctx.textWidth(FaceKind::Mono, self.text, 11.0);
+        let base : f64 = ctx.baselineIn(FaceKind::Mono, 11.0, a.y, a.h);
+        p.text(FaceKind::Mono, self.text, a.x + (a.w - w) * 0.5, base, 11.0, pal.text);
+    }
+}
+
+/** A status dot, optionally with a halo that pulses. */
+pub class Dot : Base, Widget {
+    tone : Tone;
+    size : f64;
+    pulse : bool;
+
+    /** A still dot of `tone`, `size` pixels across. */
+    constructor(tone : Tone, size : f64) {
+        self.tone = tone;
+        self.size = size;
+        self.pulse = false;
+    }
+
+    /** A dot of `tone`, `size` pixels across, that pulses when `pulse`. */
+    constructor(tone : Tone, size : f64, pulse : bool) {
+        self.tone = tone;
+        self.size = size;
+        self.pulse = pulse;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: self.size, h: self.size });
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.pulse;
+    }
+
+    /** Draw a dot of `tone` centred at (`cx`, `cy`), `size` wide; `halo` (0..1) is how far its pulse has grown. */
+    pub static fn draw(ctx : Context, p : Painter, tone : Tone, cx : f64, cy : f64, size : f64, halo : f64) : void {
+        let ink : Tint = dotTint(ctx.theme.palette, tone);
+        if (halo > 0.0) {
+            let big : f64 = size * (1.0 + 1.6 * halo);
+            p.line(cx, cy, cx, cy, big, ink.faded(Mathx::roundI(110.0 * (1.0 - halo))));
+        }
+        p.line(cx, cy, cx, cy, size, ink);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let mut halo : f64 = 0.0;
+        if (self.pulse) {
+            halo = Mathx::fract(ctx.now * 0.9);
+        }
+        Dot::draw(ctx, p, self.tone, a.midX(), a.midY(), self.size * 0.62, halo);
+    }
+}
+
+/** A bordered pill carrying a live status: a dot and a word. */
+pub class StatusPill : Base, Widget {
+    text : string;
+    tone : Tone;
+    size : BadgeSize;
+    live : bool;
+
+    /** A pill saying `text` with a dot of `tone`. */
+    constructor(text : string, tone : Tone) {
+        self.text = text;
+        self.tone = tone;
+        self.size = BadgeSize::Md;
+        self.live = false;
+    }
+
+    /** A pill at `size`, whose dot pulses when `live`. */
+    constructor(text : string, tone : Tone, size : BadgeSize, live : bool) {
+        self.text = text;
+        self.tone = tone;
+        self.size = size;
+        self.live = live;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let px : f64 = chipText(self.size);
+        let w : f64 = ctx.textWidth(FaceKind::Sans, self.text, px) + 2.0 * chipPad(self.size) + 14.0;
+        return limits.constrain(Size { w: w, h: chipHeight(self.size) });
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.live;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let px : f64 = chipText(self.size);
+        let rr : RRect = a.round(a.h * 0.5);
+        p.shadow(rr, 0.0, 1.0, 3.0, 0.0, pal.shadow.withAlpha(ctx.theme.isDark ? 89 : 15));
+        p.fillRound(rr, Brush::solid(pal.surface.rgb, pal.surface.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        let mut halo : f64 = 0.0;
+        if (self.live) {
+            halo = Mathx::fract(ctx.now * 0.9);
+        }
+        let x : f64 = a.x + chipPad(self.size);
+        Dot::draw(ctx, p, self.tone, x + 3.0, a.midY(), 6.0, halo);
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, px, a.y, a.h);
+        p.text(FaceKind::Sans, self.text, x + 14.0, base, px, pal.text);
+    }
+}
+
+/** How a tag looks. */
+pub struct TagProps {
+    /** What it says. */
+    pub text : string = "";
+
+    /** The colour. */
+    pub tone : Tone = Tone::Neutral;
+
+    /** How large it is. */
+    pub size : BadgeSize = BadgeSize::Md;
+
+    /** Whether it carries a close button. */
+    pub removable : bool = false;
+}
+
+/** The handler a tag without one runs. */
+fn ignoreClose() : void {
+}
+
+/** A removable label: a soft chip with an optional close button. */
+pub class Tag : Control, Widget {
+    props : TagProps;
+    onClose : () => void = ignoreClose;
+    overClose : bool = false;
+
+    /** A tag set as `props` say. */
+    constructor(own props : TagProps) {
+        self.props = props;
+        self.focusable = false;
+    }
+
+    /** A removable tag that calls `onClose` when its button is pressed. */
+    constructor(own props : TagProps, onClose : () => void) {
+        self.props = props;
+        self.onClose = onClose;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let px : f64 = chipText(self.props.size);
+        let mut w : f64 = ctx.textWidth(FaceKind::Sans, self.props.text, px) + 2.0 * chipPad(self.props.size);
+        if (self.props.removable) {
+            w = w + 18.0;
+        }
+        return limits.constrain(Size { w: w, h: chipHeight(self.props.size) });
+    }
+
+    /** The box of the close button. */
+    pub(file) fn closeBox(self) : Bounds {
+        let a : Bounds = self.area;
+        return Bounds::make(a.right() - 22.0, a.y, 22.0, a.h);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (!self.props.removable) {
+            return false;
+        }
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.overClose = self.hovered && self.closeBox().contains(e.x, e.y);
+            if (self.overClose) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (g == Gesture::Click && self.closeBox().contains(e.x, e.y)) {
+            let h : () => void = self.onClose;
+            h();
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let soft : Soft = ctx.theme.soft(self.props.tone);
+        let a : Bounds = self.area;
+        let px : f64 = chipText(self.props.size);
+        let rr : RRect = a.round(ctx.theme.metrics.radiusInline);
+        p.fillRound(rr, Brush::solid(soft.fill.rgb, soft.fill.a));
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, px, a.y, a.h);
+        p.text(FaceKind::Sans, self.props.text, a.x + chipPad(self.props.size), base, px, soft.fg);
+        if (self.props.removable) {
+            let c : Bounds = self.closeBox();
+            if (self.overClose) {
+                p.fillRound(Bounds::make(c.x + 1.0, c.y + 3.0, c.w - 4.0, c.h - 6.0).round(ctx.theme.metrics.radiusInline - 1.0), Brush::solid(soft.hover.rgb, soft.hover.a));
+            }
+            Icons::draw(p, IconKind::Close, c.x + 3.0, c.midY() - 7.0, 14.0, soft.fg);
+        }
+    }
+}

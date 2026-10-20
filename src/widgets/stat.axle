@@ -1,0 +1,195 @@
+// stat — a key figure: a label, a big number, how it moved, and optionally a chart under it.
+//
+//     new Stat(StatProps { label: "Revenue", value: "$48.2k", delta: "12.4 %", rising: true })
+//     new Stat(StatProps { label: "Visits", value: "9,310" }, new Sparkline(week, Tone::Accent))
+//
+// A stat tile speaks the same vocabulary as a card — an elevation, a padding, a width — because it
+// is a card with a fixed inside. `StatLook::Accent` fills it with the brand colour for the one
+// number that matters most in a row. The delta's colour says whether the move is good or bad
+// (`good`), and its arrow says which way it went (`rising`): revenue falling is red and down, a
+// bounce rate falling is green and down.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::styles::PanelStyle;
+use crate::style::variants::Elevation;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
+use crate::widgets::spacer::Spacer;
+
+/** How a stat tile is filled. */
+pub enum StatLook : i32 {
+    /** A card: the surface, a hairline, a soft shadow. */
+    Card = 0,
+
+    /** The outline only, no fill and no shadow. */
+    Outline = 1,
+
+    /** Filled with the brand colour, white ink. */
+    Accent = 2,
+}
+
+/** What a stat tile says and how it looks. */
+pub struct StatProps {
+    /** What is measured, in small capitals. */
+    pub label : string = "";
+
+    /** The figure. */
+    pub value : string = "";
+
+    /** How it moved, as text ("12.4 %"); nothing when empty. */
+    pub delta : string = "";
+
+    /** Whether the arrow points up (the figure rose) rather than down. */
+    pub rising : bool = true;
+
+    /** Whether the move is good news (green) rather than bad (red). */
+    pub good : bool = true;
+
+    /** How the tile is filled. */
+    pub look : StatLook = StatLook::Card;
+
+    /** The tile's width: its content's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The share of a parent's spare room the tile asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** Space between the tile's edge and its content. */
+const STAT_PAD : f64 = 20.0;
+
+/** Size of the figure. */
+const STAT_VALUE_PX : f64 = 28.0;
+
+/** Size of the label and of the delta. */
+const STAT_SMALL_PX : f64 = 12.0;
+
+/** A key figure. */
+pub class Stat : Base, Widget {
+    props : StatProps;
+    footer : dyn Widget[];
+    hasFooter : bool;
+    footerH : f64 = 0.0;
+
+    /** A tile saying what `props` say. */
+    constructor(own props : StatProps) {
+        self.props = props;
+        self.footer = malloc<dyn Widget>(1 as i64);
+        self.footer[0] = new Spacer(0.0, 0.0);
+        self.hasFooter = false;
+    }
+
+    /** A tile with a widget (a sparkline, a progress bar) under the figure. */
+    constructor(own props : StatProps, own footer : dyn Widget) {
+        self.props = props;
+        self.footer = malloc<dyn Widget>(1 as i64);
+        self.footer[0] = footer;
+        self.hasFooter = true;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** The height of the label, figure and delta without the footer. */
+    pub(file) fn headH(self, ctx : Context) : f64 {
+        let mut h : f64 = ctx.lineHeight(FaceKind::Sans, STAT_SMALL_PX) + 6.0 + ctx.lineHeight(FaceKind::Bold, STAT_VALUE_PX);
+        if (self.props.delta.byteLength > 0) {
+            h = h + 6.0 + ctx.lineHeight(FaceKind::Bold, STAT_SMALL_PX);
+        }
+        return h;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut w : f64 = ctx.textWidth(FaceKind::Bold, self.props.value, STAT_VALUE_PX);
+        w = Mathx::fmax(w, ctx.textWidth(FaceKind::Sans, self.props.label, STAT_SMALL_PX) + 8.0);
+        w = Mathx::fmax(w + 2.0 * STAT_PAD, 160.0);
+        let want : f64 = self.props.width.resolve(limits.maxW, w);
+        let mut h : f64 = 2.0 * STAT_PAD + self.headH(ctx);
+        if (self.hasFooter) {
+            let f : dyn Widget = self.footer[0];
+            let s : Size = f.measure(ctx, Limits::loose(want - 2.0 * STAT_PAD, limits.maxH));
+            self.footerH = s.h;
+            h = h + 12.0 + s.h;
+        }
+        return limits.constrain(Size { w: want, h: h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.hasFooter) {
+            let f : dyn Widget = self.footer[0];
+            let top : f64 = area.y + STAT_PAD + self.headH(ctx) + 12.0;
+            f.arrange(ctx, Bounds::make(area.x + STAT_PAD, top, area.w - 2.0 * STAT_PAD, self.footerH));
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let f : dyn Widget = self.footer[0];
+        return f.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let f : dyn Widget = self.footer[0];
+        return f.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let accent : bool = self.props.look == StatLook::Accent;
+        let mut level : Elevation = Elevation::Raised;
+        if (self.props.look == StatLook::Outline) {
+            level = Elevation::Flat;
+        }
+        let st : PanelStyle = ctx.theme.panel(level);
+        let rr : RRect = a.round(st.radius);
+        Surfaces::draw(p, rr, a, st);
+        let mut label : Tint = pal.textFaint;
+        let mut value : Tint = pal.text;
+        if (accent) {
+            p.fillRound(rr, Brush::solid(pal.primary.s600.rgb, 255));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.primary.s600.rgb, 255));
+            label = Tint::hexA(0xFFFFFF, 178);
+            value = Tint::hex(0xFFFFFF);
+        }
+        let x : f64 = a.x + STAT_PAD;
+        let mut y : f64 = a.y + STAT_PAD;
+        let lh : f64 = ctx.lineHeight(FaceKind::Sans, STAT_SMALL_PX);
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, STAT_SMALL_PX, y, lh);
+        p.text(FaceKind::Sans, self.props.label, x, base, STAT_SMALL_PX, label);
+        y = y + lh + 6.0;
+        let vh : f64 = ctx.lineHeight(FaceKind::Bold, STAT_VALUE_PX);
+        p.text(FaceKind::Bold, self.props.value, x, ctx.baselineIn(FaceKind::Bold, STAT_VALUE_PX, y, vh), STAT_VALUE_PX, value);
+        y = y + vh;
+        if (self.props.delta.byteLength > 0) {
+            y = y + 6.0;
+            let dh : f64 = ctx.lineHeight(FaceKind::Bold, STAT_SMALL_PX);
+            let mut tone : Tint = pal.softDanger.fg;
+            if (self.props.good) {
+                tone = pal.softSuccess.fg;
+            }
+            if (accent) {
+                tone = Tint::hexA(0xFFFFFF, 230);
+            }
+            let mut arrow : IconKind = IconKind::ArrowDown;
+            if (self.props.rising) {
+                arrow = IconKind::ArrowUp;
+            }
+            Icons::draw(p, arrow, x - 1.0, y + (dh - 14.0) * 0.5, 14.0, tone);
+            p.text(FaceKind::Bold, self.props.delta, x + 15.0, ctx.baselineIn(FaceKind::Bold, STAT_SMALL_PX, y, dh), STAT_SMALL_PX, tone);
+        }
+        if (self.hasFooter) {
+            let f : dyn Widget = self.footer[0];
+            f.paint(ctx, p);
+        }
+    }
+}

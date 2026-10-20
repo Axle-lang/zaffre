@@ -1,0 +1,204 @@
+// card — a surface with sections: an optional header, a body, an optional footer.
+//
+//     new Card(CardProps { title: "Profile", subtitle: "Shown to your team" }, form)
+//     new Card(CardProps { title: "Danger zone" }, warning, actions)
+//
+// The header is made from `title` and `subtitle`, or is any widget the program passes in place of
+// them (`Card::titled` is the same thing spelled for the common case). The footer is right-aligned,
+// the way a dialog's buttons are. A card with `pressable` set answers the pointer like a button: a
+// hand, a lift of the shadow, a click. It is built from bands (`band`), so each section keeps its
+// own padding and hairline.
+
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::styles::PanelStyle;
+use crate::style::variants::{Elevation, TextRole};
+use crate::core::geometry::{Size, Bounds, Insets, Limits, Length, Align, Justify};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::band::{Band, BandProps, BandFill, BandEdge};
+use crate::widgets::flex::{Column, Row, FlexProps};
+use crate::widgets::label::Label;
+use crate::widgets::panel::Surfaces;
+
+/** How a card looks. */
+pub struct CardProps {
+    /** The header's title; no header when empty and no header widget was given. */
+    pub title : string = "";
+
+    /** A line under the title. */
+    pub subtitle : string = "";
+
+    /** How much the card stands out from the page. */
+    pub elevation : Elevation = Elevation::Raised;
+
+    /** Space between the card's edge and its body. */
+    pub padding : f64 = 20.0;
+
+    /** The card's width: its content's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The share of a parent's spare room the card asks for. */
+    pub grow : f64 = 0.0;
+
+    /** Whether the card is itself a button: hand cursor, lift under the pointer, a click handler. */
+    pub pressable : bool = false;
+}
+
+/** The handler a card without one runs. */
+fn doNothing() : void {
+}
+
+/** A surface of sections. */
+pub class Card : Control, Widget {
+    props : CardProps;
+    column : Column;
+    onPress : () => void = doNothing;
+
+    /** A card with a body. */
+    constructor(own props : CardProps, own body : dyn Widget) {
+        let wantsHeader : bool = props.title.byteLength > 0 || props.subtitle.byteLength > 0;
+        self.column = Card::sections(props, Card::titleOf(props), body, Card::empty(), wantsHeader, false);
+        self.focusable = props.pressable;
+        self.props = props;
+    }
+
+    /** A card with a body and a footer. */
+    constructor(own props : CardProps, own body : dyn Widget, own footer : dyn Widget) {
+        let wantsHeader : bool = props.title.byteLength > 0 || props.subtitle.byteLength > 0;
+        self.column = Card::sections(props, Card::titleOf(props), body, footer, wantsHeader, true);
+        self.focusable = props.pressable;
+        self.props = props;
+    }
+
+    /** A card with a header widget of the program's own, a body and a footer. */
+    constructor(own props : CardProps, own header : dyn Widget, own body : dyn Widget, own footer : dyn Widget) {
+        self.column = Card::sections(props, header, body, footer, true, true);
+        self.focusable = props.pressable;
+        self.props = props;
+    }
+
+    /** Run `handler` when a pressable card is clicked. */
+    pub fn setHandler(mut self, handler : () => void) : void {
+        self.onPress = handler;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** The header a card makes from its `title` and `subtitle`: a label, or two. */
+    pub(file) static fn titleOf(props : CardProps) : dyn Widget {
+        let mut lines : Column = new Column(FlexProps { gap: 2.0, capacity: 2 });
+        if (props.title.byteLength > 0) {
+            lines.add(new Label(props.title, TextRole::Strong));
+        }
+        if (props.subtitle.byteLength > 0) {
+            lines.add(new Label(props.subtitle, TextRole::Dim));
+        }
+        return lines;
+    }
+
+    /** A placeholder for a section a card does not have. */
+    pub(file) static fn empty() : dyn Widget {
+        return new Row(FlexProps { capacity: 1 });
+    }
+
+    /** The column of bands: the header, the body and the footer, each only when `hasHeader` / `hasFooter` say so. */
+    pub(file) static fn sections(
+        props : CardProps,
+        own header : dyn Widget,
+        own body : dyn Widget,
+        own footer : dyn Widget,
+        hasHeader : bool,
+        hasFooter : bool
+    ) : Column {
+        let mut column : Column = new Column(FlexProps { gap: 0.0, align: Align::Stretch, capacity: 3 });
+        if (hasHeader) {
+            let top = BandProps { fill: BandFill::Raised, edge: BandEdge::Below, roundTop: true };
+            column.add(new Band(top, header));
+        }
+        let middle = BandProps {
+            padding: Insets::all(props.padding),
+            roundTop: !hasHeader,
+            roundBottom: !hasFooter,
+        };
+        column.add(new Band(middle, body));
+        if (hasFooter) {
+            let bottom = BandProps { fill: BandFill::Raised, edge: BandEdge::Above, roundBottom: true };
+            let buttons : dyn Widget[] = [footer];
+            let right = FlexProps { gap: 10.0, align: Align::Center, justify: Justify::End, width: Length::Fill };
+            column.add(new Band(bottom, new Row(right, buttons)));
+        }
+        return column;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let natural : Size = self.column.measure(ctx, limits.loosened());
+        let w : f64 = self.props.width.resolve(limits.maxW, natural.w);
+        if (w == natural.w) {
+            return limits.constrain(natural);
+        }
+        let s : Size = self.column.measure(ctx, Limits { minW: w, maxW: w, minH: 0.0, maxH: limits.maxH });
+        return limits.constrain(Size { w: w, h: s.h });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.props.pressable) {
+            self.focusable = true;
+        }
+        self.column.measure(ctx, Limits { minW: area.w, maxW: area.w, minH: 0.0, maxH: area.h });
+        self.column.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.column.event(ctx, e)) {
+            return true;
+        }
+        if (!self.props.pressable) {
+            return false;
+        }
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click) {
+            let h : () => void = self.onPress;
+            h();
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let moving : bool = self.column.tick(ctx, dt);
+        if (!self.props.pressable) {
+            return moving;
+        }
+        return self.animate(ctx, dt) || moving;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let mut level : Elevation = self.props.elevation;
+        if (self.props.pressable && self.hoverT.value > 0.5) {
+            level = Elevation::Lifted;
+        }
+        let st : PanelStyle = ctx.theme.panel(level);
+        let rr : RRect = a.round(st.radius);
+        Surfaces::draw(p, rr, a, st);
+        self.column.paint(ctx, p);
+        // The bands fill to the edge, so the outline goes on last; it darkens under the pointer.
+        let pal = ctx.theme.palette;
+        let edge = pal.line.mixed(pal.lineStrong, self.hoverT.alpha());
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (self.ringShown(ctx)) {
+            let ring = ctx.theme.ringTint().faded(self.focusT.alpha());
+            let gap : f64 = ctx.theme.metrics.ringOffset + ctx.theme.metrics.ring;
+            p.strokeRound(a.grown(gap).round(st.radius + gap), ctx.theme.metrics.ring, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

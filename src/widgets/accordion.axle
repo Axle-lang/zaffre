@@ -1,0 +1,296 @@
+// accordion — a stack of titled sections that open and close, with the content easing in.
+//
+//     let open : Shared<Model<i32>> = new shared Model<i32>(1);
+//     new Accordion(["Billing", "Security", "Team"], open, [ billing, security, team ])
+//
+// The model holds the set of open sections as a bit mask — bit 0 is the first section, so `1` is
+// "the first is open", `0` is "all closed" — which lets a program open or close them from code and
+// read what the user did. With `single` (the default) opening one closes the others; without it
+// each section is its own switch. The sections are drawn as separate cards, or as one list with
+// rules between (`AccordionLook::Flush`). Up and Down move between titles while the accordion has
+// the keyboard; Enter and Space open and close the one under the cursor.
+//
+// A closed section's content is still measured, so that opening it can ease the height from zero
+// to what it needs, but it is neither drawn nor given events until it is at least half open.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::styles::PanelStyle;
+use crate::style::variants::Elevation;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length, UNBOUNDED};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How the sections of an accordion are set. */
+pub enum AccordionLook : i32 {
+    /** Each section a card of its own, a gap between them. */
+    Cards = 0,
+
+    /** One list, a rule between sections. */
+    Flush = 1,
+}
+
+/** How an accordion behaves and looks. */
+pub struct AccordionProps {
+    /** Cards or a flush list. */
+    pub look : AccordionLook = AccordionLook::Cards;
+
+    /** Whether opening a section closes the others. */
+    pub single : bool = true;
+
+    /** The accordion's width: as much as it is offered, or a fixed number. */
+    pub width : Length = Length::Fill;
+}
+
+/** Height of a section's title bar. */
+const ACC_HEAD : f64 = 48.0;
+
+/** Space around a section's content. */
+const ACC_PAD : f64 = 16.0;
+
+/** Space between cards. */
+const ACC_GAP : f64 = 8.0;
+
+/** Titled sections that open and close. */
+pub class Accordion : Control, Widget {
+    props : AccordionProps;
+    titles : string[];
+    pages : dyn Widget[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    openT : Eased[];
+    pageH : f64[];
+    tops : f64[];
+    hot : i32 = -1;
+    cursor : i32 = 0;
+
+    /** `titles` over `pages` (one each), the open set held in `model`; the accordion takes the pages. */
+    constructor(titles : string[], model : Shared<Model<i32>>, own pages : dyn Widget[]) {
+        self.props = AccordionProps { };
+        self.titles = titles;
+        self.pages = pages;
+        self.count = pages.length as i32;
+        self.model = model;
+        self.openT = malloc<Eased>(self.count as i64);
+        self.pageH = malloc<f64>(self.count as i64);
+        self.tops = malloc<f64>(self.count as i64);
+        for (i of 0..self.count) {
+            self.openT[i as i64] = Eased::at(Accordion::bit(model.get(), i));
+            self.pageH[i as i64] = 0.0;
+            self.tops[i as i64] = 0.0;
+        }
+    }
+
+    /** As above, set as `props` say. */
+    constructor(own props : AccordionProps, titles : string[], model : Shared<Model<i32>>, own pages : dyn Widget[]) {
+        self.props = props;
+        self.titles = titles;
+        self.pages = pages;
+        self.count = pages.length as i32;
+        self.model = model;
+        self.openT = malloc<Eased>(self.count as i64);
+        self.pageH = malloc<f64>(self.count as i64);
+        self.tops = malloc<f64>(self.count as i64);
+        for (i of 0..self.count) {
+            self.openT[i as i64] = Eased::at(Accordion::bit(model.get(), i));
+            self.pageH[i as i64] = 0.0;
+            self.tops[i as i64] = 0.0;
+        }
+    }
+
+    /** 1.0 when bit `i` of `mask` is set, else 0.0. */
+    pub static fn bit(mask : i32, i : i32) : f64 {
+        if (((mask >> i) & 1) == 1) {
+            return 1.0;
+        }
+        return 0.0;
+    }
+
+    pub fn flex(self) : f64 {
+        return 0.0;
+    }
+
+    /** The height of section `i` as it is now, between shut and fully open. */
+    pub(file) fn heightOf(self, i : i32) : f64 {
+        let t : f64 = Mathx::smooth(self.openT[i as i64].value);
+        return ACC_HEAD + (self.pageH[i as i64] + ACC_PAD) * t;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = self.props.width.resolve(limits.maxW, 360.0);
+        let inner : Limits = Limits { minW: 0.0, maxW: w - 2.0 * ACC_PAD, minH: 0.0, maxH: UNBOUNDED };
+        let mut y : f64 = 0.0;
+        for (i of 0..self.count) {
+            let page : dyn Widget = self.pages[i as i64];
+            self.pageH[i as i64] = page.measure(ctx, inner).h;
+            self.tops[i as i64] = y;
+            y = y + self.heightOf(i);
+            if (self.props.look == AccordionLook::Cards) {
+                y = y + ACC_GAP;
+            }
+        }
+        if (self.props.look == AccordionLook::Cards && self.count > 0) {
+            y = y - ACC_GAP;
+        }
+        return limits.constrain(Size { w: w, h: y });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.focusable) {
+            if (self.token == 0) {
+                self.token = ctx.mint();
+            }
+            ctx.announce(self.token);
+        }
+        for (i of 0..self.count) {
+            let page : dyn Widget = self.pages[i as i64];
+            page.arrange(ctx, Bounds::make(area.x + ACC_PAD, area.y + self.tops[i as i64] + ACC_HEAD, area.w - 2.0 * ACC_PAD, self.pageH[i as i64]));
+        }
+    }
+
+    /** The section whose title bar is under `y`, or -1. */
+    pub(file) fn titleAt(self, y : f64) : i32 {
+        let rel : f64 = y - self.area.y;
+        for (i of 0..self.count) {
+            let top : f64 = self.tops[i as i64];
+            if (rel >= top && rel < top + ACC_HEAD) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Open or close section `i`. */
+    pub(file) fn flip(mut self, ctx : Context, i : i32) : void {
+        let mask : i32 = self.model.get();
+        let isOpen : bool = Accordion::bit(mask, i) > 0.5;
+        let mut next : i32 = 0;
+        if (!self.props.single) {
+            next = mask;
+        }
+        if (isOpen) {
+            next = next & ~(1 << i);
+        } else {
+            next = next | (1 << i);
+        }
+        self.model.set(next);
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hot = -1;
+            if (self.hovered) {
+                self.hot = self.titleAt(e.y);
+                if (self.hot >= 0) {
+                    self.wantHand(ctx);
+                }
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.titleAt(e.y);
+            if (i >= 0) {
+                self.cursor = i;
+                self.flip(ctx, i);
+                return true;
+            }
+        }
+        if (g == Gesture::Press) {
+            return self.titleAt(e.y) >= 0;
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            if (e.key == Key::Down) {
+                self.cursor = Mathx::clampI(self.cursor + 1, 0, self.count - 1);
+                ctx.invalidate();
+                return true;
+            }
+            if (e.key == Key::Up) {
+                self.cursor = Mathx::clampI(self.cursor - 1, 0, self.count - 1);
+                ctx.invalidate();
+                return true;
+            }
+            if (e.key == Key::Enter || e.key == Key::Space) {
+                self.flip(ctx, self.cursor);
+                return true;
+            }
+        }
+        for (i of 0..self.count) {
+            if (self.openT[i as i64].value > 0.5) {
+                let page : dyn Widget = self.pages[i as i64];
+                if (page.event(ctx, e)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mask : i32 = self.model.get();
+        let mut moving : bool = self.animate(ctx, dt);
+        for (i of 0..self.count) {
+            self.openT[i as i64] = self.openT[i as i64].toward(Accordion::bit(mask, i)).step(dt, Rate::OPEN);
+            if (!self.openT[i as i64].settled()) {
+                moving = true;
+            }
+            let page : dyn Widget = self.pages[i as i64];
+            if (self.openT[i as i64].value > 0.5 && page.tick(ctx, dt)) {
+                moving = true;
+            }
+        }
+        return moving;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let cards : bool = self.props.look == AccordionLook::Cards;
+        let st : PanelStyle = ctx.theme.panel(Elevation::Flat);
+        for (i of 0..self.count) {
+            let top : f64 = a.y + self.tops[i as i64];
+            let h : f64 = self.heightOf(i);
+            let box : Bounds = Bounds::make(a.x, top, a.w, h);
+            let head : Bounds = Bounds::make(a.x, top, a.w, ACC_HEAD);
+            if (cards) {
+                p.fillRound(box.round(st.radius), Brush::solid(pal.surface.rgb, pal.surface.a));
+            }
+            if (i == self.hot) {
+                let r : f64 = cards ? st.radius : 0.0;
+                let shape : RRect = RRect::corners(head.x, head.y, head.w, head.h, r, r, 0.0, 0.0);
+                p.fillRound(shape, Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            if (cards) {
+                p.strokeRound(box.round(st.radius), 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+            } else if (i > 0) {
+                p.line(a.x, top - 0.5, a.right(), top - 0.5, 1.0, pal.line);
+            }
+            let base : f64 = ctx.baselineIn(FaceKind::Bold, 14.0, head.y, head.h);
+            p.text(FaceKind::Bold, self.titles[i as i64], head.x + ACC_PAD, base, 14.0, pal.text);
+            let mut chevron : IconKind = IconKind::ChevronDown;
+            if (self.openT[i as i64].value > 0.5) {
+                chevron = IconKind::ChevronUp;
+            }
+            Icons::draw(p, chevron, head.right() - ACC_PAD - 16.0, head.midY() - 8.0, 16.0, pal.textFaint);
+            if (self.ringShown(ctx) && i == self.cursor) {
+                let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+                p.strokeRound(head.grown(-2.0).round(ctx.theme.metrics.radiusInline), 2.0, Brush::solid(ring.rgb, ring.a));
+            }
+            if (self.openT[i as i64].value > 0.02) {
+                let reveal : f64 = h - ACC_HEAD;
+                p.pushClip(a.x, top + ACC_HEAD, a.w, reveal);
+                let page : dyn Widget = self.pages[i as i64];
+                page.paint(ctx, p);
+                p.popClip();
+            }
+        }
+    }
+}

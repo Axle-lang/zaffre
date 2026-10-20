@@ -254,6 +254,22 @@ pub enum Length {
     /** This fraction (0..1) of what the parent offers. */
     Percent(f64),
 
+    /** Whether it is `Auto`: whatever the content wants. */
+    pub fn isAuto(self) : bool {
+        return match self {
+            Length::Auto => true,
+            _ => false,
+        };
+    }
+
+    /** Whether it is `Fill`: a share of what is left over. */
+    pub fn isFill(self) : bool {
+        return match self {
+            Length::Fill => true,
+            _ => false,
+        };
+    }
+
     /** The pixels along one axis this length resolves to, given what is `avail` and what the content `natural`ly wants. */
     pub fn resolve(self, avail : f64, natural : f64) : f64 {
         return match self {
