@@ -13,15 +13,17 @@
 // over its own frame — drives a `View` itself with the same four calls (`resize`, `input`,
 // `update`, `render`) and never uses this file.
 //
-// What smalt does not have yet, and so this does not do: the pointer's shape (the view asks, the
-// window stays an arrow), the system clipboard (copy and paste work inside the program), the
-// window's scale factor (everything is drawn at the pixel size smalt reports).
+// What reaches the system: the pointer's shape (the view asks, the window wears it), the clipboard
+// (what a field copies is put on the system's, and a paste reads the system's afresh), double and
+// triple clicks, and the pointer leaving the window. What smalt does not have yet, and so this does
+// not do: the window's scale factor (everything is drawn at the pixel size smalt reports).
 
 use smalt::{
     Platform, PlatformError, WindowDesc, Clock, Events, EventKind as SmaltKind, Event, Surface, MouseButton,
-    Scancode, Bmp
+    Scancode, Bmp, CursorShape
 };
 use crate::core::event::{UiEvent, EventKind, Key, Mod};
+use crate::core::context::Cursor;
 use crate::core::view::View;
 use crate::shell::keys::Keys;
 
@@ -63,6 +65,17 @@ pub class App {
         return m;
     }
 
+    /** The window's pointer shape for what a widget asked for. */
+    pub(file) static fn shapeOf(c : Cursor) : CursorShape {
+        return match c {
+            Cursor::Hand => CursorShape::Hand,
+            Cursor::Beam => CursorShape::Beam,
+            Cursor::ResizeH => CursorShape::ResizeH,
+            Cursor::ResizeV => CursorShape::ResizeV,
+            _ => CursorShape::Arrow,
+        };
+    }
+
     /** The library's number for smalt's mouse button. */
     pub(file) static fn buttonOf(b : MouseButton) : i32 {
         return match b {
@@ -102,6 +115,8 @@ pub class App {
         let start : f64 = clock.seconds();
         let mut mx : f64 = 0.0;
         let mut my : f64 = 0.0;
+        // The text last mirrored to the system clipboard, so only a change is sent.
+        let mut mirrored : string = "";
         let mut running : bool = true;
 
         while (running && win.isOpen()) {
@@ -135,7 +150,7 @@ pub class App {
                     SmaltKind::MouseButtonDown => {
                         mx = e.x as f64;
                         my = e.y as f64;
-                        view.input(UiEvent { kind: EventKind::PointerDown, x: mx, y: my, button: App::buttonOf(e.button), mods: App::modsOf(events) });
+                        view.input(UiEvent { kind: EventKind::PointerDown, x: mx, y: my, button: App::buttonOf(e.button), clicks: e.clicks, mods: App::modsOf(events) });
                     },
                     SmaltKind::MouseButtonUp => {
                         mx = e.x as f64;
@@ -145,7 +160,15 @@ pub class App {
                     SmaltKind::MouseWheel => {
                         view.input(UiEvent { kind: EventKind::Wheel, x: mx, y: my, wheel: e.wheel as f64, mods: App::modsOf(events) });
                     },
+                    SmaltKind::MouseLeft => {
+                        view.input(UiEvent { kind: EventKind::PointerLeave });
+                    },
                     SmaltKind::KeyDown => {
+                        // A paste reads the system clipboard as it is now, not as it was when it was last copied here.
+                        if (Keys::key(e.scancode) == Key::V && (App::modsOf(events) & Mod::CTRL) != 0) {
+                            view.setClipboard(win.clipboardText());
+                            mirrored = view.clipboard();
+                        }
                         view.input(UiEvent { kind: EventKind::KeyDown, key: Keys::key(e.scancode), mods: App::modsOf(events), repeat: e.repeat });
                     },
                     SmaltKind::KeyUp => {
@@ -161,6 +184,12 @@ pub class App {
                     },
                 }
             }
+            // What a field copied goes to the system clipboard; the pointer takes the shape asked for.
+            if (view.clipboard() != mirrored) {
+                mirrored = view.clipboard();
+                win.setClipboardText(mirrored);
+            }
+            win.setCursor(App::shapeOf(view.cursor()));
             view.update(clock.seconds() - start);
             if (view.needsFrame() && !win.minimised()) {
                 view.render(screen.frame());

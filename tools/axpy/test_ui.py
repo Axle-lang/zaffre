@@ -249,5 +249,23 @@ seen = set()
 for k in range(8):
     t += 0.5; hv.update(t); seen.add(region(shot(hv), fb).tobytes())
 check("the caret is drawn in one phase and not the other", len(seen) == 2, len(seen))
+
+# double and triple click in a field
+dm = z.Model("alpha beta gamma")
+df = z.TextField(_rt_lit(z.FieldProps, None), dm)
+dv = z.View(z.Theme.dark(), fonts, z.Column(_rt_lit(z.FlexProps, None, padding=z.Insets.all(10.0), width=z.Length.Px(300.0)), [df]))
+dv.resize(320.0, 80.0); settle(dv); dv.layout()
+b = df.bounds()
+px = b.x + 12 + 7 * 6.5     # inside "beta"
+def press(clicks):
+    dv.input(ev(z.EventKind.PointerMove, px, b.y + b.h / 2))
+    dv.input(ev(z.EventKind.PointerDown, px, b.y + b.h / 2, clicks=clicks))
+    dv.input(ev(z.EventKind.PointerUp, px, b.y + b.h / 2))
+press(1)
+press(2)
+sel = dm.get()[min(df.anchor, df.caret):max(df.anchor, df.caret)]
+check("double click selects the word", sel.strip() == "beta", repr(sel))
+press(3)
+check("triple click selects the line", min(df.anchor, df.caret) == 0 and max(df.anchor, df.caret) == len(dm.get().encode()))
 print("FAIL %d" % len(fails) if fails else "all ok")
 sys.exit(1 if fails else 0)

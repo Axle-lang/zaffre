@@ -274,7 +274,23 @@ pub class TextField : Control, Widget {
         let fieldBox : Bounds = self.inner(st);
         if (g == Gesture::Press) {
             let at : i64 = ctx.fonts.indexAt(kind, self.model.get(), st.px, e.x - fieldBox.x + self.scroll) as i64;
-            self.moveTo(ctx, at, e.shift());
+            let s : string = self.model.get();
+            if (e.clicks >= 3) {
+                // A triple click takes the whole line.
+                self.anchor = 0;
+                self.caret = s.byteLength;
+                self.blink = ctx.now;
+                ctx.invalidate();
+            } else if (e.clicks == 2) {
+                // A double click takes the word under the pointer.
+                let hi : i64 = Strings::wordRight(s, at);
+                self.anchor = Strings::wordLeft(s, hi);
+                self.caret = hi;
+                self.blink = ctx.now;
+                ctx.invalidate();
+            } else {
+                self.moveTo(ctx, at, e.shift());
+            }
             return true;
         }
         if (self.pressed && e.kind == EventKind::PointerMove) {

@@ -95,6 +95,12 @@ pub struct UiEvent {
     /** Wheel notches; positive scrolls content up (the wheel turned away from the user). */
     pub wheel : f64 = 0.0;
 
+    /**
+     * For `PointerDown`: how many presses of the button, close together, this one makes — 1, 2 for a
+     * double click, 3 for a triple. The shell fills it in; an event built by hand keeps the 1.
+     */
+    pub clicks : i32 = 1;
+
     /** The key, for the key kinds. */
     pub key : Key = Key::Other;
 
