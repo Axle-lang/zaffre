@@ -1,0 +1,158 @@
+// forms — text fields, choices, sliders, and the small inputs.
+
+use zaffre::{
+    Model, TextField, FieldProps, Textarea, TextareaProps, Select, Checkbox, ToggleProps, Radio, Switch,
+    Slider, SliderProps, Segmented, Rating, RatingProps, QuantityInput, QuantityProps, ToggleGroup,
+    FormField, FieldLabel, Column, Row, Widget, FlexProps,
+    ControlSize, IconKind, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{half, lineup, stacked, side, pageOf};
+
+/** A field of `size` with a placeholder naming it. */
+fn sizedField(placeholder : string, size : ControlSize) : TextField {
+    let blank = new shared Model<string>("");
+    return new TextField(
+        FieldProps {
+            placeholder: placeholder,
+            size: size,
+            width: Length::Px(150.0),
+        },
+        blank
+    );
+}
+
+/** Text fields: with an icon, clearable, switched off, and in each size. */
+fn fields(demo : Demo) : Column {
+    let search = demo.search;
+    let name = demo.name;
+    let blank = new shared Model<string>("");
+    let finder = new TextField(
+        FieldProps {
+            placeholder: "Search anything…",
+            icon: IconKind::Search,
+            clearable: true,
+            width: Length::Fill,
+        },
+        search
+    );
+    let plain = new TextField(FieldProps { width: Length::Fill }, name);
+    let off = new TextField(
+        FieldProps {
+            placeholder: "Switched off",
+            disabled: true,
+            width: Length::Fill,
+        },
+        blank
+    );
+    let wide : dyn Widget[] = [finder, plain, off];
+    let sizes : dyn Widget[] = [
+        sizedField("Small", ControlSize::Sm),
+        sizedField("Medium", ControlSize::Md),
+        sizedField("Large", ControlSize::Lg),
+    ];
+    let kids : dyn Widget[] = [stacked(wide), lineup(sizes)];
+    return stacked(kids);
+}
+
+/** Labelled fields, one of them in error, and a text area. */
+fn labelled(demo : Demo) : Column {
+    let email = demo.email;
+    let bio = demo.bio;
+    let known = new shared Model<string>("ada@analytical.org");
+    let address = new FormField(
+        FieldLabel {
+            label: "Email",
+            hint: "We never share it.",
+            required: true,
+        },
+        new TextField(FieldProps { width: Length::Fill }, known)
+    );
+    let wrong = new FormField(
+        FieldLabel {
+            label: "Backup email",
+            error: "That does not look like an address.",
+        },
+        new TextField(FieldProps { width: Length::Fill, clearable: true }, email)
+    );
+    let about = new FormField(
+        FieldLabel {
+            label: "About you",
+            hint: "A few lines; Ctrl+Enter submits.",
+        },
+        new Textarea(TextareaProps { rows: 4, width: Length::Fill }, bio)
+    );
+    let kids : dyn Widget[] = [address, wrong, about];
+    return stacked(kids);
+}
+
+/** Choices: a switch, checkboxes, radios, a select, a segmented control. */
+fn choices(demo : Demo) : Column {
+    let notifications = demo.notifications;
+    let newsletter = demo.newsletter;
+    let plan = demo.plan;
+    let size = demo.size;
+    let layout = demo.layout;
+    let locked = new shared Model<bool>(true);
+    let toggles : dyn Widget[] = [
+        new Switch("Notifications", notifications),
+        new Checkbox("Subscribe to the newsletter", newsletter),
+        new Checkbox(ToggleProps { label: "A checkbox that is switched off", disabled: true }, locked),
+    ];
+    let plans : dyn Widget[] = [
+        new Radio("Free", plan, 0),
+        new Radio("Pro", plan, 1),
+        new Radio("Team", plan, 2),
+    ];
+    let sizeNames : string[] = ["Small", "Medium", "Large"];
+    let layoutNames : string[] = ["List", "Grid", "Board"];
+    let picks : dyn Widget[] = [
+        new Select(sizeNames, size),
+        new Segmented(layoutNames, layout),
+    ];
+    let kids : dyn Widget[] = [stacked(toggles), stacked(plans), lineup(picks)];
+    return stacked(kids);
+}
+
+/** Sliders and the small inputs. */
+fn dials(demo : Demo) : Column {
+    let volume = demo.volume;
+    let brightness = demo.brightness;
+    let rating = demo.rating;
+    let seats = demo.seats;
+    let styles = demo.styles;
+    let loudness = new Slider(SliderProps { label: "Volume", width: Length::Fill }, volume);
+    let light = new Slider(
+        SliderProps {
+            label: "Brightness",
+            min: 0.0,
+            max: 100.0,
+            step: 5.0,
+            decimals: 0,
+            width: Length::Fill,
+        },
+        brightness
+    );
+    let sliders : dyn Widget[] = [loudness, light];
+    let styleNames : string[] = ["Bold", "Italic", "Underline"];
+    let inputs : dyn Widget[] = [
+        new Rating(RatingProps { size: 24.0 }, rating),
+        new QuantityInput(QuantityProps { min: 1, max: 20 }, seats),
+    ];
+    let kids : dyn Widget[] = [stacked(sliders), lineup(inputs), new ToggleGroup(styleNames, styles)];
+    return stacked(kids);
+}
+
+/** The page. */
+pub fn formsPage(demo : Demo) : Column {
+    let upper : dyn Widget[] = [
+        half("Text fields", "A caret, a selection, double and triple clicks, the clipboard.", fields(demo)),
+        half("Choices", "Switches, checkboxes, radios, a select and a segmented control.", choices(demo)),
+    ];
+    let lower : dyn Widget[] = [
+        half("Labelled fields", "A hint under a field, or an error that turns its outline red.", labelled(demo)),
+        half("Sliders and small inputs", "Sliders, a rating, a quantity and a toggle group.", dials(demo)),
+    ];
+    let rows : dyn Widget[] = [side(upper), side(lower)];
+    return pageOf(rows);
+}

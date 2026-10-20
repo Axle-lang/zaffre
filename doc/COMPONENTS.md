@@ -1,59 +1,54 @@
-# Components
-
-Status words: **built** — written, checked by the tools, exercised by the translated tests;
-**compiled** — also built by `axle` (the maintainer's build of the first set). Nothing is marked
-*run on hardware* yet except what the maintainer reports.
-
 ## Foundations
 
 | | |
 |---|---|
-| Palette, Metrics, Theme | built; dark and light; `setDark`, `rebuild` |
+| Palette, Metrics, Theme | built; dark and light; `setDark`, `rebuild`. Tokens follow a web design system: page / surface / surface-2, four greys of text, a hairline and a strong line, six hues (500–800), and one *soft tone* recipe per colour (wash, hover, border, ink) that badges, alerts, toasts, selected rows and secondary buttons all draw from. |
+| Radius roles | inline 6, control 8, surface 12, overlay 16, pill |
+| Control heights | 32 / 36 / 40 / 48 / 56 (`Metrics::compact()`: 28 … 48) |
+| Elevations | Flat, Raised, Lifted, Overlay, Floating — each two shadow layers, a tight one and a wide one |
+| Focus | a 2 px ring offset by 2 px; bordered fields take a 3 px halo instead (red when invalid) |
 | Text roles | Body, Dim, Faint, Caption, Label, H1–H3, Mono, Strong |
 | Easing | `Eased` + `Rate`; every hover, press, focus, open and fade is one |
-| Icons | Check, Close, Plus, Minus, four chevrons, ArrowRight, Search, Menu, Info, Warning, Dot, Sun |
+| Icons | 44 stroked icons on a 24-unit grid (`doc/img/icons.png`) |
+| Cursors | Arrow, Hand, Beam, ResizeH/V, Wait, NotAllowed, Move |
 
 ## Atoms
 
-| Component | State |
-|---|---|
-| `Label` (roles, wrap, elide, tint) | compiled |
-| `Spacer`, `Divider` | compiled |
-| `Icon` / `IconView` | compiled |
-| `Button` (Primary, Secondary, Ghost, Danger, Link · sizes · icon) | compiled |
-| `Checkbox`, `Switch`, `Radio` | compiled |
-| `Slider` (step, decimals, label, value readout) | compiled |
-| `TextField` (caret, selection, clipboard, word / line select by double / triple click) | compiled; clicks and system clipboard built |
-| `Badge`, `Avatar` | compiled |
-| `ProgressBar`, `Spinner` | compiled |
+`Label`, `Spacer`, `Divider`, `LabeledDivider`, `Icon`, `IconDisc`, `Button` (nine kinds · five sizes ·
+icon, icon-only · loading · disabled · block), `Checkbox`, `Switch`, `Radio`, `Slider`, `TextField`
+(icon, clearable, invalid), `Textarea`, `Select`, `Segmented`, `ToggleGroup`, `Rating`,
+`QuantityInput`, `Badge` (six tones · subtle or solid · three sizes · dot), `StatusPill`, `Tag`,
+`Dot`, `Kbd`, `Avatar` (presence dot), `AvatarGroup`, `ProgressBar`, `ProgressRing`, `Spinner`,
+`Skeleton` (ten shapes), `Sparkline`.
 
 ## Molecules
 
-| Component | State |
-|---|---|
-| `Segmented` | built |
-| `Tabs` / `TabBar` | built |
-| `Select` + `Menu` (overlay, keyboard, flips above) | built |
-| `Alert` | built |
-| `Tooltip` | built |
-| `Toast` (stacked, timed) | built |
+`FormField` (label, hint, error), `Alert`, `Banner`, `Callout`, `Tabs` / `TabBar`, `Breadcrumb`,
+`Pagination`, `Stepper`, `Accordion` (cards or flush, single or multiple), `Tooltip`, `Toast`,
+`Stat`, `EmptyState`, `ItemList`, `DescriptionList`, `Timeline`, `Band`.
 
 ## Organisms and containers
 
-| Component | State |
-|---|---|
-| `Flex` / `Column` / `Row` (gap, padding, align, justify, grow) | compiled |
-| `Panel` (elevations) | compiled |
-| `Scroll` (wheel, draggable thumb, clipped) | built |
-| `Dialog` (modal, focus trap, Escape / Enter) | built |
-| `Notifier` + `Notifications` (open toasts and dialogs from a handler) | built |
-| `View` (overlays, dark-mode model, timed wakes), `App` | compiled; the shell's cursor, clipboard and click code built |
+`Flex` / `Column` / `Row`, `Panel`, `Card` (header, body, footer, pressable), `Scroll`, `Table`
+(widget cells, column widths, sortable headers, picked row), `Sidebar`, `Navbar`, `TopBar`,
+`AppShell`, `PageStack`, `LineChart`, `BarChart`, `DonutChart`, `BarList` (with `ChartKit`:
+scale, grid, hover card, series colours).
+
+## Overlays
+
+`Select` menu, `MenuButton` / `DropdownMenu` (icons, shortcuts, separators, danger rows),
+`Popover`, `Dialog`, `Sheet` (modal and drawers from either edge), `CommandPalette`, `Tooltip`,
+`Toast`. A handler opens dialogs, sheets, toasts and the palette through `Notifier` +
+`Notifications`; a popover builds its content from a function each time it opens.
+
+## Application
+
+`View` (overlays, dark-mode model, timed wakes), `App` (window loop, cursors, clipboard, clicks).
 
 ## Not yet written
 
-Accordion, pagination, number input, form field, popover, drawer, table / data grid, virtual list,
-tree, text area, command palette, charts as library widgets (`examples/weather` has one), split pane,
-radio group, chips with a close button, skeleton, kbd. A GPU painter. Right-to-left and shaped text.
+Virtual list, tree, split pane, date picker, combobox with search, multi-select, file input, OTP
+input, hover card, toolbar, a GPU painter, right-to-left and shaped text.
 
 ## In `examples/weather`
 

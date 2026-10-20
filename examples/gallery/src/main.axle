@@ -1,81 +1,85 @@
-// gallery — every component, on one page.
+// gallery — every component, in an application of its own.
 //
-// The program a first-time reader runs to see the library. It is also the test of the whole stack:
-// `--snap` draws one frame to `gallery.bmp` with no window, which is what the README's picture is
-// and what a regression check compares.
+// A sidebar lists the sections (buttons, forms, feedback, navigation, data, overlays); the page of
+// the chosen one fills the rest, under a top bar with the dark-mode switch. The program is also the
+// test of the whole stack: `--snap` draws one frame to `gallery.bmp` with no window, which is what
+// the README's pictures are made from.
 //
-// The page is four cards, one module each (`controls`, `status`, `navigation`, `feedback`), and a
-// header. A card is a function that takes the `Model`s it shows and answers a `Panel`; this file
-// only creates the models and lays the cards out.
+// What to read: `demo` holds every model, `kit` the helpers each page is built from, and one
+// `page_*` module per section, each a function from the `Demo` to a column of cards.
 
 use zaffre::{
-    View, Theme, Fonts, App, AppDesc, Model, Notifier, Notifications,
-    Column, Row, Widget, FlexProps, Insets, Align,
-    // Named by the defaults of the props above, which this module completes.
-    Justify, Length,
+    View, Theme, Fonts, App, AppDesc, Notifications, AppShell, Sidebar, SidebarItem, SidebarProps, TopBar,
+    PageStack, Switch, Spacer, Widget, FlexProps, IconKind, Align, Insets, Justify, Length,
 };
-use header::titleBar;
-use controls::controlsCard;
-use status::statusCard;
-use navigation::navigationCard;
-use feedback::feedbackCard;
+use demo::Demo;
+use page_overview::overviewPage;
+use page_buttons::buttonsPage;
+use page_forms::formsPage;
+use page_feedback::feedbackPage;
+use page_navigation::navigationPage;
+use page_data::dataPage;
+use page_overlays::overlaysPage;
 use std::sys::process::{argc, argAt};
 use std::lang::IndexOutOfBoundsException;
 
 /** The size of the window, and of the snapshot. */
-const WIDTH : i32 = 1040;
+const WIDTH : i32 = 1360;
 
 /** The height of the window, and of the snapshot. */
-const HEIGHT : i32 = 1500;
+const HEIGHT : i32 = 900;
 
-/** The gap between cards, and the margin around the page. */
-const GAP : f64 = 22.0;
+/** The entries of the sidebar: a heading, then one item per page. */
+fn entries() : SidebarItem[] {
+    let items : SidebarItem[] = [
+        SidebarItem { label: "Components", heading: true },
+        SidebarItem { label: "Overview", icon: IconKind::Home },
+        SidebarItem { label: "Buttons", icon: IconKind::Plus },
+        SidebarItem { label: "Forms", icon: IconKind::Edit },
+        SidebarItem { label: "Feedback", icon: IconKind::Bell },
+        SidebarItem { label: "Navigation", icon: IconKind::Menu },
+        SidebarItem { label: "Data", icon: IconKind::Chart },
+        SidebarItem { label: "Overlays", icon: IconKind::Copy },
+    ];
+    return items;
+}
 
-/** The whole page, as the view a window or a snapshot shows. */
-fn build() : View {
+/** The title of each entry, for the top bar. */
+fn names() : string[] {
+    let titles : string[] = ["Components", "Overview", "Buttons", "Forms", "Feedback", "Navigation", "Data", "Overlays"];
+    return titles;
+}
+
+/** The whole application, opened on page `start`. */
+fn buildOn(start : i32) : View {
     let fonts : Shared<Fonts> = new shared Fonts();
     // The monospace face is optional and read from a file; without it `Mono` text uses the sans.
     fonts.withMono("assets/fonts/JetBrainsMono-Regular.ttf", "assets/fonts/JetBrainsMono-Bold.ttf");
+    let demo = new Demo();
+    let page = demo.page;
+    page.set(start);
+    let dark = demo.dark;
+    let notes = demo.notes;
 
-    // The values the page shows: held here by the program, read and written by the widgets.
-    let dark = new shared Model<bool>(true);
-    let notes = new shared Notifier();
-    let notifications = new shared Model<bool>(true);
-    let newsletter = new shared Model<bool>(false);
-    let plan = new shared Model<i32>(1);
-    let volume = new shared Model<f64>(0.62);
-    let brightness = new shared Model<f64>(40.0);
-    let name = new shared Model<string>("Ada Lovelace");
-    let search = new shared Model<string>("");
-    let progress = new shared Model<f64>(0.68);
-    let tab = new shared Model<i32>(0);
-    let layout = new shared Model<i32>(1);
-    let size = new shared Model<i32>(-1);
+    let stack : dyn Widget[] = [
+        new Spacer(0.0, 0.0),
+        overviewPage(demo),
+        buttonsPage(notes),
+        formsPage(demo),
+        feedbackPage(demo),
+        navigationPage(demo),
+        dataPage(demo),
+        overlaysPage(demo),
+    ];
+    let side = new Sidebar(SidebarProps { title: "Zaffre" }, entries(), page);
+    let top = new TopBar(names(), page, new Switch("Dark mode", dark));
+    let shell = new AppShell(side, top, new PageStack(page, stack));
+    return new View(Theme::dark(), fonts, dark, new Notifications(notes, shell));
+}
 
-    // A container takes its children as a `dyn Widget[]`, which the compiler only builds through a
-    // `let` with the type written — so each group of children is named.
-    let upper : dyn Widget[] = [
-        controlsCard(notes, search, name, notifications, newsletter, plan, volume, brightness),
-        statusCard(progress),
-    ];
-    let lower : dyn Widget[] = [
-        navigationCard(tab, layout, size),
-        feedbackCard(),
-    ];
-    let rows : dyn Widget[] = [
-        titleBar(dark),
-        new Row(FlexProps { gap: GAP, align: Align::Start }, upper),
-        new Row(FlexProps { gap: GAP, align: Align::Start }, lower),
-    ];
-    let page = new Column(
-        FlexProps {
-            gap: GAP,
-            padding: Insets::all(28.0),
-        },
-        rows
-    );
-
-    return new View(Theme::dark(), fonts, dark, new Notifications(notes, page));
+/** The application as it opens. */
+fn build() : View {
+    return buildOn(1);
 }
 
 fn main() : i32 {

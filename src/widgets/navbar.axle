@@ -7,6 +7,7 @@
 // buttons, an avatar — is placed at the right edge, centred vertically, and receives its own
 // events.
 
+use crate::gfx::mathx::Mathx;
 use crate::gfx::tint::Tint;
 use crate::gfx::shapes::{RRect, Brush};
 use crate::text::fonts::FaceKind;
@@ -14,7 +15,7 @@ use crate::core::geometry::{Size, Bounds, Limits};
 use crate::core::event::{UiEvent, EventKind};
 use crate::core::context::{Context, Cursor};
 use crate::core::model::Model;
-use crate::core::widget::{Widget, Control, Gesture};
+use crate::core::widget::{Widget, Base, Control, Gesture};
 use crate::paint::painter::Painter;
 use crate::widgets::icon::{IconKind, Icons};
 
@@ -147,6 +148,55 @@ pub class Navbar : Control, Widget {
             let w : f64 = ctx.textWidth(FaceKind::Bold, self.links[i as i64], 14.0);
             p.text(FaceKind::Bold, self.links[i as i64], box.x + (box.w - w) * 0.5, ctx.baselineIn(FaceKind::Bold, 14.0, box.y, box.h), 14.0, ink);
         }
+        let t : dyn Widget = self.trailing[0];
+        t.paint(ctx, p);
+    }
+}
+
+/** The bar over the content of an application: the name of the current page, and `trailing` at the far end. */
+pub class TopBar : Base, Widget {
+    names : string[];
+    model : Shared<Model<i32>>;
+    trailing : dyn Widget[];
+
+    /** A bar titled with `names[model]`, with `trailing` at the right; the bar takes the widget. */
+    constructor(names : string[], model : Shared<Model<i32>>, own trailing : dyn Widget) {
+        self.names = names;
+        self.model = model;
+        self.trailing = malloc<dyn Widget>(1 as i64);
+        self.trailing[0] = trailing;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let t : dyn Widget = self.trailing[0];
+        t.measure(ctx, Limits::loose(limits.maxW, NAV_HEIGHT));
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : 480.0, h: NAV_HEIGHT });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let t : dyn Widget = self.trailing[0];
+        let s : Size = t.measure(ctx, Limits::loose(area.w, NAV_HEIGHT));
+        t.arrange(ctx, Bounds::make(area.right() - 24.0 - s.w, area.y + (area.h - s.h) * 0.5, s.w, s.h));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let t : dyn Widget = self.trailing[0];
+        return t.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let t : dyn Widget = self.trailing[0];
+        return t.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        p.fillRound(a.round(0.0), Brush::solid(pal.surface.rgb, pal.surface.a));
+        p.line(a.x, a.bottom() - 0.5, a.right(), a.bottom() - 0.5, 1.0, pal.line);
+        let i : i32 = Mathx::clampI(self.model.get(), 0, (self.names.length as i32) - 1);
+        p.text(FaceKind::Bold, self.names[i as i64], a.x + 24.0, ctx.baselineIn(FaceKind::Bold, 18.0, a.y, a.h), 18.0, pal.text);
         let t : dyn Widget = self.trailing[0];
         t.paint(ctx, p);
     }

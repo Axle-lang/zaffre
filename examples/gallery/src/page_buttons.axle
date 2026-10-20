@@ -1,0 +1,160 @@
+// buttons — every kind of button, at every size, and in each state.
+
+use zaffre::{
+    Button, ButtonProps, Label, Tooltip, MenuButton, MenuEntry, Notifier, Widget, Column, Row,
+    FlexProps, TextRole, ButtonKind, ControlSize, IconKind, Tone, Length, Align, Insets, Justify,
+};
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+
+/** A button of `kind` saying `label`. */
+fn button(label : string, kind : ButtonKind) : Button {
+    return new Button(ButtonProps { label: label, kind: kind });
+}
+
+/** A button of `kind` saying `label`, with `icon`. */
+fn withIcon(label : string, kind : ButtonKind, icon : IconKind) : Button {
+    return new Button(
+        ButtonProps {
+            label: label,
+            kind: kind,
+            icon: icon,
+        }
+    );
+}
+
+/** A button of `size` saying `label`. */
+fn sized(label : string, size : ControlSize) : Button {
+    return new Button(
+        ButtonProps {
+            label: label,
+            kind: ButtonKind::Secondary,
+            size: size,
+        }
+    );
+}
+
+/** The nine kinds, loudest first. */
+fn kinds() : Column {
+    let solid : dyn Widget[] = [
+        button("Primary", ButtonKind::Primary),
+        button("Success", ButtonKind::Success),
+        button("Danger", ButtonKind::Danger),
+        button("Important", ButtonKind::Important),
+    ];
+    let quiet : dyn Widget[] = [
+        button("Secondary", ButtonKind::Secondary),
+        button("Tertiary", ButtonKind::Tertiary),
+        button("Outline", ButtonKind::Outline),
+        button("Ghost", ButtonKind::Ghost),
+        button("Link", ButtonKind::Link),
+    ];
+    let rows : dyn Widget[] = [lineup(solid), lineup(quiet)];
+    return stacked(rows);
+}
+
+/** The five sizes. */
+fn sizes() : Row {
+    let kids : dyn Widget[] = [
+        sized("Extra small", ControlSize::Xs),
+        sized("Small", ControlSize::Sm),
+        sized("Medium", ControlSize::Md),
+        sized("Large", ControlSize::Lg),
+        sized("Extra large", ControlSize::Xl),
+    ];
+    return lineup(kids);
+}
+
+/** Icons before, after, and on their own. */
+fn icons() : Column {
+    let labelled : dyn Widget[] = [
+        withIcon("Save", ButtonKind::Primary, IconKind::Check),
+        withIcon("Download", ButtonKind::Outline, IconKind::Download),
+        new Button(
+            ButtonProps {
+                label: "Next",
+                kind: ButtonKind::Secondary,
+                icon: IconKind::ArrowRight,
+                iconRight: true,
+            }
+        ),
+    ];
+    let alone : dyn Widget[] = [
+        iconOnly(IconKind::Plus, ButtonKind::Primary),
+        iconOnly(IconKind::Edit, ButtonKind::Outline),
+        iconOnly(IconKind::Trash, ButtonKind::Danger),
+        iconOnly(IconKind::Settings, ButtonKind::Ghost),
+        iconOnly(IconKind::Search, ButtonKind::Tertiary),
+    ];
+    let rows : dyn Widget[] = [lineup(labelled), lineup(alone)];
+    return stacked(rows);
+}
+
+/** A square button holding only an icon. */
+fn iconOnly(icon : IconKind, kind : ButtonKind) : Button {
+    return new Button(ButtonProps { kind: kind, icon: icon });
+}
+
+/** Busy, switched off, and as wide as the room. */
+fn states() : Column {
+    let row : dyn Widget[] = [
+        new Button(ButtonProps { label: "Uploading", loading: true }),
+        new Button(ButtonProps { label: "Disabled", disabled: true }),
+        new Button(
+            ButtonProps {
+                label: "Disabled outline",
+                kind: ButtonKind::Outline,
+                disabled: true,
+            }
+        ),
+    ];
+    let block : dyn Widget[] = [
+        new Button(
+            ButtonProps {
+                label: "A block button",
+                width: Length::Fill,
+            }
+        ),
+    ];
+    let rows : dyn Widget[] = [lineup(row), stacked(block)];
+    return stacked(rows);
+}
+
+/** A button that opens a menu, and one with a tooltip. */
+fn extras(notes : Shared<Notifier>) : Row {
+    let entries : MenuEntry[] = [
+        MenuEntry { label: "Rename", icon: IconKind::Edit, shortcut: "F2" },
+        MenuEntry { label: "Duplicate", icon: IconKind::Copy, shortcut: "Ctrl D" },
+        MenuEntry { separator: true },
+        MenuEntry { label: "Delete", icon: IconKind::Trash, danger: true },
+    ];
+    let menu = new MenuButton(
+        ButtonProps {
+            label: "Actions",
+            kind: ButtonKind::Outline,
+            icon: IconKind::Menu,
+        },
+        entries,
+        (i : i32) => notes.toast("Picked a menu entry", Tone::Info)
+    );
+    let saved = new Button(
+        ButtonProps {
+            label: "Hover me",
+            kind: ButtonKind::Tertiary,
+        },
+        () => notes.toast("Pressed", Tone::Ok)
+    );
+    let kids : dyn Widget[] = [menu, new Tooltip("A tooltip waits a moment before it shows", saved)];
+    return lineup(kids);
+}
+
+/** The page. */
+pub fn buttonsPage(notes : Shared<Notifier>) : Column {
+    let kids : dyn Widget[] = [
+        section("Kinds", "Loud for the one action a page is for, quiet for the rest.", kinds()),
+        section("Sizes", "Heights of 32, 36, 40, 48 and 56 pixels.", sizes()),
+        section("Icons", "Before the label, after it, or alone as a square.", icons()),
+        section("States", "A busy button shows the wait cursor; a disabled one the not-allowed cursor.", states()),
+        section("Menus and tooltips", "A menu opens under its button; a tooltip appears after the pointer rests.", extras(notes)),
+    ];
+    return pageOf(kids);
+}

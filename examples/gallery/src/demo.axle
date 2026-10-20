@@ -1,0 +1,59 @@
+// demo — the state of the gallery: every value a widget on any page reads or writes.
+//
+// A program that shows many widgets holds their models somewhere; this class is that place. Each
+// field is a `Shared<Model<…>>` — a handle several widgets and several handlers can hold at once —
+// so a page function takes the `Demo`, picks out the handles it needs, and hands them to widgets.
+// A handler (a lambda) cannot capture the `Demo` itself, only handles, so pages copy the handle
+// they need into a local before they build a handler around it.
+
+use zaffre::{Model, Notifier};
+
+/** The values of the gallery. */
+pub class Demo {
+    /** Whether the dark theme is on. */
+    pub dark : Shared<Model<bool>> = new shared Model<bool>(true);
+
+    /** The queue handlers use to open toasts, dialogs, sheets and the command palette. */
+    pub notes : Shared<Notifier> = new shared Notifier();
+
+    /** The sidebar's choice: the index of the page shown. */
+    pub page : Shared<Model<i32>> = new shared Model<i32>(1);
+
+    /** Text fields. */
+    pub search : Shared<Model<string>> = new shared Model<string>("");
+    pub name : Shared<Model<string>> = new shared Model<string>("Ada Lovelace");
+    pub email : Shared<Model<string>> = new shared Model<string>("ada@");
+    pub bio : Shared<Model<string>> = new shared Model<string>("Wrote the first program.\nLoves analytical engines.");
+
+    /** Switches, checkboxes, radios. */
+    pub notifications : Shared<Model<bool>> = new shared Model<bool>(true);
+    pub newsletter : Shared<Model<bool>> = new shared Model<bool>(false);
+    pub plan : Shared<Model<i32>> = new shared Model<i32>(1);
+
+    /** Sliders. */
+    pub volume : Shared<Model<f64>> = new shared Model<f64>(0.62);
+    pub brightness : Shared<Model<f64>> = new shared Model<f64>(40.0);
+
+    /** Choices from a list. */
+    pub size : Shared<Model<i32>> = new shared Model<i32>(-1);
+    pub layout : Shared<Model<i32>> = new shared Model<i32>(1);
+    pub tab : Shared<Model<i32>> = new shared Model<i32>(0);
+
+    /** Navigation. */
+    pub sections : Shared<Model<i32>> = new shared Model<i32>(1);
+    pub pageNumber : Shared<Model<i32>> = new shared Model<i32>(3);
+    pub step : Shared<Model<i32>> = new shared Model<i32>(1);
+
+    /** Small inputs. */
+    pub rating : Shared<Model<i32>> = new shared Model<i32>(4);
+    pub seats : Shared<Model<i32>> = new shared Model<i32>(3);
+    pub styles : Shared<Model<i32>> = new shared Model<i32>(1);
+
+    /** Progress. */
+    pub progress : Shared<Model<f64>> = new shared Model<f64>(0.68);
+    pub quota : Shared<Model<f64>> = new shared Model<f64>(0.42);
+
+    /** The row picked in the table and in the list. */
+    pub picked : Shared<Model<i32>> = new shared Model<i32>(-1);
+    pub contact : Shared<Model<i32>> = new shared Model<i32>(0);
+}

@@ -121,6 +121,8 @@ pub class Spinner : Base, Widget {
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let a : Bounds = self.area;
-        Spinners::draw(ctx, p, a.x, a.y, a.w, ctx.theme.palette.primary.s600);
+        // A stretched spinner stays round: the largest square in its box, centred.
+        let side : f64 = Mathx::fmin(a.w, a.h);
+        Spinners::draw(ctx, p, a.midX() - side * 0.5, a.midY() - side * 0.5, side, ctx.theme.palette.primary.s600);
     }
 }

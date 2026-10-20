@@ -9,7 +9,9 @@
 // page taller than the window is reached with the wheel. It adds nothing else: the sidebar, the
 // bar and the page are the program's own widgets.
 
+use crate::gfx::mathx::Mathx;
 use crate::core::geometry::{Size, Bounds, Limits, Insets, Length};
+use crate::core::model::Model;
 use crate::core::event::UiEvent;
 use crate::core::context::Context;
 use crate::core::widget::{Widget, Base};
@@ -104,5 +106,54 @@ pub class AppShell : Base, Widget {
         t.paint(ctx, p);
         let s : dyn Widget = self.side[0];
         s.paint(ctx, p);
+    }
+}
+
+/** Several pages, of which the model says which one shows. */
+pub class PageStack : Base, Widget {
+    pages : dyn Widget[];
+    count : i32;
+    model : Shared<Model<i32>>;
+
+    /** `pages`, which the stack takes, the shown one being the index held in `model`. */
+    constructor(model : Shared<Model<i32>>, own pages : dyn Widget[]) {
+        self.pages = pages;
+        self.count = pages.length as i32;
+        self.model = model;
+    }
+
+    /** The page on show. */
+    pub(file) fn current(self) : dyn Widget {
+        return self.pages[Mathx::clampI(self.model.get(), 0, self.count - 1) as i64];
+    }
+
+    pub fn flex(self) : f64 {
+        return 0.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.current();
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.current();
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.current();
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.current();
+        return c.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.current();
+        c.paint(ctx, p);
     }
 }

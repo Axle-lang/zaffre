@@ -1,0 +1,43 @@
+// overview — the front page: a welcome, the figures that matter, and where to look next.
+
+use zaffre::{
+    Notifier, Button, ButtonProps, Label, Callout, Badge, Avatar, AvatarGroup, Column, Row, Widget,
+    FlexProps, pageHeader, EmptyState,
+    Tone, TextRole, ButtonKind, IconKind, ControlSize, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+use page_data::dataPage;
+
+/** The title row: a heading, a line under it, and a button at the far end. */
+fn header(notes : Shared<Notifier>) : Row {
+    let create = new Button(
+        ButtonProps {
+            label: "New report",
+            icon: IconKind::Plus,
+        },
+        () => notes.toast("A report was created", Tone::Ok)
+    );
+    return pageHeader("Welcome back, Ada", "Here is what happened across your projects this week.", create);
+}
+
+/** Who is working on what. */
+fn team() : Row {
+    let names : string[] = ["Ada Lovelace", "Grace Hopper", "Alan Turing", "Margaret Hamilton"];
+    let kids : dyn Widget[] = [
+        new AvatarGroup(names, 36.0),
+        note("Four people edited the shared workspace today."),
+    ];
+    return lineup(kids);
+}
+
+/** The page: the header and a note, then the data page's content. */
+pub fn overviewPage(demo : Demo) : Column {
+    let kids : dyn Widget[] = [
+        header(demo.notes),
+        new Callout(Tone::Info, "Everything on these pages is built from the library", "Pick a section in the sidebar to see every component, or press the buttons to try them."),
+        team(),
+        dataPage(demo),
+    ];
+    return pageOf(kids);
+}

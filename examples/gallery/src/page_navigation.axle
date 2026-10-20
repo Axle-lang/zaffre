@@ -1,0 +1,106 @@
+// navigation — tabs, a path, pages, steps, and sections that open.
+
+use zaffre::{
+    Model, Notifier, Tabs, Segmented, Breadcrumb, Pagination, PaginationProps, Stepper, Accordion,
+    AccordionProps, Popover, Button, ButtonProps, Switch, Checkbox, Label, Column, Row, Widget,
+    FlexProps, Tone, TextRole, ButtonKind, IconKind, ControlSize, AccordionLook, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+
+/** Tabs over their pages, and a segmented control. */
+fn tabs(demo : Demo) : Column {
+    let tab = demo.tab;
+    let layout = demo.layout;
+    let titles : string[] = ["General", "Network", "About"];
+    let views : string[] = ["List", "Grid", "Board"];
+    let pages : dyn Widget[] = [
+        note("The general settings of the account: its name, its language, its time zone."),
+        note("Network settings: a proxy, a timeout, how often to retry."),
+        note("zaffre 0.1 — a native UI library for Axle, built on smalt."),
+    ];
+    let kids : dyn Widget[] = [
+        new Tabs(titles, tab, pages),
+        new Segmented(views, layout),
+    ];
+    return stacked(kids);
+}
+
+/** A path, a pager and a stepper. */
+fn wayfinding(demo : Demo) : Column {
+    let page = demo.pageNumber;
+    let step = demo.step;
+    let trail : string[] = ["Home", "Projects", "Zaffre", "Components"];
+    let stages : string[] = ["Account", "Plan", "Payment", "Done"];
+    let kids : dyn Widget[] = [
+        new Breadcrumb(trail),
+        new Pagination(PaginationProps { pages: 24 }, page),
+        new Stepper(stages, step),
+    ];
+    return stacked(kids);
+}
+
+/** Sections of text that open. */
+fn accordions(demo : Demo) : Column {
+    let open = demo.sections;
+    let flushed = new shared Model<i32>(0);
+    let titles : string[] = ["Billing", "Security", "Team"];
+    let bodies : dyn Widget[] = [
+        note("Invoices are sent on the first of the month, to the address on the account."),
+        note("Two-factor authentication is on. Sign-ins from a new device ask for a code."),
+        note("Five members have access. Owners can change the plan; others can only read."),
+    ];
+    let more : string[] = ["One", "Two"];
+    let more2 : dyn Widget[] = [note("First section."), note("Second section.")];
+    let flush = new Accordion(
+        AccordionProps {
+            look: AccordionLook::Flush,
+            single: false,
+        },
+        more,
+        flushed,
+        more2
+    );
+    let kids : dyn Widget[] = [new Accordion(titles, open, bodies), flush];
+    return stacked(kids);
+}
+
+/** What the popover holds, built each time it opens. */
+fn filters(notifications : Shared<Model<bool>>, newsletter : Shared<Model<bool>>) : dyn Widget {
+    let kids : dyn Widget[] = [
+        new Label("Show", TextRole::Label),
+        new Switch("Notifications", notifications),
+        new Checkbox("Newsletter", newsletter),
+    ];
+    return new Column(FlexProps { gap: 12.0 }, kids);
+}
+
+/** A popover opened from a button. */
+fn popovers(demo : Demo) : Row {
+    let notifications = demo.notifications;
+    let newsletter = demo.newsletter;
+    let trigger = new Button(
+        ButtonProps {
+            label: "Filters",
+            kind: ButtonKind::Outline,
+            icon: IconKind::Filter,
+        }
+    );
+    let panel = new Popover(trigger, () => filters(notifications, newsletter));
+    let kids : dyn Widget[] = [panel, note("A popover holds anything, and closes on a click outside it.")];
+    return lineup(kids);
+}
+
+/** The page. */
+pub fn navigationPage(demo : Demo) : Column {
+    let upper : dyn Widget[] = [
+        half("Tabs and segments", "A strip of titles over pages, and a joined choice.", tabs(demo)),
+        half("Where you are", "A breadcrumb, a pager and a stepper.", wayfinding(demo)),
+    ];
+    let rows : dyn Widget[] = [
+        side(upper),
+        section("Accordions", "One section open at a time, or each on its own; the content eases in.", accordions(demo)),
+        section("Popovers", "A panel of the program's own content that opens from a trigger.", popovers(demo)),
+    ];
+    return pageOf(rows);
+}

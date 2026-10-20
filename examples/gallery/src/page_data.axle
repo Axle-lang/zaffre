@@ -1,0 +1,151 @@
+// data — key figures, a table, lists, a timeline, and charts.
+
+use zaffre::{
+    Model, Stat, StatProps, StatLook, Sparkline, Table, TableProps, TableColumn, Label, Badge, Avatar,
+    ItemList, ItemListProps, ListEntry, DescriptionList, Timeline, TimelineEntry, LineChart, BarChart,
+    DonutChart, DonutProps, BarList, ChartProps, Scroll, Column, Row, Widget, FlexProps, LabelProps,
+    Tone, TextRole, IconKind, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+
+/** One key figure with a sparkline under it. */
+fn stat(label : string, value : string, delta : string, rising : bool, good : bool, series : f64[]) : Stat {
+    return new Stat(
+        StatProps {
+            label: label,
+            value: value,
+            delta: delta,
+            rising: rising,
+            good: good,
+            grow: 1.0,
+        },
+        new Sparkline(series, good ? Tone::Ok : Tone::Danger)
+    );
+}
+
+/** The row of key figures. */
+fn figures() : Row {
+    let revenue : f64[] = [12.0, 14.5, 13.2, 18.0, 21.4, 19.8, 24.0];
+    let users : f64[] = [40.0, 42.0, 41.0, 47.0, 52.0, 55.0, 61.0];
+    let bounce : f64[] = [38.0, 36.0, 37.0, 33.0, 32.0, 30.0, 29.0];
+    let tickets : f64[] = [9.0, 11.0, 14.0, 12.0, 15.0, 18.0, 21.0];
+    let kids : dyn Widget[] = [
+        stat("REVENUE", "$48.2k", "12.4 %", true, true, revenue),
+        stat("ACTIVE USERS", "9,310", "8.1 %", true, true, users),
+        stat("BOUNCE RATE", "29 %", "3.4 %", false, true, bounce),
+        stat("OPEN TICKETS", "21", "16.7 %", true, false, tickets),
+    ];
+    return side(kids);
+}
+
+/** A table of people: a name beside an avatar, a status badge, an amount. */
+fn people(demo : Demo) : Table {
+    let picked = demo.picked;
+    let columns : TableColumn[] = [
+        TableColumn { title: "Name", width: Length::Fill, sortable: true },
+        TableColumn { title: "Status" },
+        TableColumn { title: "Plan", sortable: true },
+        TableColumn { title: "Spent", align: Align::End, sortable: true },
+    ];
+    let cells : dyn Widget[] = [
+        person("Ada Lovelace"), new Badge("Active", Tone::Ok), new Label("Team"), new Label("$1,240"),
+        person("Grace Hopper"), new Badge("Trial", Tone::Info), new Label("Pro"), new Label("$320"),
+        person("Alan Turing"), new Badge("Overdue", Tone::Danger), new Label("Team"), new Label("$2,880"),
+        person("Margaret Hamilton"), new Badge("Active", Tone::Ok), new Label("Free"), new Label("$0"),
+        person("Linus Torvalds"), new Badge("Paused", Tone::Warn), new Label("Pro"), new Label("$640"),
+    ];
+    let table = new Table(TableProps { hoverRows: true }, columns, cells, picked);
+    let keys : f64[] = [
+        1.0, 0.0, 3.0, 1240.0,
+        2.0, 0.0, 2.0, 320.0,
+        3.0, 0.0, 3.0, 2880.0,
+        4.0, 0.0, 1.0, 0.0,
+        5.0, 0.0, 2.0, 640.0,
+    ];
+    table.setKeys(keys);
+    return table;
+}
+
+/** A name beside its avatar. */
+fn person(name : string) : Row {
+    let kids : dyn Widget[] = [new Avatar(name, 28.0), new Label(name, TextRole::Strong)];
+    return lineup(kids);
+}
+
+/** A list of contacts. */
+fn contacts(demo : Demo) : ItemList {
+    let chosen = demo.contact;
+    let entries : ListEntry[] = [
+        ListEntry { title: "Ada Lovelace", subtitle: "Mathematician", note: "online", icon: IconKind::User },
+        ListEntry { title: "Grace Hopper", subtitle: "Rear admiral", note: "away", icon: IconKind::User },
+        ListEntry { title: "Alan Turing", subtitle: "Cryptanalyst", note: "offline", icon: IconKind::User },
+    ];
+    return new ItemList(ItemListProps { }, entries, chosen);
+}
+
+/** The facts about one account. */
+fn facts() : Column {
+    let terms : string[] = ["Name", "Plan", "Seats", "Renews"];
+    let details : string[] = ["Analytical Engines Ltd", "Team", "12", "1 March"];
+    let kids : dyn Widget[] = [new DescriptionList(terms, details)];
+    return stacked(kids);
+}
+
+/** What happened, newest first. */
+fn history() : Timeline {
+    let events : TimelineEntry[] = [
+        TimelineEntry { title: "Deployed to production", time: "2 min ago", tone: Tone::Ok, icon: IconKind::Check },
+        TimelineEntry { title: "Review requested", detail: "Two reviewers were assigned to the change.", time: "1 h ago" },
+        TimelineEntry { title: "Branch created", time: "yesterday", tone: Tone::Info, icon: IconKind::Edit },
+    ];
+    return new Timeline(events);
+}
+
+/** The charts. */
+fn charts() : Column {
+    let months : string[] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"];
+    let sales : f64[] = [
+        12.0, 18.5, 15.2, 22.0, 26.4, 24.1, 30.2, 28.0,
+        8.0, 9.5, 12.0, 11.0, 15.0, 14.0, 18.0, 20.0,
+    ];
+    let names : string[] = ["Revenue", "Costs"];
+    let kids : dyn Widget[] = [
+        new LineChart(ChartProps { height: 240.0 }, months, sales, names),
+        new BarChart(ChartProps { height: 240.0 }, months, sales, names),
+    ];
+    return stacked(kids);
+}
+
+/** The shares of a whole, and a ranking. */
+fn shares() : Column {
+    let sources : string[] = ["Direct", "Search", "Social", "Email"];
+    let visits : f64[] = [48.0, 31.0, 21.0, 9.0];
+    let browsers : string[] = ["Chrome", "Firefox", "Safari", "Edge"];
+    let usage : f64[] = [62.0, 21.0, 17.0, 9.0];
+    let kids : dyn Widget[] = [
+        new DonutChart(DonutProps { size: 160.0 }, sources, visits),
+        new BarList(browsers, usage, Tone::Accent),
+    ];
+    return stacked(kids);
+}
+
+/** The page. */
+pub fn dataPage(demo : Demo) : Column {
+    let lower : dyn Widget[] = [
+        half("Contacts", "A list of rows with an icon, two lines and a note.", contacts(demo)),
+        half("Account", "A description list: terms on the left, details on the right.", facts()),
+    ];
+    let charted : dyn Widget[] = [
+        half("Trends", "Lines and bars over the same data; hover for the figures.", charts()),
+        half("Shares", "A donut and a ranked list.", shares()),
+    ];
+    let rows : dyn Widget[] = [
+        figures(),
+        section("People", "Sort by a column, pick a row. Cells are widgets: an avatar, a badge.", people(demo)),
+        side(lower),
+        section("Activity", "A timeline of what happened.", history()),
+        side(charted),
+    ];
+    return pageOf(rows);
+}

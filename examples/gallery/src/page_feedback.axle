@@ -1,0 +1,170 @@
+// feedback — messages, badges, progress, and placeholders for what has not loaded yet.
+
+use zaffre::{
+    Notifier, Alert, Banner, BannerProps, Callout, Badge, BadgeProps, StatusPill, Tag, TagProps, Kbd, Dot,
+    ProgressBar, ProgressRing, RingProps, Spinner, Skeleton, EmptyState, EmptyProps, Button, ButtonProps,
+    Column, Row, Widget, FlexProps, Label,
+    Tone, BadgeLook, BadgeSize, BannerLook, SkeletonShape, ControlSize, ButtonKind, TextRole, IconKind,
+    Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+
+/** The four alerts. */
+fn alerts() : Column {
+    let kids : dyn Widget[] = [
+        new Alert(Tone::Ok, "Saved", "Your preferences were stored."),
+        new Alert(Tone::Info, "Update available", "Version 0.2 brings a new theme."),
+        new Alert(Tone::Warn, "Disk almost full", "Only 2 GB are left on this volume, so downloads may fail."),
+        new Alert(Tone::Danger, "Connection lost"),
+    ];
+    return stacked(kids);
+}
+
+/** Banners and callouts. */
+fn notices() : Column {
+    let solid = new Banner(
+        BannerProps {
+            tone: Tone::Accent,
+            dismissible: true,
+            action: "Read more",
+        },
+        "Version 2 is out"
+    );
+    let subtle = new Banner(
+        BannerProps {
+            tone: Tone::Warn,
+            look: BannerLook::Subtle,
+        },
+        "Maintenance on Sunday between 02:00 and 04:00"
+    );
+    let aside = new Callout(Tone::Info, "Did you know?", "Callouts sit inside the text, with a bar down their edge.");
+    let kids : dyn Widget[] = [solid, subtle, aside];
+    return stacked(kids);
+}
+
+/** A badge in a look. */
+fn badge(text : string, tone : Tone, look : BadgeLook) : Badge {
+    return new Badge(
+        BadgeProps {
+            text: text,
+            tone: tone,
+            look: look,
+        }
+    );
+}
+
+/** Badges, subtle and solid, then the smaller things that sit in a line of text. */
+fn labels() : Column {
+    let subtle : dyn Widget[] = [
+        badge("Online", Tone::Ok, BadgeLook::Subtle),
+        badge("3 warnings", Tone::Warn, BadgeLook::Subtle),
+        badge("Beta", Tone::Accent, BadgeLook::Subtle),
+        badge("Offline", Tone::Danger, BadgeLook::Subtle),
+        badge("New", Tone::Info, BadgeLook::Subtle),
+        badge("v0.1", Tone::Neutral, BadgeLook::Subtle),
+    ];
+    let solid : dyn Widget[] = [
+        badge("Online", Tone::Ok, BadgeLook::Solid),
+        badge("3 warnings", Tone::Warn, BadgeLook::Solid),
+        badge("Beta", Tone::Accent, BadgeLook::Solid),
+        badge("Offline", Tone::Danger, BadgeLook::Solid),
+        badge("New", Tone::Info, BadgeLook::Solid),
+        badge("v0.1", Tone::Neutral, BadgeLook::Solid),
+    ];
+    let small : dyn Widget[] = [
+        new StatusPill("Operational", Tone::Ok),
+        new StatusPill("Live", Tone::Danger, BadgeSize::Md, true),
+        new Tag(TagProps { text: "design", tone: Tone::Accent, removable: true }),
+        new Tag(TagProps { text: "draft" }),
+        new Kbd("Ctrl K"),
+        new Dot(Tone::Ok, 12.0, true),
+    ];
+    let kids : dyn Widget[] = [lineup(subtle), lineup(solid), lineup(small)];
+    return stacked(kids);
+}
+
+/** Progress: a bar, a ring, a spinner. */
+fn progress(demo : Demo) : Row {
+    let value = demo.progress;
+    let quota = demo.quota;
+    let bar : dyn Widget[] = [
+        new Label("Upload progress", TextRole::Label),
+        new ProgressBar(value, Length::Fill, ControlSize::Md),
+        new Label("Indeterminate", TextRole::Label),
+        new ProgressBar(Length::Fill, ControlSize::Sm),
+        new Spinner(ControlSize::Md),
+    ];
+    let ring = new ProgressRing(RingProps { size: 104.0, tone: Tone::Ok }, quota);
+    let kids : dyn Widget[] = [
+        new Column(FlexProps { gap: 10.0, align: Align::Stretch, width: Length::Px(300.0) }, bar),
+        ring,
+    ];
+    return new Row(FlexProps { gap: 32.0, align: Align::Center }, kids);
+}
+
+/** The shapes of placeholder. */
+fn placeholders() : Row {
+    let text : dyn Widget[] = [
+        new Skeleton(SkeletonShape::Text),
+        new Skeleton(SkeletonShape::Text),
+        new Skeleton(SkeletonShape::Text, Length::Px(160.0)),
+    ];
+    let card : dyn Widget[] = [
+        new Skeleton(SkeletonShape::Avatar),
+        new Column(FlexProps { gap: 8.0, width: Length::Px(220.0) }, text),
+        new Skeleton(SkeletonShape::Button),
+    ];
+    return lineup(card);
+}
+
+/** An empty state with a way forward, and toasts. */
+fn empty(notes : Shared<Notifier>) : Column {
+    let create = new Button(
+        ButtonProps {
+            label: "New project",
+            icon: IconKind::Plus,
+        },
+        () => notes.toast("Created a project", Tone::Ok)
+    );
+    let nothing = new EmptyState(
+        EmptyProps {
+            icon: IconKind::Folder,
+            title: "No projects yet",
+            description: "Projects hold your documents. Create the first one to get started.",
+        },
+        create
+    );
+    let kids : dyn Widget[] = [nothing, toasts(notes)];
+    return stacked(kids);
+}
+
+/** Buttons that open a toast of each tone. */
+fn toasts(notes : Shared<Notifier>) : Row {
+    let kids : dyn Widget[] = [
+        new Button(ButtonProps { label: "Success toast", kind: ButtonKind::Success }, () => notes.toast("Saved", Tone::Ok)),
+        new Button(ButtonProps { label: "Info toast", kind: ButtonKind::Outline }, () => notes.toast("A new version is available", Tone::Info)),
+        new Button(ButtonProps { label: "Warning toast", kind: ButtonKind::Important }, () => notes.toast("Low battery", Tone::Warn)),
+        new Button(ButtonProps { label: "Error toast", kind: ButtonKind::Danger }, () => notes.toast("Could not connect", Tone::Danger)),
+    ];
+    return lineup(kids);
+}
+
+/** The page. */
+pub fn feedbackPage(demo : Demo) : Column {
+    let upper : dyn Widget[] = [
+        half("Alerts", "A tinted box with an icon, a title and a message.", alerts()),
+        half("Banners and callouts", "A bar across the page, and an aside inside the text.", notices()),
+    ];
+    let lower : dyn Widget[] = [
+        half("Progress", "A bar, an indeterminate bar, a ring and a spinner.", progress(demo)),
+        half("Placeholders", "Skeletons pulse where content will land.", placeholders()),
+    ];
+    let rows : dyn Widget[] = [
+        side(upper),
+        section("Badges, pills and tags", "The small things that label other things.", labels()),
+        side(lower),
+        section("Empty states and toasts", "What to show where there is nothing yet, and short-lived messages.", empty(demo.notes)),
+    ];
+    return pageOf(rows);
+}

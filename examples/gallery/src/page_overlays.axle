@@ -1,0 +1,146 @@
+// overlays — what opens over the page: dialogs, sheets, a command palette, tooltips.
+
+use zaffre::{
+    Model, Notifier, DialogProps, SheetProps, SheetSide, MenuEntry, Button, ButtonProps, Tooltip,
+    TextField, FieldProps, FormField, FieldLabel, Textarea, TextareaProps, Switch, Label, Column, Row,
+    Widget, FlexProps, Kbd,
+    Tone, TextRole, ButtonKind, IconKind, ControlSize, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf, note};
+
+/** Ask whether to delete the profile; the answer shows up as a toast. */
+fn askDelete(notes : Shared<Notifier>) : void {
+    let question = DialogProps {
+        title: "Delete the profile?",
+        message: "Its preferences and history are removed for good. This cannot be undone.",
+        confirm: "Delete",
+        danger: true,
+    };
+    notes.ask(
+        question,
+        () => notes.toast("Profile deleted", Tone::Danger),
+        () => notes.toast("Nothing was deleted", Tone::Neutral)
+    );
+}
+
+/** A plain confirmation. */
+fn askPublish(notes : Shared<Notifier>) : void {
+    let question = DialogProps {
+        title: "Publish the changes?",
+        message: "Everyone with the link will see the new version.",
+        confirm: "Publish",
+    };
+    notes.ask(
+        question,
+        () => notes.toast("Published", Tone::Ok),
+        () => notes.toast("Kept as a draft", Tone::Info)
+    );
+}
+
+/** The form a sheet holds. */
+fn profileForm(name : Shared<Model<string>>, bio : Shared<Model<string>>, notifications : Shared<Model<bool>>) : dyn Widget {
+    let kids : dyn Widget[] = [
+        new FormField(
+            FieldLabel { label: "Full name", required: true },
+            new TextField(FieldProps { width: Length::Fill }, name)
+        ),
+        new FormField(
+            FieldLabel { label: "About you" },
+            new Textarea(TextareaProps { rows: 5, width: Length::Fill }, bio)
+        ),
+        new Switch("Email me about replies", notifications),
+        note("Close with the cross, Escape, or a click on the dimmed page."),
+    ];
+    return new Column(FlexProps { gap: 16.0, align: Align::Stretch }, kids);
+}
+
+/** The commands of the palette. */
+fn commands() : MenuEntry[] {
+    let entries : MenuEntry[] = [
+        MenuEntry { label: "New project", icon: IconKind::Plus, shortcut: "Ctrl N" },
+        MenuEntry { label: "Open file", icon: IconKind::Folder, shortcut: "Ctrl O" },
+        MenuEntry { label: "Search everywhere", icon: IconKind::Search, shortcut: "Ctrl K" },
+        MenuEntry { label: "Toggle dark mode", icon: IconKind::Moon },
+        MenuEntry { label: "Settings", icon: IconKind::Settings, shortcut: "Ctrl ," },
+        MenuEntry { label: "Delete everything", icon: IconKind::Trash, danger: true },
+    ];
+    return entries;
+}
+
+/** Open a sheet on `side`, holding the profile form. */
+fn showSheet(
+    notes : Shared<Notifier>,
+    name : Shared<Model<string>>,
+    bio : Shared<Model<string>>,
+    notifications : Shared<Model<bool>>,
+    side : SheetSide
+) : void {
+    notes.openSheet(
+        SheetProps {
+            title: "Edit profile",
+            side: side,
+        },
+        () => profileForm(name, bio, notifications)
+    );
+}
+
+/** The dialogs. */
+fn dialogs(demo : Demo) : Row {
+    let notes = demo.notes;
+    let publish = notes;
+    let kids : dyn Widget[] = [
+        new Button(ButtonProps { label: "Confirm", kind: ButtonKind::Primary }, () => askPublish(publish)),
+        new Button(ButtonProps { label: "Delete…", kind: ButtonKind::Danger }, () => askDelete(notes)),
+    ];
+    return lineup(kids);
+}
+
+/** The sheets. */
+fn sheets(demo : Demo) : Row {
+    let notes = demo.notes;
+    let name = demo.name;
+    let bio = demo.bio;
+    let notifications = demo.notifications;
+    let modal = new Button(
+        ButtonProps { label: "Modal", kind: ButtonKind::Outline },
+        () => showSheet(notes, name, bio, notifications, SheetSide::Center)
+    );
+    let right = new Button(
+        ButtonProps { label: "Drawer from the right", kind: ButtonKind::Outline },
+        () => showSheet(notes, name, bio, notifications, SheetSide::Right)
+    );
+    let left = new Button(
+        ButtonProps { label: "Drawer from the left", kind: ButtonKind::Outline },
+        () => showSheet(notes, name, bio, notifications, SheetSide::Left)
+    );
+    let kids : dyn Widget[] = [modal, right, left];
+    return lineup(kids);
+}
+
+/** The palette. */
+fn palette(demo : Demo) : Row {
+    let notes = demo.notes;
+    let open = new Button(
+        ButtonProps {
+            label: "Open the command palette",
+            icon: IconKind::Search,
+        },
+        () => notes.openCommands(commands(), (i : i32) => notes.toast("Ran a command", Tone::Ok))
+    );
+    let kids : dyn Widget[] = [open, new Kbd("Ctrl K")];
+    return lineup(kids);
+}
+
+/** The page. */
+pub fn overlaysPage(demo : Demo) : Column {
+    let upper : dyn Widget[] = [
+        half("Dialogs", "A question with two answers; Enter confirms, Escape cancels.", dialogs(demo)),
+        half("Sheets", "A modal or a drawer holding the program's own content.", sheets(demo)),
+    ];
+    let rows : dyn Widget[] = [
+        side(upper),
+        section("Command palette", "Type to filter, arrows to move, Enter to run.", palette(demo)),
+    ];
+    return pageOf(rows);
+}
