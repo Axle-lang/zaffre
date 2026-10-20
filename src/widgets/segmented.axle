@@ -52,6 +52,7 @@ pub class Segmented : Control, Widget {
 
     /** A control over `options`, reading and writing `model` (the chosen index). */
     constructor(options : string[], model : Shared<Model<i32>>) {
+        super();
         self.options = options;
         self.count = options.length as i32;
         self.props = SegmentedProps { };
@@ -61,6 +62,7 @@ pub class Segmented : Control, Widget {
 
     /** A control set as `props` say, over `options`. */
     constructor(own props : SegmentedProps, options : string[], model : Shared<Model<i32>>) {
+        super();
         self.options = options;
         self.count = options.length as i32;
         self.props = props;
@@ -70,6 +72,7 @@ pub class Segmented : Control, Widget {
 
     /** A control that also tells `onChange` when the user picks an option. */
     constructor(own props : SegmentedProps, options : string[], model : Shared<Model<i32>>, onChange : (i32) => void) {
+        super();
         self.options = options;
         self.count = options.length as i32;
         self.props = props;
@@ -177,8 +180,8 @@ pub class Segmented : Control, Widget {
         let slot : Bounds = Bounds::make(a.x + 4.0 + cell * self.thumb.value, a.y + 4.0, cell, a.h - 8.0);
         let tr : RRect = slot.round(st.radius);
         p.shadow(tr, 0.0, 1.0, 4.0, 0.0, pal.shadow.faded(70));
-        p.fillRound(tr, Brush::solid(pal.raised.rgb, pal.raised.a));
-        p.strokeRound(tr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        p.fillRound(tr, Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+        p.strokeRound(tr, 1.0, Brush::solid(pal.softPrimary.line.rgb, pal.softPrimary.line.a));
         for (i of 0..self.count) {
             let label : string = self.options[i as i64];
             let w : f64 = ctx.textWidth(FaceKind::Sans, label, st.px);
