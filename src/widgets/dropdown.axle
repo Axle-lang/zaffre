@@ -117,7 +117,7 @@ pub class ActionMenu : Base, Widget {
     pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
         self.area = area;
         let mut widest : f64 = MENU_MIN;
-        let mut h : f64 = 2.0 * MENU_PAD;
+        let mut h : f64 = MENU_PAD;
         for (i of 0..self.count) {
             let entry : MenuEntry = self.entries[i as i64];
             self.tops[i as i64] = h;
@@ -147,6 +147,7 @@ pub class ActionMenu : Base, Widget {
         }
         x = Mathx::clampF(x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - widest));
         self.sheet = Bounds::make(x, y, widest, h);
+        h = h + MENU_PAD;
     }
 
     pub fn covers(self, x : f64, y : f64) : bool {
