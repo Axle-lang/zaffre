@@ -146,6 +146,31 @@ def layer_of(parts):
     return LAYERS.index(parts[0]) if parts and parts[0] in LAYERS else None
 
 
+_DEFAULT_NEEDS = {}
+
+
+def default_needs(idx):
+    """struct name -> (defining file, type names its field defaults mention).
+
+    A struct literal that leaves fields out is completed with the defaults, and the compiler resolves
+    those default expressions in the module that WRITES the literal, so that module must import every
+    type a default names (E0017 `Justify` in flex.axle:44, reported once per use)."""
+    if idx.src in _DEFAULT_NEEDS:
+        return _DEFAULT_NEEDS[idx.src]
+    out = {}
+    for f in files_under(idx.src):
+        text = code_of(f)
+        for m in re.finditer(r"pub struct (\w+) \{(.*?)\n\}", text, re.S):
+            names = set()
+            for d in re.finditer(r":\s*[^=;]+=\s*([^;]+);", m.group(2)):
+                names |= set(re.findall(r"\b([A-Z]\w*)::", d.group(1)))
+                names |= set(re.findall(r"\b([A-Z]\w*)\s*\{", d.group(1)))
+            if names:
+                out[m.group(1)] = (f, names)
+    _DEFAULT_NEEDS[idx.src] = out
+    return out
+
+
 def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
     text = code_of(path)
     rel = os.path.relpath(path, rel_root)
@@ -210,6 +235,26 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
             a, b = layer_of(mod), layer_of(target)
             if a is not None and b is not None and b > a:
                 err("layer violation: %s (%s) imports %s (%s)" % ("::".join(mod), LAYERS[a], "::".join(target), LAYERS[b]))
+
+    # --- defaults ----------------------------------------------------------------
+    imported = set()
+    # Inside the library the defaults resolve where the struct is declared; a program using the
+    # library as a dependency resolves them in its own module, so only examples/ is held to this.
+    for m in re.finditer(r"^\s*use\s+[^;]*;", text, re.M | re.S) if not in_src else []:
+        for w in re.findall(r"\b(\w+)\b(?:\s+as\s+(\w+))?", m.group(0)):
+            imported.add(w[0])
+            if w[1]:
+                imported.add(w[1])
+    for sname, (sfile, names) in (default_needs(idx).items() if not in_src else []):
+        if os.path.abspath(sfile) == os.path.abspath(path):
+            continue
+        for m in re.finditer(r"\b%s\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}" % sname, text):
+            if ".." in m.group(1):
+                continue
+            for n in sorted(names):
+                if n not in imported:
+                    err("`%s { … }` leaves fields to their defaults, which name `%s`: import it here" % (sname, n))
+            break
 
     # --- syntax ------------------------------------------------------------------
     for m in re.finditer(r"\bfn\s+(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|string|void)\s*\(", text):

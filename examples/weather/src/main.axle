@@ -12,6 +12,8 @@ use zaffre::{
     View, Theme, Fonts, App, AppDesc, Model,
     Column, Row, Panel, Label, Switch, Segmented, Select, Scroll, Spacer,
     Widget, FlexProps, PanelProps, SelectProps, ScrollProps, Insets, Align, Length, Elevation, TextRole,
+    // Named by the defaults of the props above, which this module completes.
+    ControlSize, Justify,
 };
 use state::Weather;
 use cards::{DayTitle, NowCard, WindCard};

@@ -4,6 +4,8 @@ use zaffre::{
     Model, Column, Row, Panel, Label, Badge, BadgeProps, ProgressBar, Spinner, Divider,
     Widget, FlexProps, PanelProps, LabelProps,
     TextRole, ControlSize, Tone, BadgeLook, BadgeSize, Elevation, Align,
+    // Named by the defaults of the props above, which this module completes.
+    Insets, Justify, Length,
 };
 
 /** One badge in `look`. */

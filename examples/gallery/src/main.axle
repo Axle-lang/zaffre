@@ -11,6 +11,8 @@
 use zaffre::{
     View, Theme, Fonts, App, AppDesc, Model, Notifier, Notifications,
     Column, Row, Widget, FlexProps, Insets, Align,
+    // Named by the defaults of the props above, which this module completes.
+    Justify, Length,
 };
 use header::titleBar;
 use controls::controlsCard;
