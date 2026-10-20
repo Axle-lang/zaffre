@@ -1,0 +1,514 @@
+// combobox — a select with a search box, and a select that keeps many choices as chips.
+//
+//     let country : Shared<Model<i32>> = new shared Model<i32>(-1);
+//     new Combobox(ComboboxProps { placeholder: "Country" }, countries, country)
+//
+//     let skills : Shared<Model<i32>> = new shared Model<i32>(0);
+//     new MultiSelect(ComboboxProps { placeholder: "Skills" }, names, skills)
+//
+// Both open the same panel under the field: a search box over the list of options, filtered as you
+// type (case aside), moved with Up and Down, chosen with Enter or a click. A `Combobox` holds the
+// index of its choice (-1 for none) and closes when one is picked. A `MultiSelect` holds the set of
+// its choices as a bit mask, shows them as chips with a cross, keeps the panel open while the user
+// ticks, and turns the rest into a "+3" when the chips do not fit.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::styles::FieldStyle;
+use crate::style::variants::{ControlSize, Elevation};
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::field::{TextField, FieldProps};
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
+
+/** How a combobox or a multi-select looks. */
+pub struct ComboboxProps {
+    /** What it says while nothing is chosen. */
+    pub placeholder : string = "Select…";
+
+    /** What the search box says while it is empty. */
+    pub search : string = "Search…";
+
+    /** How large the field is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The field's width: by default 260 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+}
+
+/** Height of the search row. */
+const OPT_HEAD : f64 = 52.0;
+
+/** Height of an option. */
+const OPT_ROW : f64 = 36.0;
+
+/** The most options shown at once. */
+const OPT_ROWS : i32 = 7;
+
+/** The panel that lists the options. */
+pub class OptionPanel : Base, Widget {
+    anchor : Bounds;
+    options : string[];
+    count : i32;
+    model : Shared<Model<i32>>;
+    multiple : bool;
+    isOpen : Shared<Model<bool>>;
+    query : Shared<Model<string>>;
+    field : TextField;
+    shown : i32[];
+    shownCount : i32 = 0;
+    seen : string = "";
+    fresh : bool = true;
+    hot : i32 = 0;
+    focused : bool = false;
+    openT : Eased = Eased::at(0.0);
+    closing : bool = false;
+    finished : bool = false;
+    sheet : Bounds = Bounds::zero();
+    above : bool = false;
+
+    /** A panel of `options` under `anchor`; `multiple` makes `model` a set (a bit mask) rather than an index. */
+    constructor(anchor : Bounds, options : string[], model : Shared<Model<i32>>, multiple : bool, search : string, isOpen : Shared<Model<bool>>) {
+        self.anchor = anchor;
+        self.count = options.length as i32;
+        self.options = malloc<string>(self.count as i64);
+        for (i of 0..self.count) {
+            self.options[i as i64] = options[i as i64];
+        }
+        self.shown = malloc<i32>(self.count as i64);
+        self.model = model;
+        self.multiple = multiple;
+        self.isOpen = isOpen;
+        let q : Shared<Model<string>> = new shared Model<string>("");
+        self.query = q;
+        self.field = new TextField(FieldProps { placeholder: search, icon: IconKind::Search, width: Length::Fill }, q);
+    }
+
+    pub fn close(mut self, ctx : Context) : void {
+        self.closing = true;
+        self.isOpen.set(false);
+        ctx.invalidate();
+    }
+
+    pub fn covers(self, x : f64, y : f64) : bool {
+        return !self.finished && self.sheet.contains(x, y);
+    }
+
+    pub fn done(self) : bool {
+        return self.finished;
+    }
+
+    /** Keep the options whose text holds the query. */
+    pub(file) fn refilter(mut self) : void {
+        let q : string = self.query.get();
+        if (!self.fresh && q == self.seen) {
+            return;
+        }
+        self.fresh = false;
+        self.seen = q;
+        self.shownCount = 0;
+        for (i of 0..self.count) {
+            if (Strings::holds(self.options[i as i64], q)) {
+                self.shown[self.shownCount as i64] = i;
+                self.shownCount = self.shownCount + 1;
+            }
+        }
+        self.hot = 0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return Size { w: limits.maxW, h: limits.maxH };
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.refilter();
+        let rows : i32 = Mathx::clampI(self.shownCount, 1, OPT_ROWS);
+        let h : f64 = OPT_HEAD + OPT_ROW * (rows as f64) + 10.0;
+        let w : f64 = Mathx::fmax(self.anchor.w, 220.0);
+        let mut y : f64 = self.anchor.bottom() + 6.0;
+        self.above = false;
+        if (y + h > area.bottom() - 8.0 && self.anchor.y - 6.0 - h >= area.y + 8.0) {
+            y = self.anchor.y - 6.0 - h;
+            self.above = true;
+        }
+        let x : f64 = Mathx::clampF(self.anchor.x, area.x + 8.0, Mathx::fmax(area.x + 8.0, area.right() - 8.0 - w));
+        self.sheet = Bounds::make(x, y, w, h);
+        self.field.measure(ctx, Limits::tight(w - 16.0, 36.0));
+        self.field.arrange(ctx, Bounds::make(x + 8.0, y + 8.0, w - 16.0, 36.0));
+        if (!self.focused) {
+            self.focused = true;
+            ctx.setFocus(self.field.token, false);
+        }
+    }
+
+    /** The visible option under (`x`, `y`), or -1. */
+    pub(file) fn rowAt(self, x : f64, y : f64) : i32 {
+        if (!self.sheet.contains(x, y)) {
+            return -1;
+        }
+        let i : i32 = Mathx::floorI((y - self.sheet.y - OPT_HEAD) / OPT_ROW);
+        if (i < 0 || i >= self.shownCount || i >= OPT_ROWS) {
+            return -1;
+        }
+        return i;
+    }
+
+    /** Choose the option shown at row `i`. */
+    pub(file) fn choose(mut self, ctx : Context, i : i32) : void {
+        if (i < 0 || i >= self.shownCount) {
+            return;
+        }
+        let at : i32 = self.shown[i as i64];
+        if (self.multiple) {
+            self.model.set(self.model.get() ^ (1 << at));
+            ctx.invalidate();
+            return;
+        }
+        self.model.set(at);
+        self.close(ctx);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (self.closing || self.finished) {
+            return false;
+        }
+        let covered : bool = ctx.blocked;
+        ctx.blocked = false;
+        if (e.kind == EventKind::PointerMove) {
+            let r : i32 = self.rowAt(e.x, e.y);
+            if (r >= 0 && r != self.hot) {
+                self.hot = r;
+                ctx.invalidate();
+            }
+            if (r >= 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0) {
+            if (!self.sheet.contains(e.x, e.y)) {
+                self.close(ctx);
+                ctx.blocked = covered;
+                return true;
+            }
+            let r : i32 = self.rowAt(e.x, e.y);
+            if (r >= 0) {
+                self.choose(ctx, r);
+                ctx.blocked = covered;
+                return true;
+            }
+        }
+        if (e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Escape) {
+                self.close(ctx);
+                ctx.blocked = covered;
+                return true;
+            }
+            if (e.key == Key::Down) {
+                self.hot = Mathx::clampI(self.hot + 1, 0, Mathx::clampI(self.shownCount - 1, 0, OPT_ROWS - 1));
+                ctx.invalidate();
+                ctx.blocked = covered;
+                return true;
+            }
+            if (e.key == Key::Up) {
+                self.hot = Mathx::clampI(self.hot - 1, 0, OPT_ROWS - 1);
+                ctx.invalidate();
+                ctx.blocked = covered;
+                return true;
+            }
+            if (e.key == Key::Enter) {
+                self.choose(ctx, self.hot);
+                ctx.blocked = covered;
+                return true;
+            }
+        }
+        let used : bool = self.field.event(ctx, e);
+        ctx.blocked = covered;
+        return used || self.sheet.contains(e.x, e.y);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let moving : bool = self.field.tick(ctx, dt);
+        let mut t : f64 = 1.0;
+        if (self.closing) {
+            t = 0.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::OPEN * 1.5);
+        if (self.closing && self.openT.settled()) {
+            self.finished = true;
+            ctx.invalidate();
+            return false;
+        }
+        return moving || !self.openT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        if (self.finished) {
+            return;
+        }
+        let pal = ctx.theme.palette;
+        let k : f64 = Mathx::smooth(self.openT.value);
+        let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
+        let b : Bounds = self.sheet.moved(0.0, (1.0 - k) * (self.above ? 6.0 : -6.0));
+        Surfaces::draw(p, b.round(ctx.theme.metrics.radiusSurface), b, ctx.theme.panel(Elevation::Overlay));
+        self.field.paint(ctx, p);
+        p.line(b.x, b.y + OPT_HEAD - 0.5, b.right(), b.y + OPT_HEAD - 0.5, 1.0, pal.line);
+        if (self.shownCount == 0) {
+            let w : f64 = ctx.textWidth(FaceKind::Sans, "No matches", 13.0);
+            p.text(FaceKind::Sans, "No matches", b.midX() - w * 0.5, ctx.baselineIn(FaceKind::Sans, 13.0, b.y + OPT_HEAD, OPT_ROW), 13.0, pal.textFaint);
+        }
+        let current : i32 = self.model.get();
+        for (i of 0..Mathx::clampI(self.shownCount, 0, OPT_ROWS)) {
+            let at : i32 = self.shown[i as i64];
+            let row : Bounds = Bounds::make(b.x + 6.0, b.y + OPT_HEAD + 4.0 + OPT_ROW * (i as f64), b.w - 12.0, OPT_ROW);
+            let on : bool = self.multiple ? ((current >> at) & 1) == 1 : current == at;
+            if (i == self.hot) {
+                p.fillRound(row.round(ctx.theme.metrics.radiusInline), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            let mut ink : Tint = pal.textDim;
+            if (i == self.hot || on) {
+                ink = pal.text;
+            }
+            p.text(on ? FaceKind::Bold : FaceKind::Sans, self.options[at as i64], row.x + 10.0, ctx.baselineIn(FaceKind::Sans, 14.0, row.y, row.h), 14.0, ink);
+            if (on) {
+                Icons::draw(p, IconKind::Check, row.right() - 28.0, row.midY() - 8.0, 16.0, pal.accentTop);
+            }
+        }
+        p.setOpacity(prev);
+    }
+}
+
+/** What a combobox and a multi-select share: the field that opens the panel. */
+pub class Dropper : Control {
+    pub(derived) props : ComboboxProps;
+    pub(derived) options : string[];
+    pub(derived) model : Shared<Model<i32>>;
+    pub(derived) isOpen : Shared<Model<bool>>;
+    pub(derived) openT : Eased = Eased::at(0.0);
+
+    /** A field over `options` reading and writing `model`. */
+    constructor(own props : ComboboxProps, options : string[], model : Shared<Model<i32>>) {
+        super();
+        self.props = props;
+        self.options = options;
+        self.model = model;
+        self.isOpen = new shared Model<bool>(false);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 260.0), h: self.fieldHeight(st) });
+    }
+
+    /** The field's height. */
+    pub(derived) fn fieldHeight(self, st : FieldStyle) : f64 {
+        return st.height;
+    }
+
+    /** Open the panel under the field. */
+    pub(derived) fn openPanel(mut self, ctx : Context, multiple : bool) : void {
+        if (self.isOpen.get() || self.props.disabled) {
+            return;
+        }
+        self.isOpen.set(true);
+        let ok : bool = ctx.openOverlay(new OptionPanel(self.area, self.options, self.model, multiple, self.props.search, self.isOpen));
+        if (!ok) {
+            self.isOpen.set(false);
+        }
+    }
+
+    /** Draw the box of the field: fill, outline, halo while open or focused. */
+    pub(derived) fn paintBox(mut self, ctx : Context, p : Painter, st : FieldStyle) : void {
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        let act : i32 = Mathx::roundI(Mathx::fmax(self.openT.value, self.focusT.value) * 255.0);
+        p.fillRound(rr, Brush::solid(ctx.theme.palette.surface.rgb, ctx.theme.palette.surface.a));
+        let mut focusEdge : Tint = st.borderFocus;
+        let mut rest : Tint = st.border.mixed(st.borderHover, self.hoverT.alpha());
+        let mut halo : Tint = st.ring;
+        if (ctx.invalid) {
+            focusEdge = st.borderInvalid;
+            rest = st.borderInvalid;
+            halo = st.ringInvalid;
+        }
+        let edge : Tint = rest.mixed(focusEdge, act);
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (act > 0) {
+            let ring : Tint = halo.faded(act);
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+        }
+        let mut chevron : IconKind = IconKind::ChevronDown;
+        if (self.openT.value > 0.5) {
+            chevron = IconKind::ChevronUp;
+        }
+        Icons::draw(p, chevron, a.right() - st.padX - 16.0, a.midY() - 8.0, 16.0, ctx.theme.palette.textFaint);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 0.0;
+        if (self.isOpen.get()) {
+            t = 1.0;
+        }
+        self.openT = self.openT.toward(t).step(dt, Rate::HOVER);
+        let moving : bool = self.animate(ctx, dt);
+        return moving || !self.openT.settled();
+    }
+}
+
+/** A select with a search box. */
+pub class Combobox : Dropper, Widget {
+    /** A combobox over `options`, its choice held in `model` (-1 for none). */
+    constructor(own props : ComboboxProps, options : string[], model : Shared<Model<i32>>) {
+        super(props, options, model);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click) {
+            self.openPanel(ctx, false);
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            if (e.key == Key::Enter || e.key == Key::Space || e.key == Key::Down) {
+                self.openPanel(ctx, false);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        self.paintBox(ctx, p, st);
+        let i : i32 = self.model.get();
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h);
+        let room : f64 = a.w - 2.0 * st.padX - 24.0;
+        if (i >= 0 && i < (self.options.length as i32)) {
+            p.textElided(FaceKind::Sans, self.options[i as i64], a.x + st.padX, base, st.px, room, st.text);
+        } else {
+            p.textElided(FaceKind::Sans, self.props.placeholder, a.x + st.padX, base, st.px, room, st.placeholder);
+        }
+    }
+}
+
+/** A select that keeps several choices, shown as chips. */
+pub class MultiSelect : Dropper, Widget {
+    /** A multi-select over `options`, its choices held in `model` as a bit mask. */
+    constructor(own props : ComboboxProps, options : string[], model : Shared<Model<i32>>) {
+        super(props, options, model);
+    }
+
+    /** The width of a chip for option `i`. */
+    pub(file) fn chipWidth(self, ctx : Context, i : i32) : f64 {
+        return ctx.textWidth(FaceKind::Bold, self.options[i as i64], 12.0) + 34.0;
+    }
+
+    /** The index of the chip whose cross is under `x`, or -1. */
+    pub(file) fn crossAt(self, ctx : Context, st : FieldStyle, x : f64) : i32 {
+        let mask : i32 = self.model.get();
+        let mut left : f64 = self.area.x + 8.0;
+        for (i of 0..(self.options.length as i32)) {
+            if (((mask >> i) & 1) == 0) {
+                continue;
+            }
+            let w : f64 = self.chipWidth(ctx, i);
+            if (left + w > self.area.right() - 48.0) {
+                return -1;
+            }
+            if (x >= left + w - 22.0 && x < left + w) {
+                return i;
+            }
+            left = left + w + 6.0;
+        }
+        return -1;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click) {
+            let cross : i32 = self.crossAt(ctx, st, e.x);
+            if (cross >= 0) {
+                self.model.set(self.model.get() & ~(1 << cross));
+                ctx.invalidate();
+                return true;
+            }
+            self.openPanel(ctx, true);
+            return true;
+        }
+        if (g == Gesture::Press) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            if (e.key == Key::Enter || e.key == Key::Space || e.key == Key::Down) {
+                self.openPanel(ctx, true);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        self.paintBox(ctx, p, st);
+        let mask : i32 = self.model.get();
+        let n : i32 = self.options.length as i32;
+        let mut chosen : i32 = 0;
+        for (i of 0..n) {
+            chosen = chosen + (((mask >> i) & 1) == 1 ? 1 : 0);
+        }
+        if (chosen == 0) {
+            p.text(FaceKind::Sans, self.props.placeholder, a.x + st.padX, ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h), st.px, st.placeholder);
+            return;
+        }
+        let soft = pal.softPrimary;
+        let mut left : f64 = a.x + 8.0;
+        let mut shown : i32 = 0;
+        for (i of 0..n) {
+            if (((mask >> i) & 1) == 0) {
+                continue;
+            }
+            let w : f64 = self.chipWidth(ctx, i);
+            if (left + w > a.right() - 48.0 && shown < chosen) {
+                break;
+            }
+            let chip : Bounds = Bounds::make(left, a.midY() - 12.0, w, 24.0);
+            p.fillRound(chip.round(ctx.theme.metrics.radiusInline), Brush::solid(soft.fill.rgb, soft.fill.a));
+            p.text(FaceKind::Bold, self.options[i as i64], chip.x + 10.0, ctx.baselineIn(FaceKind::Bold, 12.0, chip.y, chip.h), 12.0, soft.fg);
+            Icons::draw(p, IconKind::Close, chip.right() - 20.0, chip.midY() - 7.0, 14.0, soft.fg);
+            left = left + w + 6.0;
+            shown = shown + 1;
+        }
+        if (shown < chosen) {
+            let more : string = "+" + Format::whole((chosen - shown) as f64);
+            p.text(FaceKind::Bold, more, left + 4.0, ctx.baselineIn(FaceKind::Bold, 12.0, a.y, a.h), 12.0, pal.textDim);
+        }
+    }
+}

@@ -110,6 +110,10 @@ pub class PopoverSheet : Base, Widget {
     pub fn tick(mut self, ctx : Context, dt : f64) : bool {
         let c : dyn Widget = self.kid[0];
         let moving : bool = c.tick(ctx, dt);
+        // The content (a calendar that took a pick) can close the panel by clearing the flag.
+        if (!self.closing && !self.isOpen.get()) {
+            self.closing = true;
+        }
         let mut t : f64 = 1.0;
         if (self.closing) {
             t = 0.0;
@@ -151,6 +155,14 @@ pub class Popover : Base, Widget {
         self.kid[0] = trigger;
         self.content = content;
         self.isOpen = new shared Model<bool>(false);
+    }
+
+    /** As above, with the open flag in the program's hands: content that clears it closes the panel. */
+    constructor(own trigger : dyn Widget, content : () => dyn Widget, isOpen : Shared<Model<bool>>) {
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = trigger;
+        self.content = content;
+        self.isOpen = isOpen;
     }
 
     /** Open the panel with its right edge under the trigger's. */

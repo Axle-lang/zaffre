@@ -1,0 +1,154 @@
+// otp — a code typed one character per box: a six-digit sign-in code, an invitation key.
+//
+//     let code : Shared<Model<string>> = new shared Model<string>("");
+//     new InputOTP(OtpProps { cells: 6 }, code)
+//
+// The model holds what has been typed so far. Typing fills the next box; Backspace empties the last
+// filled one; pasting a code fills as many boxes as it has characters. With `digits` only 0 to 9
+// are accepted. The box that will take the next character is outlined with the focus colour.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** How a one-time-code input looks and behaves. */
+pub struct OtpProps {
+    /** How many characters the code has. */
+    pub cells : i32 = 6;
+
+    /** Whether only digits are accepted. */
+    pub digits : bool = true;
+
+    /** How large the boxes are. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether the code is wrong: red outlines. */
+    pub invalid : bool = false;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+}
+
+/** Space between boxes. */
+const OTP_GAP : f64 = 8.0;
+
+/** A code in separate boxes. */
+pub class InputOTP : Control, Widget {
+    props : OtpProps;
+    model : Shared<Model<string>>;
+
+    /** An input reading and writing `model`. */
+    constructor(own props : OtpProps, model : Shared<Model<string>>) {
+        super();
+        self.props = props;
+        self.model = model;
+    }
+
+    /** The side of a box. */
+    pub(file) fn side(self, ctx : Context) : f64 {
+        return ctx.theme.heightOf(self.props.size);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let n : f64 = self.props.cells as f64;
+        return limits.constrain(Size { w: n * self.side(ctx) + (n - 1.0) * OTP_GAP, h: self.side(ctx) });
+    }
+
+    /** Append `text` as far as the code has room, keeping only what is allowed. */
+    pub(file) fn append(mut self, ctx : Context, text : string) : void {
+        let mut code : string = self.model.get();
+        let mut i : i64 = 0;
+        while (i < text.byteLength && (code.byteLength as i32) < self.props.cells) {
+            let c : i32 = text.byteAt(i);
+            let digit : bool = c >= 48 && c <= 57;
+            if (digit || (!self.props.digits && c > 32 && c < 127)) {
+                code = code + Strings::ofCp(c);
+            }
+            i = i + 1;
+        }
+        self.model.set(code);
+        ctx.invalidate();
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            ctx.wantCursor(Cursor::Beam);
+        }
+        if (g == Gesture::Press || g == Gesture::Click) {
+            return true;
+        }
+        if (!self.isFocused(ctx) || !self.enabled) {
+            return false;
+        }
+        if (e.kind == EventKind::Text) {
+            self.append(ctx, Strings::ofCp(e.cp));
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Backspace) {
+                let code : string = self.model.get();
+                if (code.byteLength > 0) {
+                    self.model.set(Strings::slice(code, 0, code.byteLength - 1));
+                    ctx.invalidate();
+                }
+                return true;
+            }
+            if (e.ctrl() && e.key == Key::V) {
+                self.append(ctx, ctx.clip);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        if (self.isFocused(ctx)) {
+            ctx.wakeIn(0.5);
+        }
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let st = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        let side : f64 = self.side(ctx);
+        let code : string = self.model.get();
+        let typed : i32 = code.byteLength as i32;
+        let focused : bool = self.isFocused(ctx);
+        for (i of 0..self.props.cells) {
+            let box : Bounds = Bounds::make(a.x + (side + OTP_GAP) * (i as f64), a.y, side, side);
+            let rr : RRect = box.round(st.radius);
+            p.fillRound(rr, Brush::solid(pal.surface.rgb, pal.surface.a));
+            let next : bool = focused && (i == typed || (typed == self.props.cells && i == typed - 1));
+            let mut edge : Tint = st.border.mixed(st.borderHover, self.hoverT.alpha());
+            if (self.props.invalid) {
+                edge = st.borderInvalid;
+            }
+            if (next) {
+                edge = self.props.invalid ? st.borderInvalid : st.borderFocus;
+                let halo : Tint = self.props.invalid ? st.ringInvalid : st.ring;
+                p.strokeRound(box.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(halo.rgb, halo.a));
+            }
+            p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+            if (i < typed) {
+                let c : string = Strings::slice(code, i as i64, (i + 1) as i64);
+                let w : f64 = ctx.textWidth(FaceKind::Bold, c, 18.0);
+                p.text(FaceKind::Bold, c, box.midX() - w * 0.5, ctx.baselineIn(FaceKind::Bold, 18.0, box.y, box.h), 18.0, pal.text);
+            } else if (next && ((ctx.now * 2.0).floorToInt() % 2 == 0)) {
+                p.fillRound(RRect::uniform(box.midX() - 0.75, box.midY() - 9.0, 1.5, 18.0, 0.75), Brush::solid(st.caret.rgb, st.caret.a));
+            }
+        }
+    }
+}

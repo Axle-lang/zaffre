@@ -1,0 +1,493 @@
+// code — code on a page: a block with line numbers and a copy button, the dark window around one,
+// a command to copy, and the inline marks that belong to prose.
+//
+//     new CodeBlock(CodeProps { numbers: true, language: "axle" }, source)
+//     new CodeWindow("main.axle", source)
+//     new CopyCommand("axle add zaffre")
+//
+// Highlighting is done here, per line, by a small scanner: comments, strings, numbers, keywords,
+// calls and punctuation, each in its own colour. It knows the keywords of Axle and the words C-like
+// languages share, which is enough to make most code on a page read well; it is not a parser. The
+// copy button appears when the pointer is over the block and puts the whole text on the clipboard.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a code block looks. */
+pub struct CodeProps {
+    /** Whether a gutter numbers the lines. */
+    pub numbers : bool = false;
+
+    /** The language's name, written small at the top right; none when empty. */
+    pub language : string = "";
+
+    /** The block's width: its text's, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Fill;
+
+    /** Whether the block draws its own surface and outline (a window around it draws them itself). */
+    pub framed : bool = true;
+}
+
+/** Height of a line of code. */
+const CODE_LINE : f64 = 22.0;
+
+/** Space around the code. */
+const CODE_PAD : f64 = 16.0;
+
+/** Text size of code. */
+const CODE_PX : f64 = 13.0;
+
+/** How long "Copied" shows, in seconds. */
+const COPIED_FOR : f64 = 1.6;
+
+/** The word lists and colours the scanner uses. */
+pub class Syntax {
+    /** Whether `word` is a keyword or a built-in type. */
+    pub static fn isKeyword(word : string) : bool {
+        let words : string[] = [
+            "let", "mut", "fn", "pub", "class", "struct", "enum", "trait", "impl", "static", "const", "match",
+            "if", "else", "for", "while", "return", "new", "shared", "use", "own", "self", "super", "as", "true",
+            "false", "in", "of", "break", "continue", "try", "catch", "throw", "constructor", "dyn", "void",
+            "string", "bool", "i32", "i64", "u8", "u32", "f32", "f64", "import", "export", "function", "var",
+            "int", "float", "null",
+        ];
+        for (i of 0..(words.length as i32)) {
+            if (words[i as i64] == word) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The colour of token class `k`: 0 plain, 1 keyword, 2 string, 3 number, 4 comment, 5 call, 6 punctuation. */
+    pub static fn color(ctx : Context, k : i32) : Tint {
+        let dark : bool = ctx.theme.isDark;
+        if (k == 1) {
+            return Tint::hex(dark ? 0xC4B5FD : 0x6D28D9);
+        }
+        if (k == 2) {
+            return Tint::hex(dark ? 0x86EFAC : 0x15803D);
+        }
+        if (k == 3) {
+            return Tint::hex(dark ? 0xFCD34D : 0xB45309);
+        }
+        if (k == 4) {
+            return Tint::hex(dark ? 0x6B7280 : 0x6B7280);
+        }
+        if (k == 5) {
+            return Tint::hex(dark ? 0x93C5FD : 0x1D4ED8);
+        }
+        if (k == 6) {
+            return Tint::hex(dark ? 0x9CA3AF : 0x6B7280);
+        }
+        return Tint::hex(dark ? 0xE5E7EB : 0x1F2937);
+    }
+
+    /** The fill of a code surface: near black in the dark theme, the raised grey in the light one. */
+    pub static fn background(ctx : Context) : Tint {
+        if (ctx.theme.isDark) {
+            return Tint::hex(0x030712);
+        }
+        return ctx.theme.palette.raised;
+    }
+
+    /** The outline of a code surface. */
+    pub static fn outline(ctx : Context) : Tint {
+        if (ctx.theme.isDark) {
+            return Tint::hexA(0xFFFFFF, 26);
+        }
+        return ctx.theme.palette.line;
+    }
+
+    /** Whether byte `c` can be part of a name. */
+    pub static fn isWord(c : i32) : bool {
+        return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95;
+    }
+
+    /** Draw bytes [`start`, `stop`) of `s` as highlighted code with the pen at `x`; `base` is the baseline. */
+    pub static fn line(ctx : Context, p : Painter, s : string, start : i32, stop : i32, x : f64, base : f64, px : f64, plain : bool) : void {
+        let mut pen : f64 = x;
+        let mut i : i32 = start;
+        while (i < stop) {
+            let c : i32 = s.byteAt(i as i64);
+            let mut j : i32 = i + 1;
+            let mut kind : i32 = 6;
+            if (c == 47 && i + 1 < stop && s.byteAt((i + 1) as i64) == 47) {
+                j = stop;
+                kind = 4;
+            } else if (c == 34 || c == 39) {
+                kind = 2;
+                while (j < stop) {
+                    let d : i32 = s.byteAt(j as i64);
+                    if (d == 92 && j + 1 < stop) {
+                        j = j + 2;
+                        continue;
+                    }
+                    j = j + 1;
+                    if (d == c) {
+                        break;
+                    }
+                }
+            } else if (c >= 48 && c <= 57) {
+                kind = 3;
+                while (j < stop && (Syntax::isWord(s.byteAt(j as i64)) || s.byteAt(j as i64) == 46)) {
+                    j = j + 1;
+                }
+            } else if (Syntax::isWord(c)) {
+                while (j < stop && Syntax::isWord(s.byteAt(j as i64))) {
+                    j = j + 1;
+                }
+                let word : string = Strings::slice(s, i as i64, j as i64);
+                kind = 0;
+                if (Syntax::isKeyword(word)) {
+                    kind = 1;
+                } else {
+                    let mut k : i32 = j;
+                    while (k < stop && s.byteAt(k as i64) == 32) {
+                        k = k + 1;
+                    }
+                    if (k < stop && s.byteAt(k as i64) == 40) {
+                        kind = 5;
+                    }
+                }
+            } else if (c == 32) {
+                while (j < stop && s.byteAt(j as i64) == 32) {
+                    j = j + 1;
+                }
+                kind = 0;
+            }
+            let ink : Tint = plain ? Syntax::color(ctx, 0) : Syntax::color(ctx, kind);
+            pen = p.textSpan(FaceKind::Mono, s, i, j, pen, base, px, ink);
+            i = j;
+        }
+    }
+}
+
+/** A block of code. */
+pub class CodeBlock : Control, Widget {
+    props : CodeProps;
+    code : string;
+    starts : i32[];
+    count : i32;
+    copiedAt : f64 = -100.0;
+
+    /** A block showing `code`, which may span lines. */
+    constructor(own props : CodeProps, code : string) {
+        super();
+        self.props = props;
+        self.code = code;
+        self.focusable = false;
+        let mut n : i32 = 1;
+        let mut i : i64 = 0;
+        while (i < code.byteLength) {
+            if (code.byteAt(i) == 10) {
+                n = n + 1;
+            }
+            i = i + 1;
+        }
+        self.count = n;
+        self.starts = malloc<i32>((n + 1) as i64);
+        let mut k : i32 = 0;
+        self.starts[0] = 0;
+        i = 0;
+        while (i < code.byteLength) {
+            if (code.byteAt(i) == 10) {
+                k = k + 1;
+                self.starts[k as i64] = (i + 1) as i32;
+            }
+            i = i + 1;
+        }
+        self.starts[n as i64] = (code.byteLength as i32) + 1;
+    }
+
+    /** The width of the line-number gutter. */
+    pub(file) fn gutter(self, ctx : Context) : f64 {
+        if (!self.props.numbers) {
+            return 0.0;
+        }
+        return ctx.textWidth(FaceKind::Mono, "00", CODE_PX) + 20.0 + (self.count >= 100 ? 8.0 : 0.0);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let h : f64 = 2.0 * CODE_PAD + CODE_LINE * (self.count as f64);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 480.0), h: h });
+    }
+
+    /** The box of the copy button. */
+    pub(file) fn copyBox(self) : Bounds {
+        return Bounds::make(self.area.right() - 44.0, self.area.y + 10.0, 32.0, 32.0);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered && self.copyBox().contains(e.x, e.y)) {
+            ctx.wantCursor(Cursor::Hand);
+        }
+        if (g == Gesture::Click && self.copyBox().contains(e.x, e.y)) {
+            ctx.clip = self.code;
+            self.copiedAt = ctx.now;
+            ctx.wakeIn(COPIED_FOR + 0.05);
+            ctx.invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusSurface;
+        if (self.props.framed) {
+            let fill : Tint = Syntax::background(ctx);
+            let edge : Tint = Syntax::outline(ctx);
+            p.fillRound(a.round(r), Brush::solid(fill.rgb, fill.a));
+            p.strokeRound(a.round(r), 1.0, Brush::solid(edge.rgb, edge.a));
+        }
+        let gut : f64 = self.gutter(ctx);
+        p.pushClip(a.x + 1.0, a.y + 1.0, a.w - 2.0, a.h - 2.0);
+        for (i of 0..self.count) {
+            let top : f64 = a.y + CODE_PAD + CODE_LINE * (i as f64);
+            let base : f64 = ctx.baselineIn(FaceKind::Mono, CODE_PX, top, CODE_LINE);
+            if (self.props.numbers) {
+                let n : string = Format::whole((i + 1) as f64);
+                let w : f64 = ctx.textWidth(FaceKind::Mono, n, CODE_PX);
+                p.text(FaceKind::Mono, n, a.x + CODE_PAD + gut - 14.0 - w, base, CODE_PX, pal.textOff);
+            }
+            let start : i32 = self.starts[i as i64];
+            let stop : i32 = self.starts[(i + 1) as i64] - 1;
+            Syntax::line(ctx, p, self.code, start, stop, a.x + CODE_PAD + gut, base, CODE_PX, false);
+        }
+        p.popClip();
+        // The language, and the copy button that shows under the pointer.
+        let copied : bool = ctx.now - self.copiedAt < COPIED_FOR;
+        let cb : Bounds = self.copyBox();
+        if (self.props.language.byteLength > 0 && !self.hovered && !copied) {
+            let w : f64 = ctx.textWidth(FaceKind::Mono, self.props.language, 11.0);
+            p.text(FaceKind::Mono, self.props.language, a.right() - 16.0 - w, ctx.baselineIn(FaceKind::Mono, 11.0, a.y + 10.0, 22.0), 11.0, pal.textOff);
+        }
+        if (self.hovered || copied) {
+            let over : bool = cb.contains(ctx.pointerX, ctx.pointerY);
+            let wash : Tint = pal.surface;
+            p.fillRound(cb.round(ctx.theme.metrics.radiusInline), Brush::solid(wash.rgb, wash.a));
+            p.strokeRound(cb.round(ctx.theme.metrics.radiusInline), 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+            if (copied) {
+                Icons::draw(p, IconKind::Check, cb.x + 8.0, cb.y + 8.0, 16.0, pal.success.s500);
+            } else {
+                Icons::draw(p, IconKind::Copy, cb.x + 8.0, cb.y + 8.0, 16.0, over ? pal.text : pal.textDim);
+            }
+        }
+    }
+}
+
+/** A code block in a dark window with a title bar. */
+pub class CodeWindow : Base, Widget {
+    title : string;
+    block : CodeBlock;
+    code : string;
+
+    /** A window titled `title` around `code`. */
+    constructor(title : string, code : string) {
+        self.title = title;
+        self.code = code;
+        self.block = new CodeBlock(CodeProps { numbers: true, framed: false }, code);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let s : Size = self.block.measure(ctx, limits);
+        return limits.constrain(Size { w: s.w, h: s.h + 40.0 });
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.block.arrange(ctx, Bounds::make(area.x, area.y + 40.0, area.w, area.h - 40.0));
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        return self.block.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.block.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusSurface;
+        let fill : Tint = Syntax::background(ctx);
+        let edge : Tint = Syntax::outline(ctx);
+        p.fillRound(a.round(r), Brush::solid(fill.rgb, fill.a));
+        // The bar: three lights and the file's name.
+        p.line(a.x + 20.0, a.y + 20.0, a.x + 20.0, a.y + 20.0, 11.0, Tint::hex(0xFF5F57));
+        p.line(a.x + 40.0, a.y + 20.0, a.x + 40.0, a.y + 20.0, 11.0, Tint::hex(0xFEBC2E));
+        p.line(a.x + 60.0, a.y + 20.0, a.x + 60.0, a.y + 20.0, 11.0, Tint::hex(0x28C840));
+        p.text(FaceKind::Mono, self.title, a.x + 84.0, ctx.baselineIn(FaceKind::Mono, 12.0, a.y, 40.0), 12.0, Tint::hexA(0xFFFFFF, 115));
+        p.line(a.x, a.y + 40.0 - 0.5, a.right(), a.y + 40.0 - 0.5, 1.0, edge);
+        self.block.paint(ctx, p);
+        p.strokeRound(a.round(r), 1.0, Brush::solid(edge.rgb, edge.a));
+    }
+}
+
+/** A command in a pill, with a button that copies it. */
+pub class CopyCommand : Control, Widget {
+    command : string;
+    copiedAt : f64 = -100.0;
+
+    /** A pill showing `command`. */
+    constructor(command : string) {
+        super();
+        self.command = command;
+        self.focusable = false;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = 24.0 + ctx.textWidth(FaceKind::Mono, "$ " + self.command, 13.0) + 100.0;
+        return limits.constrain(Size { w: Mathx::fmax(w, 280.0), h: 48.0 });
+    }
+
+    /** The box of the button. */
+    pub(file) fn buttonBox(self) : Bounds {
+        return Bounds::make(self.area.right() - 88.0, self.area.y + 8.0, 80.0, 32.0);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered && self.buttonBox().contains(e.x, e.y)) {
+            ctx.wantCursor(Cursor::Hand);
+        }
+        if (g == Gesture::Click && self.buttonBox().contains(e.x, e.y)) {
+            ctx.clip = self.command;
+            self.copiedAt = ctx.now;
+            ctx.wakeIn(COPIED_FOR + 0.05);
+            ctx.invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let r : f64 = ctx.theme.metrics.radiusSurface;
+        p.fillRound(a.round(r), Brush::solid(pal.raised.rgb, pal.raised.a));
+        p.strokeRound(a.round(r), 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        let base : f64 = ctx.baselineIn(FaceKind::Mono, 13.0, a.y, a.h);
+        let end : f64 = p.text(FaceKind::Mono, "$", a.x + 16.0, base, 13.0, pal.accentTop);
+        p.textElided(FaceKind::Mono, self.command, end + 10.0, base, 13.0, a.w - 140.0, pal.text);
+        let bb : Bounds = self.buttonBox();
+        let copied : bool = ctx.now - self.copiedAt < COPIED_FOR;
+        if (bb.contains(ctx.pointerX, ctx.pointerY) && self.hovered) {
+            p.fillRound(bb.round(ctx.theme.metrics.radiusInline), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        let mut ink : Tint = pal.textDim;
+        let mut label : string = "Copy";
+        let mut icon : IconKind = IconKind::Copy;
+        if (copied) {
+            ink = pal.softSuccess.fg;
+            label = "Copied";
+            icon = IconKind::Check;
+        }
+        Icons::draw(p, icon, bb.x + 10.0, bb.midY() - 8.0, 16.0, ink);
+        p.text(FaceKind::Sans, label, bb.x + 32.0, ctx.baselineIn(FaceKind::Sans, 12.0, bb.y, bb.h), 12.0, ink);
+    }
+}
+
+/** A short run of code inside a line of text: monospace on a tint. */
+pub class InlineCode : Base, Widget {
+    text : string;
+
+    /** `text` as inline code. */
+    constructor(text : string) {
+        self.text = text;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: ctx.textWidth(FaceKind::Mono, self.text, 12.0) + 14.0, h: 22.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(ctx.theme.metrics.radiusInline - 2.0);
+        p.fillRound(rr, Brush::solid(pal.raised.rgb, pal.raised.a));
+        p.strokeRound(rr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        p.text(FaceKind::Mono, self.text, a.x + 7.0, ctx.baselineIn(FaceKind::Mono, 12.0, a.y, a.h), 12.0, pal.text);
+    }
+}
+
+/** The handler a link without one runs. */
+fn ignoreLink() : void {
+}
+
+/** Text that acts: link-coloured, underlined under the pointer, with a hand cursor. */
+pub class TextLink : Control, Widget {
+    text : string;
+    onPress : () => void = ignoreLink;
+
+    /** A link saying `text`. */
+    constructor(text : string) {
+        super();
+        self.text = text;
+    }
+
+    /** A link saying `text` that runs `onPress`. */
+    constructor(text : string, onPress : () => void) {
+        super();
+        self.text = text;
+        self.onPress = onPress;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: ctx.textWidth(FaceKind::Sans, self.text, 14.0), h: ctx.lineHeight(FaceKind::Sans, 14.0) + 4.0 });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click) {
+            let h : () => void = self.onPress;
+            h();
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let a : Bounds = self.area;
+        let ink : Tint = ctx.theme.palette.link;
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, 14.0, a.y, a.h);
+        let end : f64 = p.text(FaceKind::Sans, self.text, a.x, base, 14.0, ink);
+        if (self.hoverT.value > 0.01) {
+            p.line(a.x, base + 2.0, end, base + 2.0, 1.0, ink.faded(self.hoverT.alpha()));
+        }
+        if (self.ringShown(ctx)) {
+            let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+            p.strokeRound(a.grown(3.0).round(4.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

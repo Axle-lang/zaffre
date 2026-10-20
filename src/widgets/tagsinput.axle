@@ -1,0 +1,299 @@
+// tagsinput — a field that turns what is typed into chips: tags, recipients, keywords.
+//
+//     let tags : Shared<Model<string>> = new shared Model<string>("design,ui");
+//     new TagsInput(TagsProps { placeholder: "Add a tag…" }, tags)
+//
+// The model holds the tags joined by commas. Typing builds the next tag; Enter or a comma makes it
+// a chip; Backspace on an empty draft takes the last chip back; the cross on a chip removes it.
+// Chips and draft flow onto as many lines as the width needs, and the field grows to hold them.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::style::variants::ControlSize;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a tags input looks. */
+pub struct TagsProps {
+    /** What it says while there are no chips and nothing is typed. */
+    pub placeholder : string = "Add a tag…";
+
+    /** The most chips it takes; 0 for no limit. */
+    pub limit : i32 = 0;
+
+    /** The field's width: by default 320 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+}
+
+/** Height of a line of chips. */
+const TAGS_LINE : f64 = 28.0;
+
+/** Space between chips and lines. */
+const TAGS_GAP : f64 = 6.0;
+
+/** Space between the edge and the chips. */
+const TAGS_PAD : f64 = 8.0;
+
+/** A field of chips. */
+pub class TagsInput : Control, Widget {
+    props : TagsProps;
+    model : Shared<Model<string>>;
+    draft : string = "";
+    blink : f64 = 0.0;
+    hotCross : i32 = -1;
+    activeT : Eased = Eased::at(0.0);
+    lefts : f64[] = malloc<f64>(64 as i64);
+    tops : f64[] = malloc<f64>(64 as i64);
+    widths : f64[] = malloc<f64>(64 as i64);
+    draftX : f64 = 0.0;
+    draftY : f64 = 0.0;
+    lines : i32 = 1;
+
+    /** A tags input reading and writing `model`. */
+    constructor(own props : TagsProps, model : Shared<Model<string>>) {
+        super();
+        self.props = props;
+        self.model = model;
+    }
+
+    /** The number of chips. */
+    pub(file) fn count(self) : i32 {
+        let s : string = self.model.get();
+        if (s.byteLength == 0) {
+            return 0;
+        }
+        let mut n : i32 = 1;
+        let mut i : i64 = 0;
+        while (i < s.byteLength) {
+            if (s.byteAt(i) == 44) {
+                n = n + 1;
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    /** Chip `k`. */
+    pub(file) fn chip(self, k : i32) : string {
+        let s : string = self.model.get();
+        let mut index : i32 = 0;
+        let mut start : i64 = 0;
+        let mut i : i64 = 0;
+        while (i <= s.byteLength) {
+            if (i == s.byteLength || s.byteAt(i) == 44) {
+                if (index == k) {
+                    return Strings::slice(s, start, i);
+                }
+                index = index + 1;
+                start = i + 1;
+            }
+            i = i + 1;
+        }
+        return "";
+    }
+
+    /** The chips without chip `k`, joined. */
+    pub(file) fn without(self, k : i32) : string {
+        let n : i32 = self.count();
+        let mut out : string = "";
+        let mut first : bool = true;
+        for (i of 0..n) {
+            if (i == k) {
+                continue;
+            }
+            if (!first) {
+                out = out + ",";
+            }
+            out = out + self.chip(i);
+            first = false;
+        }
+        return out;
+    }
+
+    /** Make the draft a chip. */
+    pub(file) fn commit(mut self, ctx : Context) : void {
+        let word : string = self.draft;
+        if (word.byteLength == 0) {
+            return;
+        }
+        if (self.props.limit > 0 && self.count() >= self.props.limit) {
+            return;
+        }
+        let all : string = self.model.get();
+        if (all.byteLength == 0) {
+            self.model.set(word);
+        } else {
+            self.model.set(all + "," + word);
+        }
+        self.draft = "";
+        self.blink = ctx.now;
+        ctx.invalidate();
+    }
+
+    /** The width of the chip with `text`. */
+    pub(file) fn chipWidth(self, ctx : Context, text : string) : f64 {
+        return ctx.textWidth(FaceKind::Bold, text, 12.0) + 34.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = self.props.width.resolve(limits.maxW, 320.0);
+        let n : i32 = Mathx::clampI(self.count(), 0, 64);
+        let room : f64 = w - 2.0 * TAGS_PAD;
+        let mut x : f64 = 0.0;
+        let mut line : i32 = 0;
+        for (k of 0..n) {
+            let cw : f64 = self.chipWidth(ctx, self.chip(k));
+            if (x > 0.0 && x + cw > room) {
+                x = 0.0;
+                line = line + 1;
+            }
+            self.lefts[k as i64] = x;
+            self.tops[k as i64] = (line as f64) * (TAGS_LINE + TAGS_GAP);
+            self.widths[k as i64] = cw;
+            x = x + cw + TAGS_GAP;
+        }
+        let dw : f64 = Mathx::fmax(90.0, ctx.textWidth(FaceKind::Sans, self.draft, 14.0) + 24.0);
+        if (x > 0.0 && x + dw > room) {
+            x = 0.0;
+            line = line + 1;
+        }
+        self.draftX = x;
+        self.draftY = (line as f64) * (TAGS_LINE + TAGS_GAP);
+        self.lines = line + 1;
+        let h : f64 = 2.0 * TAGS_PAD + (self.lines as f64) * TAGS_LINE + ((self.lines - 1) as f64) * TAGS_GAP;
+        return limits.constrain(Size { w: w, h: Mathx::fmax(h, ctx.theme.metrics.controlMd) });
+    }
+
+    /** The chip whose cross is under (`x`, `y`), or -1. */
+    pub(file) fn crossAt(self, ctx : Context, x : f64, y : f64) : i32 {
+        let n : i32 = Mathx::clampI(self.count(), 0, 64);
+        for (k of 0..n) {
+            let left : f64 = self.area.x + TAGS_PAD + self.lefts[k as i64];
+            let top : f64 = self.area.y + TAGS_PAD + self.tops[k as i64];
+            if (y >= top && y < top + TAGS_LINE && x >= left + self.widths[k as i64] - 24.0 && x < left + self.widths[k as i64]) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.hotCross = -1;
+            if (self.hovered) {
+                self.hotCross = self.crossAt(ctx, e.x, e.y);
+                ctx.wantCursor(self.hotCross >= 0 ? Cursor::Hand : Cursor::Beam);
+            }
+        }
+        if (g == Gesture::Press) {
+            let k : i32 = self.crossAt(ctx, e.x, e.y);
+            if (k >= 0) {
+                self.model.set(self.without(k));
+                ctx.invalidate();
+            }
+            return true;
+        }
+        if (g == Gesture::Click || g == Gesture::Release) {
+            return true;
+        }
+        if (!self.isFocused(ctx) || !self.enabled) {
+            return false;
+        }
+        if (e.kind == EventKind::Text && e.cp >= 32 && e.cp != 127 && !e.ctrl()) {
+            if (e.cp == 44) {
+                self.commit(ctx);
+                return true;
+            }
+            self.draft = self.draft + Strings::ofCp(e.cp);
+            self.blink = ctx.now;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown) {
+            if (e.key == Key::Enter) {
+                self.commit(ctx);
+                return true;
+            }
+            if (e.key == Key::Backspace) {
+                if (self.draft.byteLength > 0) {
+                    self.draft = Strings::slice(self.draft, 0, Strings::left(self.draft, self.draft.byteLength));
+                } else if (self.count() > 0) {
+                    self.model.set(self.without(self.count() - 1));
+                }
+                self.blink = ctx.now;
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 0.0;
+        if (self.isFocused(ctx)) {
+            t = 1.0;
+            ctx.wakeIn(0.5);
+        }
+        self.activeT = self.activeT.toward(t).step(dt, Rate::HOVER);
+        return self.animate(ctx, dt) || !self.activeT.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let st = ctx.theme.field(ControlSize::Md);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        let act : i32 = self.activeT.alpha();
+        p.fillRound(rr, Brush::solid(pal.surface.rgb, pal.surface.a));
+        let mut focusEdge : Tint = st.borderFocus;
+        let mut rest : Tint = st.border.mixed(st.borderHover, self.hoverT.alpha());
+        let mut halo : Tint = st.ring;
+        if (ctx.invalid) {
+            focusEdge = st.borderInvalid;
+            rest = st.borderInvalid;
+            halo = st.ringInvalid;
+        }
+        let edge : Tint = rest.mixed(focusEdge, act);
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (act > 0) {
+            let ring : Tint = halo.faded(act);
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+        }
+        let soft = pal.softPrimary;
+        let n : i32 = Mathx::clampI(self.count(), 0, 64);
+        for (k of 0..n) {
+            let chip : Bounds = Bounds::make(a.x + TAGS_PAD + self.lefts[k as i64], a.y + TAGS_PAD + self.tops[k as i64], self.widths[k as i64], TAGS_LINE);
+            p.fillRound(chip.round(ctx.theme.metrics.radiusInline), Brush::solid(soft.fill.rgb, soft.fill.a));
+            p.text(FaceKind::Bold, self.chip(k), chip.x + 10.0, ctx.baselineIn(FaceKind::Bold, 12.0, chip.y, chip.h), 12.0, soft.fg);
+            if (k == self.hotCross) {
+                p.fillRound(Bounds::make(chip.right() - 24.0, chip.y + 4.0, 20.0, chip.h - 8.0).round(4.0), Brush::solid(soft.hover.rgb, soft.hover.a));
+            }
+            Icons::draw(p, IconKind::Close, chip.right() - 21.0, chip.midY() - 7.0, 14.0, soft.fg);
+        }
+        let dx : f64 = a.x + TAGS_PAD + self.draftX;
+        let dy : f64 = a.y + TAGS_PAD + self.draftY;
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, 14.0, dy, TAGS_LINE);
+        if (self.draft.byteLength == 0 && n == 0 && !self.isFocused(ctx)) {
+            p.text(FaceKind::Sans, self.props.placeholder, dx + 4.0, base, 14.0, st.placeholder);
+            return;
+        }
+        let end : f64 = p.text(FaceKind::Sans, self.draft, dx + 4.0, base, 14.0, pal.text);
+        if (self.isFocused(ctx) && (((ctx.now - self.blink) * 2.0).floorToInt() % 2 == 0)) {
+            p.fillRound(RRect::uniform(end + 1.0, dy + 5.0, 1.5, TAGS_LINE - 10.0, 0.75), Brush::solid(st.caret.rgb, st.caret.a));
+        }
+    }
+}
