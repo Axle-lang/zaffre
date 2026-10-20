@@ -224,12 +224,17 @@ pub class Slider : Control, Widget {
         let grow : f64 = 1.0 + 0.12 * self.hoverT.value + 0.05 * self.pressT.value;
         let d : f64 = st.thumb * grow;
         let knob : RRect = RRect::uniform(tx - d * 0.5, cy - d * 0.5, d, d, d * 0.5);
-        p.shadow(knob, 0.0, 1.0, 4.0, 0.0, ctx.theme.palette.shadow.withAlpha(110));
+        p.shadow(knob, 0.0, 1.0, 2.0, -1.0, ctx.theme.palette.shadow.withAlpha(ctx.theme.isDark ? 128 : 38));
         p.fillRound(knob, Brush::solid(st.knob.rgb, st.knob.a));
-        p.strokeRound(knob, 1.0, Brush::solid(st.knobBorder.rgb, st.knobBorder.a));
+        let mut rim : Tint = st.knobBorder;
+        if (off) {
+            rim = ctx.theme.palette.textOff;
+        }
+        p.strokeRound(knob, 2.0, Brush::solid(rim.rgb, rim.a));
         if (self.ringShown(ctx)) {
             let ring : Tint = st.ring.faded(self.focusT.alpha());
-            p.strokeRound(knob.grown(3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+            let gap : f64 = ctx.theme.metrics.ringOffset + ctx.theme.metrics.ring;
+            p.strokeRound(knob.grown(gap), ctx.theme.metrics.ring, Brush::solid(ring.rgb, ring.a));
         }
     }
 }

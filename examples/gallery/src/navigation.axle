@@ -1,0 +1,42 @@
+// navigation — tabs, a segmented control and a select.
+
+use zaffre::{
+    Model, Column, Panel, Label, Segmented, Tabs, Select,
+    Widget, FlexProps, PanelProps, TextRole, Elevation, Align,
+};
+
+/** The first tab's page: a way to pick a layout and a size. */
+fn general(layout : Shared<Model<i32>>, size : Shared<Model<i32>>) : Column {
+    let layoutNames : string[] = ["List", "Grid", "Board"];
+    let sizeNames : string[] = ["Small", "Medium", "Large"];
+    let kids : dyn Widget[] = [
+        new Segmented(layoutNames, layout),
+        new Select(sizeNames, size),
+    ];
+    return new Column(FlexProps { gap: 14.0, align: Align::Start }, kids);
+}
+
+/** The whole card. */
+pub fn navigationCard(
+    tab : Shared<Model<i32>>,
+    layout : Shared<Model<i32>>,
+    size : Shared<Model<i32>>
+) : Panel {
+    let tabNames : string[] = ["General", "Network", "About"];
+    let pages : dyn Widget[] = [
+        general(layout, size),
+        new Label("Nothing to configure on the network.", TextRole::Dim),
+        new Label("zaffre 0.1 — native, themable, atomic.", TextRole::Dim),
+    ];
+    let kids : dyn Widget[] = [
+        new Label("Navigation", TextRole::H3),
+        new Tabs(tabNames, tab, pages),
+    ];
+    return new Panel(
+        PanelProps {
+            elevation: Elevation::Raised,
+            grow: 1.3,
+        },
+        new Column(FlexProps { gap: 18.0, align: Align::Stretch }, kids)
+    );
+}

@@ -1,22 +1,22 @@
 // gallery — every component, on one page.
 //
-// The program a first-time reader runs to see the library: a header with a dark-mode switch, a card
-// of controls, a card of status. It is also the test of the whole stack — `--snap` draws one frame
-// to `gallery.bmp` with no window, which is what the README's picture is and what a regression
-// check compares.
+// The program a first-time reader runs to see the library. It is also the test of the whole stack:
+// `--snap` draws one frame to `gallery.bmp` with no window, which is what the README's picture is
+// and what a regression check compares.
 //
-// What to look at in the source: a widget tree is a nested expression of `new` — containers take
-// their children as an array — and the values the widgets show are `Model`s the program holds, so
-// nothing here synchronises state by hand. Handlers are lambdas over `Shared` handles.
+// The page is four cards, one module each (`controls`, `status`, `navigation`, `feedback`), and a
+// header. A card is a function that takes the `Model`s it shows and answers a `Panel`; this file
+// only creates the models and lays the cards out.
 
 use zaffre::{
-    View, Theme, Fonts, App, AppDesc, Model,
-    Column, Row, Panel, Label, Button, Switch, Checkbox, Radio, Slider, TextField, Badge, Avatar,
-    ProgressBar, Spinner, Spacer, Divider, Segmented, Tabs, Select, Alert, Scroll, ScrollProps,
-    Notifier, Notifications, Tooltip, DialogProps,
-    Widget, FlexProps, PanelProps, LabelProps, ButtonProps, ToggleProps, SliderProps, FieldProps,
-    TextRole, ButtonKind, ControlSize, Tone, Elevation, IconKind, Insets, Align, Justify, Length,
+    View, Theme, Fonts, App, AppDesc, Model, Notifier, Notifications,
+    Column, Row, Widget, FlexProps, Insets, Align,
 };
+use header::titleBar;
+use controls::controlsCard;
+use status::statusCard;
+use navigation::navigationCard;
+use feedback::feedbackCard;
 use std::sys::process::{argc, argAt};
 use std::lang::IndexOutOfBoundsException;
 
@@ -24,7 +24,10 @@ use std::lang::IndexOutOfBoundsException;
 const WIDTH : i32 = 1040;
 
 /** The height of the window, and of the snapshot. */
-const HEIGHT : i32 = 1080;
+const HEIGHT : i32 = 1500;
+
+/** The gap between cards, and the margin around the page. */
+const GAP : f64 = 22.0;
 
 /** The whole page, as the view a window or a snapshot shows. */
 fn build() : View {
@@ -32,8 +35,7 @@ fn build() : View {
     // The monospace face is optional and read from a file; without it `Mono` text uses the sans.
     fonts.withMono("assets/fonts/JetBrainsMono-Regular.ttf", "assets/fonts/JetBrainsMono-Bold.ttf");
 
-    // The values the page shows. Each is held here, by the program, and read and written by the
-    // widgets bound to it.
+    // The values the page shows: held here by the program, read and written by the widgets.
     let dark = new shared Model<bool>(true);
     let notes = new shared Notifier();
     let notifications = new shared Model<bool>(true);
@@ -44,123 +46,32 @@ fn build() : View {
     let name = new shared Model<string>("Ada Lovelace");
     let search = new shared Model<string>("");
     let progress = new shared Model<f64>(0.68);
-
-    // A container takes its children as a `dyn Widget[]`, and the compiler only turns an array
-    // literal into one through a `let` with the type written (smalt's LIMITATIONS, 2.15) — so each
-    // group of children is named here, innermost first.
-    let titles : dyn Widget[] = [
-        new Label("Preferences", TextRole::H2),
-        new Label("Make it yours — everything here is a token away.", TextRole::Dim),
-    ];
-    let headerKids : dyn Widget[] = [
-        new Avatar("Ada Lovelace", 44.0),
-        new Column(FlexProps { gap: 2.0 }, titles),
-        new Spacer(),
-        new Switch("Dark mode", dark),
-    ];
-    let header = new Row(FlexProps { gap: 14.0, align: Align::Center }, headerKids);
-
-    let buttons : dyn Widget[] = [
-        new Tooltip("Store the preferences", new Button(ButtonProps { label: "Save changes", kind: ButtonKind::Primary, icon: IconKind::Check }, () => notes.toast("Preferences saved", Tone::Ok))),
-        new Button("Cancel"),
-        new Button(ButtonProps { label: "Delete", kind: ButtonKind::Danger }, () => notes.ask(DialogProps { title: "Delete the profile?", message: "Its preferences and history are removed for good. This cannot be undone.", confirm: "Delete", danger: true }, () => notes.toast("Profile deleted", Tone::Danger), () => notes.toast("Nothing was deleted", Tone::Neutral))),
-        new Button(ButtonProps { label: "Skip", kind: ButtonKind::Ghost }),
-        new Button(ButtonProps { label: "Learn more", kind: ButtonKind::Link }),
-    ];
-    let toggles : dyn Widget[] = [
-        new Switch("Notifications", notifications),
-        new Checkbox("Subscribe to the newsletter", newsletter),
-    ];
-    let plans : dyn Widget[] = [
-        new Radio("Free", plan, 0),
-        new Radio("Pro", plan, 1),
-        new Radio("Team", plan, 2),
-    ];
-    let controlKids : dyn Widget[] = [
-        new Label("Controls", TextRole::H3),
-        new Row(FlexProps { gap: 10.0 }, buttons),
-        new TextField(FieldProps { placeholder: "Search anything…", icon: IconKind::Search, width: Length::Fill }, search),
-        new TextField(FieldProps { width: Length::Fill }, name),
-        new Column(FlexProps { gap: 10.0 }, toggles),
-        new Column(FlexProps { gap: 10.0 }, plans),
-        new Slider(SliderProps { label: "Volume", width: Length::Fill }, volume),
-        new Slider(SliderProps { label: "Brightness", min: 0.0, max: 100.0, step: 5.0, decimals: 0, width: Length::Fill }, brightness),
-    ];
-    let controls = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0 }, controlKids));
-
-    let badges : dyn Widget[] = [
-        new Badge("Online", Tone::Ok),
-        new Badge("3 warnings", Tone::Warn),
-        new Badge("Beta", Tone::Accent),
-        new Badge("Offline", Tone::Danger),
-        new Badge("v0.1"),
-    ];
-    let working : dyn Widget[] = [
-        new Spinner(ControlSize::Md),
-        new Label("Working on it…", TextRole::Dim),
-    ];
-    let statusKids : dyn Widget[] = [
-        new Label("Status", TextRole::H3),
-        new Row(FlexProps { gap: 8.0, align: Align::Center }, badges),
-        new Divider(),
-        new Label("Upload progress", TextRole::Label),
-        new ProgressBar(progress),
-        new Row(FlexProps { gap: 12.0, align: Align::Center }, working),
-        new Divider(),
-        new Label(LabelProps { role: TextRole::Dim, wrap: true }, "Text is set in a role, wraps to the width it is offered, and is drawn from a real font — outlines parsed from the file and rasterised here, with kerning and quarter-pixel positions."),
-        new Label("let mut total = 42;", TextRole::Mono),
-    ];
-    let status = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0 }, statusKids));
-
     let tab = new shared Model<i32>(0);
     let layout = new shared Model<i32>(1);
     let size = new shared Model<i32>(-1);
 
-    let tabNames : string[] = ["General", "Network", "About"];
-    let layoutNames : string[] = ["List", "Grid", "Board"];
-    let sizeNames : string[] = ["Small", "Medium", "Large"];
-    let generalKids : dyn Widget[] = [
-        new Segmented(layoutNames, layout),
-        new Select(sizeNames, size),
+    // A container takes its children as a `dyn Widget[]`, which the compiler only builds through a
+    // `let` with the type written — so each group of children is named.
+    let upper : dyn Widget[] = [
+        controlsCard(notes, search, name, notifications, newsletter, plan, volume, brightness),
+        statusCard(progress),
     ];
-    let pages : dyn Widget[] = [
-        new Column(FlexProps { gap: 14.0, align: Align::Start }, generalKids),
-        new Label("Nothing to configure on the network.", TextRole::Dim),
-        new Label("zaffre 0.1 — native, themable, atomic.", TextRole::Dim),
+    let lower : dyn Widget[] = [
+        navigationCard(tab, layout, size),
+        feedbackCard(),
     ];
-    let navigationKids : dyn Widget[] = [
-        new Label("Navigation", TextRole::H3),
-        new Tabs(tabNames, tab, pages),
+    let rows : dyn Widget[] = [
+        titleBar(dark),
+        new Row(FlexProps { gap: GAP, align: Align::Start }, upper),
+        new Row(FlexProps { gap: GAP, align: Align::Start }, lower),
     ];
-    let navigation = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.3 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, navigationKids));
-
-    let lines : dyn Widget[] = [
-        new Label("Scrolling content, line 1", TextRole::Dim),
-        new Label("Scrolling content, line 2", TextRole::Dim),
-        new Label("Scrolling content, line 3", TextRole::Dim),
-        new Label("Scrolling content, line 4", TextRole::Dim),
-        new Label("Scrolling content, line 5", TextRole::Dim),
-        new Label("Scrolling content, line 6", TextRole::Dim),
-        new Label("Scrolling content, line 7", TextRole::Dim),
-        new Label("Scrolling content, line 8", TextRole::Dim),
-    ];
-    let feedbackKids : dyn Widget[] = [
-        new Label("Feedback", TextRole::H3),
-        new Alert(Tone::Ok, "Saved", "Your preferences were stored."),
-        new Alert(Tone::Warn, "Disk almost full", "Only 2 GB are left on this volume, so downloads may fail."),
-        new Alert(Tone::Danger, "Connection lost"),
-        new Scroll(ScrollProps { height: Length::Px(96.0), width: Length::Fill }, new Column(FlexProps { gap: 6.0 }, lines)),
-    ];
-    let feedback = new Panel(PanelProps { elevation: Elevation::Raised, grow: 1.0 }, new Column(FlexProps { gap: 18.0, align: Align::Stretch }, feedbackKids));
-
-    let cards : dyn Widget[] = [controls, status];
-    let lowerCards : dyn Widget[] = [navigation, feedback];
-    let pageKids : dyn Widget[] = [
-        header,
-        new Row(FlexProps { gap: 22.0, align: Align::Start }, cards),
-        new Row(FlexProps { gap: 22.0, align: Align::Start }, lowerCards),
-    ];
-    let page = new Column(FlexProps { gap: 22.0, padding: Insets::all(28.0) }, pageKids);
+    let page = new Column(
+        FlexProps {
+            gap: GAP,
+            padding: Insets::all(28.0),
+        },
+        rows
+    );
 
     return new View(Theme::dark(), fonts, dark, new Notifications(notes, page));
 }
@@ -176,7 +87,12 @@ fn main() : i32 {
         println("could not write gallery.bmp");
         return 1;
     }
-    return App::run(AppDesc { title: "zaffre — gallery", width: WIDTH, height: HEIGHT }, view);
+    let desc = AppDesc {
+        title: "zaffre — gallery",
+        width: WIDTH,
+        height: HEIGHT,
+    };
+    return App::run(desc, view);
 }
 
 /** Whether `--snap` was given: draw one frame to a file and leave. */

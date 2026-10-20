@@ -13,7 +13,7 @@ if args and args[0] in ("gallery", "weather"):
     name = args.pop(0)
 out = args[0] if args else name + ".png"
 light = len(args) > 1 and args[1] == "light"
-sizes = {"gallery": (1040, 1080), "weather": (1280, 880)}
+sizes = {"gallery": (1040, 1500), "weather": (1280, 880)}
 
 z = load([os.path.join(ROOT, "examples", name, "src")])
 view = z.build()

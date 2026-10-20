@@ -17,7 +17,7 @@ use crate::gfx::shapes::{RRect, Brush};
 use crate::style::ease::{Eased, Rate};
 use crate::style::fill::Fill;
 use crate::style::styles::{FieldStyle, ItemStyle};
-use crate::style::variants::ControlSize;
+use crate::style::variants::{ControlSize, Elevation};
 use crate::text::fonts::FaceKind;
 use crate::core::geometry::{Size, Bounds, Limits, Length};
 use crate::core::event::{UiEvent, EventKind, Key};
@@ -26,6 +26,7 @@ use crate::core::model::Model;
 use crate::core::widget::{Widget, Base, Control, Gesture};
 use crate::paint::painter::Painter;
 use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::panel::Surfaces;
 
 /** Handler a select or menu without one runs. */
 fn ignorePick(v : i32) : void {
@@ -215,11 +216,8 @@ pub class Menu : Base, Widget {
         }
         dy = 0.0 - dy;
         let b : Bounds = self.sheet.moved(0.0, dy);
-        let rr : RRect = b.round(ctx.theme.metrics.radiusMd);
-        p.shadow(rr, 0.0, 10.0, 28.0, -4.0, pal.shadow.faded(110));
-        p.shadow(rr, 0.0, 2.0, 6.0, 0.0, pal.shadow.faded(60));
-        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
-        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+        let rr : RRect = b.round(ctx.theme.metrics.radiusSurface);
+        Surfaces::draw(p, rr, b, ctx.theme.panel(Elevation::Overlay));
         let chosen : i32 = self.model.get();
         for (i of 0..self.count) {
             let row : Bounds = Bounds::make(b.x + 4.0, b.y + 4.0 + st.height * (i as f64), b.w - 8.0, st.height);
@@ -361,11 +359,11 @@ pub class Select : Control, Widget {
             fill = st.fillOff;
         }
         p.fillRound(rr, fill.brush(a.y, a.h));
-        let edge : Tint = st.border.mixed(st.borderHover, hv).mixed(st.borderFocus, self.openT.alpha());
+        let edge : Tint = st.border.mixed(st.borderHover, hv).mixed(st.borderFocus, act);
         p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
-        if (self.ringShown(ctx)) {
-            let ring : Tint = st.ring.faded(self.focusT.alpha());
-            p.strokeRound(a.grown(2.0).round(st.radius + 2.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        if (self.ringShown(ctx) || act > 0) {
+            let ring : Tint = st.ring.faded(act);
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
         }
         let i : i32 = self.model.get();
         let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h);

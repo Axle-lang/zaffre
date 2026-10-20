@@ -71,6 +71,9 @@ pub struct ButtonStyle {
     /** Label colour. */
     pub text : Tint;
 
+    /** Label colour under the pointer. */
+    pub textHover : Tint;
+
     /** Label colour when disabled. */
     pub textOff : Tint;
 
@@ -119,8 +122,14 @@ pub struct FieldStyle {
     /** Outline while focused. */
     pub borderFocus : Tint;
 
+    /** Outline of a field in error. */
+    pub borderInvalid : Tint;
+
     /** The focus halo around the field. */
     pub ring : Tint;
+
+    /** The halo around a focused field in error. */
+    pub ringInvalid : Tint;
 
     /** Text colour. */
     pub text : Tint;
@@ -155,7 +164,10 @@ pub struct ToggleStyle {
     /** Label size. */
     pub px : f64;
 
-    /** Mark fill when off. */
+    /** A checkbox or radio's fill when off: the surface. */
+    pub boxOff : Fill;
+
+    /** A switch's track when off. */
     pub off : Fill;
 
     /** Mark fill when on. */
@@ -244,6 +256,12 @@ pub struct PanelStyle {
 
     /** The tight shadow's offset down. */
     pub shadow2Dy : f64;
+
+    /** How far the wide shadow grows (negative shrinks it) before it is blurred. */
+    pub shadowSpread : f64;
+
+    /** How far the tight shadow grows. */
+    pub shadow2Spread : f64;
 }
 
 /** A badge or chip: a small pill of text. */
@@ -265,6 +283,12 @@ pub struct BadgeStyle {
 
     /** Text size. */
     pub px : f64;
+
+    /** Corner radius. */
+    pub radius : f64;
+
+    /** The status dot's colour. */
+    pub dot : Tint;
 }
 
 /** A progress bar or a spinner. */

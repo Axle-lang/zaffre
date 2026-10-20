@@ -1,0 +1,27 @@
+// header — the title of the page, and the switch that turns the whole theme over.
+
+use zaffre::{
+    Model, Row, Column, Label, Avatar, Spacer, Switch,
+    Widget, FlexProps, TextRole, Align,
+};
+
+/** The avatar, the two lines of title, and the dark-mode switch at the far end. */
+pub fn titleBar(dark : Shared<Model<bool>>) : Row {
+    let titles : dyn Widget[] = [
+        new Label("Preferences", TextRole::H2),
+        new Label("Make it yours — everything here is a token away.", TextRole::Dim),
+    ];
+    let kids : dyn Widget[] = [
+        new Avatar("Ada Lovelace", 44.0),
+        new Column(FlexProps { gap: 2.0 }, titles),
+        new Spacer(),
+        new Switch("Dark mode", dark),
+    ];
+    return new Row(
+        FlexProps {
+            gap: 14.0,
+            align: Align::Center,
+        },
+        kids
+    );
+}

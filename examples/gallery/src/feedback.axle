@@ -1,0 +1,48 @@
+// feedback — alerts, and a region that scrolls.
+
+use zaffre::{
+    Column, Panel, Label, Alert, Scroll,
+    Widget, FlexProps, PanelProps, ScrollProps,
+    TextRole, Tone, Elevation, Align, Length,
+};
+
+/** Eight lines of text, taller than the box that scrolls them. */
+fn lines() : Column {
+    let kids : dyn Widget[] = [
+        new Label("Scrolling content, line 1", TextRole::Dim),
+        new Label("Scrolling content, line 2", TextRole::Dim),
+        new Label("Scrolling content, line 3", TextRole::Dim),
+        new Label("Scrolling content, line 4", TextRole::Dim),
+        new Label("Scrolling content, line 5", TextRole::Dim),
+        new Label("Scrolling content, line 6", TextRole::Dim),
+        new Label("Scrolling content, line 7", TextRole::Dim),
+        new Label("Scrolling content, line 8", TextRole::Dim),
+    ];
+    return new Column(FlexProps { gap: 6.0 }, kids);
+}
+
+/** The whole card. */
+pub fn feedbackCard() : Panel {
+    let scroller = new Scroll(
+        ScrollProps {
+            height: Length::Px(96.0),
+            width: Length::Fill,
+        },
+        lines()
+    );
+    let kids : dyn Widget[] = [
+        new Label("Feedback", TextRole::H3),
+        new Alert(Tone::Ok, "Saved", "Your preferences were stored."),
+        new Alert(Tone::Info, "Update available", "Version 0.2 brings a new theme."),
+        new Alert(Tone::Warn, "Disk almost full", "Only 2 GB are left on this volume, so downloads may fail."),
+        new Alert(Tone::Danger, "Connection lost"),
+        scroller,
+    ];
+    return new Panel(
+        PanelProps {
+            elevation: Elevation::Raised,
+            grow: 1.0,
+        },
+        new Column(FlexProps { gap: 18.0, align: Align::Stretch }, kids)
+    );
+}

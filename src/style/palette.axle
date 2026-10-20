@@ -1,25 +1,64 @@
 // palette — the tokens: every colour and every measure a theme is made of.
 //
 // A token is a named value with one job ("the colour of text that is not the main text", "the
-// radius of a small control"), and a widget asks for the job, never for the value. Changing a token
+// radius of a control"), and a widget asks for the job, never for the value. Changing a token
 // restyles everything that uses it; adding a theme is writing one more `Palette` and, if the shape
 // differs, one more `Metrics`. Nothing in a widget names a colour.
 //
-// The dark palette is a cool near-black with one periwinkle accent. Surfaces are told apart by a
-// step of lightness and a hairline rather than by contrast, so a window stays calm until something
-// in it is red; the only saturated inks are the accent and the three tones.
+// The palette is layered the way a web design system is, in three tiers:
+//
+//   surfaces, text, lines   what a page is made of: page, surface, surface-2, four greys of text,
+//                           a hairline and a stronger line;
+//   interaction states      the hover fill every row and ghost control shares, the pressed fill,
+//                           the groove of a track, the chip that flips against the page;
+//   hues and soft tones     six hues with the four shades a control needs (500…800) and, for each
+//                           tone, ONE tinted recipe — fill, hover, border, text — that badges,
+//                           alerts, toasts, selected rows and secondary buttons all draw from.
+//
+// A dark tint is an alpha of the -500 hue rather than a dark mix, so it keeps its colour on a card,
+// on a raised card and on the page alike.
 
 use crate::gfx::tint::Tint;
+
+/** The four shades of a hue that controls are made from. */
+pub struct Hue {
+    /** The brightest: focus ring, chart line, dark-mode ink. */
+    pub s500 : Tint;
+
+    /** The resting fill of a solid control. */
+    pub s600 : Tint;
+
+    /** Under the pointer. */
+    pub s700 : Tint;
+
+    /** Pressed. */
+    pub s800 : Tint;
+}
+
+/** The tinted recipe of one tone: what everything "soft" of that colour is drawn with. */
+pub struct Soft {
+    /** The wash. */
+    pub fill : Tint;
+
+    /** The wash under the pointer. */
+    pub hover : Tint;
+
+    /** The border that goes with the wash. */
+    pub line : Tint;
+
+    /** The text and icon on the wash. */
+    pub fg : Tint;
+}
 
 /** The colours of a theme. */
 pub struct Palette {
     /** The page. */
     pub background : Tint;
 
-    /** A card, a panel: one step above the page. */
+    /** A card, a panel, a field: the working surface. */
     pub surface : Tint;
 
-    /** A control's resting surface, a hovered row: one step above a card. */
+    /** One step off the surface: a card header, a table head, a code block. */
     pub raised : Tint;
 
     /** A menu, a popover, a dialog: above everything. */
@@ -40,13 +79,40 @@ pub struct Palette {
     /** Tertiary text: placeholders, units, hints. */
     pub textFaint : Tint;
 
-    /** The accent: selection, focus, the primary action. */
+    /** Text of a disabled control. */
+    pub textOff : Tint;
+
+    /** Text that links. */
+    pub link : Tint;
+
+    /** The hover fill of the kit: rows, ghost buttons, menu items. */
+    pub hover : Tint;
+
+    /** One step past hover: pressed, a tertiary button under the pointer. */
+    pub active : Tint;
+
+    /** The groove of a slider, a progress bar, a segmented control. */
+    pub track : Tint;
+
+    /** A chip that flips against the page: tooltips, value bubbles. */
+    pub inverse : Tint;
+
+    /** Text on the inverse chip. */
+    pub inverseText : Tint;
+
+    /** The dimming behind a modal dialog. */
+    pub scrim : Tint;
+
+    /** The colour shadows are cast in. */
+    pub shadow : Tint;
+
+    /** The accent fill: the primary action. */
     pub accent : Tint;
 
-    /** The accent's lighter end — the top of a primary button, a hovered link. */
+    /** The accent as ink on the page: a link, a selected label, a chart line. */
     pub accentTop : Tint;
 
-    /** The accent's darker end — the bottom of a primary button, a pressed one. */
+    /** The accent's pressed fill. */
     pub accentBottom : Tint;
 
     /** The accent as a wash: a selected row's fill, a focus halo. */
@@ -55,82 +121,178 @@ pub struct Palette {
     /** Text on an accent or tone fill. */
     pub onAccent : Tint;
 
+    /** The brand hue. */
+    pub primary : Hue;
+
     /** Good news. */
-    pub ok : Tint;
+    pub success : Hue;
 
     /** Caution. */
-    pub warn : Tint;
+    pub warning : Hue;
 
-    /** Trouble: also the fill of a destructive button. */
-    pub danger : Tint;
+    /** Trouble. */
+    pub danger : Hue;
 
-    /** The dimming behind a modal dialog. */
-    pub scrim : Tint;
+    /** Information. */
+    pub info : Hue;
 
-    /** The colour shadows are cast in. */
-    pub shadow : Tint;
+    /** The hue of "look at this first": yellow with dark text. */
+    pub important : Hue;
 
-    /** The dark theme. */
-    pub static fn dark() : Palette {
-        return Palette {
-            background: Tint::hex(0x0E1015),
-            surface: Tint::hex(0x151821),
-            raised: Tint::hex(0x1C2029),
-            overlay: Tint::hex(0x202530),
-            line: Tint::hex(0x272C37),
-            lineStrong: Tint::hex(0x3A4152),
-            text: Tint::hex(0xE8EBF1),
-            textDim: Tint::hex(0x9AA3B5),
-            textFaint: Tint::hex(0x69718A),
-            accent: Tint::hex(0x6B7DFF),
-            accentTop: Tint::hex(0x8294FF),
-            accentBottom: Tint::hex(0x5A6BF2),
-            accentSoft: Tint::hexA(0x6B7DFF, 40),
-            onAccent: Tint::hex(0xFFFFFF),
-            ok: Tint::hex(0x3DD68C),
-            warn: Tint::hex(0xF2B84B),
-            danger: Tint::hex(0xEF4B5C),
-            scrim: Tint::hexA(0x05060A, 170),
-            shadow: Tint::hexA(0x000000, 255),
-        };
+    /** Neutral soft tone. */
+    pub softNeutral : Soft;
+
+    /** Brand soft tone. */
+    pub softPrimary : Soft;
+
+    /** Success soft tone. */
+    pub softSuccess : Soft;
+
+    /** Warning soft tone. */
+    pub softWarning : Soft;
+
+    /** Danger soft tone. */
+    pub softDanger : Soft;
+
+    /** Info soft tone. */
+    pub softInfo : Soft;
+
+    /** The brand hue, identical in both themes. */
+    pub static fn huePrimary() : Hue {
+        return Hue { s500: Tint::hex(0x5566ED), s600: Tint::hex(0x4654C8), s700: Tint::hex(0x3743A0), s800: Tint::hex(0x2A3379) };
+    }
+
+    /** The success hue. */
+    pub static fn hueSuccess() : Hue {
+        return Hue { s500: Tint::hex(0x22C55E), s600: Tint::hex(0x16A34A), s700: Tint::hex(0x15803D), s800: Tint::hex(0x166534) };
+    }
+
+    /** The warning hue. */
+    pub static fn hueWarning() : Hue {
+        return Hue { s500: Tint::hex(0xF59E0B), s600: Tint::hex(0xD97706), s700: Tint::hex(0xB45309), s800: Tint::hex(0x92400E) };
+    }
+
+    /** The danger hue. */
+    pub static fn hueDanger() : Hue {
+        return Hue { s500: Tint::hex(0xEF4444), s600: Tint::hex(0xDC2626), s700: Tint::hex(0xB91C1C), s800: Tint::hex(0x991B1B) };
+    }
+
+    /** The info hue. */
+    pub static fn hueInfo() : Hue {
+        return Hue { s500: Tint::hex(0x0EA5E9), s600: Tint::hex(0x0284C7), s700: Tint::hex(0x0369A1), s800: Tint::hex(0x075985) };
+    }
+
+    /** The "important" hue. */
+    pub static fn hueImportant() : Hue {
+        return Hue { s500: Tint::hex(0xFFD250), s600: Tint::hex(0xD4AF43), s700: Tint::hex(0xAA8C35), s800: Tint::hex(0x806928) };
+    }
+
+    /** A soft tone on a light page: a pale wash, a dark ink. */
+    pub static fn softLight(fill : i32, hover : i32, line : i32, fg : i32) : Soft {
+        return Soft { fill: Tint::hex(fill), hover: Tint::hex(hover), line: Tint::hex(line), fg: Tint::hex(fg) };
+    }
+
+    /** A soft tone on a dark page: an alpha of the -500 shade `c500`, a light ink. */
+    pub static fn softDark(c500 : i32, fg : i32) : Soft {
+        return Soft { fill: Tint::hexA(c500, 41), hover: Tint::hexA(c500, 66), line: Tint::hexA(c500, 87), fg: Tint::hex(fg) };
     }
 
     /** The light theme. */
     pub static fn light() : Palette {
         return Palette {
-            background: Tint::hex(0xF3F4F8),
+            background: Tint::hex(0xF3F4F6),
             surface: Tint::hex(0xFFFFFF),
-            raised: Tint::hex(0xF6F7FA),
+            raised: Tint::hex(0xF9FAFB),
             overlay: Tint::hex(0xFFFFFF),
-            line: Tint::hex(0xE3E6EE),
-            lineStrong: Tint::hex(0xCBD0DC),
-            text: Tint::hex(0x161A24),
-            textDim: Tint::hex(0x5A6377),
-            textFaint: Tint::hex(0x8991A4),
-            accent: Tint::hex(0x5565F0),
-            accentTop: Tint::hex(0x6B7CFF),
-            accentBottom: Tint::hex(0x4A5AE6),
-            accentSoft: Tint::hexA(0x5565F0, 30),
+            line: Tint::hex(0xE5E7EB),
+            lineStrong: Tint::hex(0xD1D5DB),
+            text: Tint::hex(0x1F2937),
+            textDim: Tint::hex(0x4B5563),
+            textFaint: Tint::hex(0x6B7280),
+            textOff: Tint::hex(0x9CA3AF),
+            link: Tint::hex(0x4654C8),
+            hover: Tint::hex(0xF3F4F6),
+            active: Tint::hex(0xE5E7EB),
+            track: Tint::hex(0xE5E7EB),
+            inverse: Tint::hex(0x111827),
+            inverseText: Tint::hex(0xFFFFFF),
+            scrim: Tint::hexA(0x030712, 102),
+            shadow: Tint::hex(0x030712),
+            accent: Tint::hex(0x4654C8),
+            accentTop: Tint::hex(0x4654C8),
+            accentBottom: Tint::hex(0x2A3379),
+            accentSoft: Tint::hex(0xDCE0FB),
             onAccent: Tint::hex(0xFFFFFF),
-            ok: Tint::hex(0x1FA971),
-            warn: Tint::hex(0xC98A12),
-            danger: Tint::hex(0xD93B4A),
-            scrim: Tint::hexA(0x0B0E1A, 120),
-            shadow: Tint::hexA(0x1E2A50, 255),
+            primary: Palette::huePrimary(),
+            success: Palette::hueSuccess(),
+            warning: Palette::hueWarning(),
+            danger: Palette::hueDanger(),
+            info: Palette::hueInfo(),
+            important: Palette::hueImportant(),
+            softNeutral: Palette::softLight(0xF3F4F6, 0xE5E7EB, 0xD1D5DB, 0x4B5563),
+            softPrimary: Palette::softLight(0xDCE0FB, 0xC4CAFA, 0xABB4F8, 0x3743A0),
+            softSuccess: Palette::softLight(0xDCFCE7, 0xBBF7D0, 0x86EFAC, 0x15803D),
+            softWarning: Palette::softLight(0xFEF3C7, 0xFDE68A, 0xFCD34D, 0xB45309),
+            softDanger: Palette::softLight(0xFEE2E2, 0xFECACA, 0xFCA5A5, 0xB91C1C),
+            softInfo: Palette::softLight(0xE0F2FE, 0xBAE6FD, 0x7DD3FC, 0x0369A1),
+        };
+    }
+
+    /** The dark theme. */
+    pub static fn dark() : Palette {
+        return Palette {
+            background: Tint::hex(0x111827),
+            surface: Tint::hex(0x1F2937),
+            raised: Tint::hex(0x374151),
+            overlay: Tint::hex(0x1F2937),
+            line: Tint::hex(0x4B5563),
+            lineStrong: Tint::hex(0x6B7280),
+            text: Tint::hex(0xFFFFFF),
+            textDim: Tint::hex(0xD1D5DB),
+            textFaint: Tint::hex(0x9CA3AF),
+            textOff: Tint::hex(0x6B7280),
+            link: Tint::hex(0xA5B4FC),
+            hover: Tint::hex(0x374151),
+            active: Tint::hex(0x4B5563),
+            track: Tint::hex(0x374151),
+            inverse: Tint::hex(0xF3F4F6),
+            inverseText: Tint::hex(0x111827),
+            scrim: Tint::hexA(0x030712, 102),
+            shadow: Tint::hex(0x000000),
+            accent: Tint::hex(0x4654C8),
+            accentTop: Tint::hex(0x8E9BF5),
+            accentBottom: Tint::hex(0x2A3379),
+            accentSoft: Tint::hexA(0x5566ED, 41),
+            onAccent: Tint::hex(0xFFFFFF),
+            primary: Palette::huePrimary(),
+            success: Palette::hueSuccess(),
+            warning: Palette::hueWarning(),
+            danger: Palette::hueDanger(),
+            info: Palette::hueInfo(),
+            important: Palette::hueImportant(),
+            softNeutral: Palette::softLight(0x374151, 0x4B5563, 0x6B7280, 0xE5E7EB),
+            softPrimary: Palette::softDark(0x5566ED, 0x8E9BF5),
+            softSuccess: Palette::softDark(0x22C55E, 0x4ADE80),
+            softWarning: Palette::softDark(0xF59E0B, 0xFCD34D),
+            softDanger: Palette::softDark(0xEF4444, 0xFCA5A5),
+            softInfo: Palette::softDark(0x0EA5E9, 0x7DD3FC),
         };
     }
 }
 
 /** The measures of a theme, in logical pixels. */
 pub struct Metrics {
-    /** Corner radius of a small control (a checkbox, a chip's inner mark). */
-    pub radiusSm : f64 = 6.0;
+    /** Corner radius of anything inline: a badge, a menu row, a tab. */
+    pub radiusInline : f64 = 6.0;
 
-    /** Corner radius of a control (a button, a field). */
-    pub radiusMd : f64 = 10.0;
+    /** Corner radius of anything you click or type in: a button, a field. */
+    pub radiusControl : f64 = 8.0;
 
-    /** Corner radius of a card, a dialog. */
-    pub radiusLg : f64 = 14.0;
+    /** Corner radius of a card, a panel, a tile. */
+    pub radiusSurface : f64 = 12.0;
+
+    /** Corner radius of a dialog, a drawer, the command palette. */
+    pub radiusOverlay : f64 = 16.0;
 
     /** A radius so large it makes a pill. */
     pub radiusFull : f64 = 999.0;
@@ -138,17 +300,26 @@ pub struct Metrics {
     /** The spacing unit: every gap in a layout is a multiple of it. */
     pub unit : f64 = 4.0;
 
-    /** Height of a small control. */
-    pub controlSm : f64 = 28.0;
+    /** Height of the extra-small control. */
+    pub controlXs : f64 = 32.0;
 
-    /** Height of a control. */
-    pub controlMd : f64 = 36.0;
+    /** Height of the small control. */
+    pub controlSm : f64 = 36.0;
 
-    /** Height of a large control. */
-    pub controlLg : f64 = 44.0;
+    /** Height of the control. */
+    pub controlMd : f64 = 40.0;
+
+    /** Height of the large control. */
+    pub controlLg : f64 = 48.0;
+
+    /** Height of the extra-large control. */
+    pub controlXl : f64 = 56.0;
+
+    /** Text size of the smallest print. */
+    pub fontXs : f64 = 12.0;
 
     /** Text size of a small control. */
-    pub fontSm : f64 = 12.0;
+    pub fontSm : f64 = 13.0;
 
     /** Text size of body copy and controls. */
     pub fontMd : f64 = 14.0;
@@ -174,9 +345,17 @@ pub struct Metrics {
     /** Width of the focus ring. */
     pub ring : f64 = 2.0;
 
-    /** The standard metrics. */
+    /** Gap between the control and its focus ring. */
+    pub ringOffset : f64 = 2.0;
+
+    /** The standard metrics: the comfortable control heights (32 … 56). */
     pub static fn standard() : Metrics {
         return Metrics { };
+    }
+
+    /** The dense metrics: controls 4 to 8 px shorter (28 … 48), for tools and tables. */
+    pub static fn compact() : Metrics {
+        return Metrics { controlXs: 28.0, controlSm: 32.0, controlMd: 36.0, controlLg: 40.0, controlXl: 48.0 };
     }
 
     /** `n` spacing units. */

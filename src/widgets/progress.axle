@@ -83,6 +83,24 @@ pub class ProgressBar : Base, Widget {
     }
 }
 
+/** Spinners drawn by other widgets: a button that is waiting, a field that is searching. */
+pub class Spinners {
+    /** Draw the ring of dots in the square at (`x`, `y`), `size` wide, in `ink`. */
+    pub static fn draw(ctx : Context, p : Painter, x : f64, y : f64, size : f64, ink : Tint) : void {
+        let r : f64 = size * 0.5;
+        let dot : f64 = size * 0.13;
+        let head : f64 = Mathx::fract(ctx.now * 1.2);
+        for (i of 0..8) {
+            let ang : f64 = 6.283185307179586 * (i as f64) / 8.0;
+            let d : f64 = (head * 8.0 - (i as f64)) / 8.0;
+            let fade : f64 = 1.0 - Mathx::fract(d);
+            let cx : f64 = x + r + (r - dot) * ang.cos();
+            let cy : f64 = y + r + (r - dot) * ang.sin();
+            p.line(cx, cy, cx, cy, dot * (0.7 + 0.5 * fade), ink.faded(Mathx::roundI(60.0 + 195.0 * fade)));
+        }
+    }
+}
+
 /** A ring of dots that fades round. */
 pub class Spinner : Base, Widget {
     size : ControlSize;
@@ -103,17 +121,6 @@ pub class Spinner : Base, Widget {
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let a : Bounds = self.area;
-        let r : f64 = a.w * 0.5;
-        let dot : f64 = a.w * 0.13;
-        let head : f64 = Mathx::fract(ctx.now * 1.2);
-        let accent : Tint = ctx.theme.palette.accent;
-        for (i of 0..8) {
-            let ang : f64 = 6.283185307179586 * (i as f64) / 8.0;
-            let d : f64 = (head * 8.0 - (i as f64)) / 8.0;
-            let fade : f64 = 1.0 - Mathx::fract(d);
-            let cx : f64 = a.midX() + (r - dot) * ang.cos();
-            let cy : f64 = a.midY() + (r - dot) * ang.sin();
-            p.line(cx, cy, cx, cy, dot * (0.7 + 0.5 * fade), accent.faded(Mathx::roundI(60.0 + 195.0 * fade)));
-        }
+        Spinners::draw(ctx, p, a.x, a.y, a.w, ctx.theme.palette.primary.s600);
     }
 }

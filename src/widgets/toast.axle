@@ -11,8 +11,8 @@ use crate::gfx::mathx::Mathx;
 use crate::gfx::tint::Tint;
 use crate::gfx::shapes::{RRect, Brush};
 use crate::style::ease::{Eased, Rate};
-use crate::style::styles::BadgeStyle;
-use crate::style::variants::Tone;
+use crate::style::palette::Soft;
+use crate::style::variants::{Tone, Elevation};
 use crate::text::fonts::FaceKind;
 use crate::core::geometry::{Size, Bounds, Limits};
 use crate::core::event::{UiEvent, EventKind};
@@ -20,13 +20,14 @@ use crate::core::context::Context;
 use crate::core::widget::{Widget, Base};
 use crate::paint::painter::Painter;
 use crate::widgets::alert::Alert;
+use crate::widgets::panel::Surfaces;
 use crate::widgets::icon::{IconKind, Icons};
 
 /** Seconds a toast stays when not clicked. */
 const TOAST_SECONDS : f64 = 3.6;
 
 /** The card's size and the gap between stacked cards. */
-const TOAST_HEIGHT : f64 = 44.0;
+const TOAST_HEIGHT : f64 = 60.0;
 const TOAST_GAP : f64 = 10.0;
 const TOAST_MARGIN : f64 = 28.0;
 const TOAST_PX : f64 = 14.0;
@@ -62,7 +63,7 @@ pub class Toast : Base, Widget {
                 return;
             }
         }
-        let w : f64 = Mathx::fmin(area.w - 32.0, ctx.textWidth(FaceKind::Sans, self.text, TOAST_PX) + 64.0);
+        let w : f64 = Mathx::fmin(area.w - 32.0, ctx.textWidth(FaceKind::Sans, self.text, TOAST_PX) + 96.0);
         let slot : f64 = ctx.toastSlot(self.id) as f64;
         let y : f64 = area.bottom() - TOAST_MARGIN - TOAST_HEIGHT - slot * (TOAST_HEIGHT + TOAST_GAP);
         self.sheet = Bounds::make(area.midX() - w * 0.5, y, w, TOAST_HEIGHT);
@@ -119,18 +120,17 @@ pub class Toast : Base, Widget {
             return;
         }
         let pal = ctx.theme.palette;
-        let st : BadgeStyle = ctx.theme.badge(self.tone);
+        let soft : Soft = ctx.theme.soft(self.tone);
         let k : f64 = Mathx::smooth(self.openT.value);
         let prev : i32 = p.setOpacity(Mathx::roundI(k * 255.0));
         let b : Bounds = self.sheet.moved(0.0, (1.0 - k) * 12.0);
-        let rr : RRect = b.round(ctx.theme.metrics.radiusMd);
-        p.shadow(rr, 0.0, 8.0, 24.0, -4.0, pal.shadow.faded(130));
-        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
-        p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
-        p.strokeRound(rr, 1.0, Brush::solid(st.border.rgb, st.border.a));
-        Icons::draw(p, Alert::iconOf(self.tone), b.x + 14.0, b.midY() - 9.0, 18.0, st.text);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusSurface);
+        Surfaces::draw(p, rr, b, ctx.theme.panel(Elevation::Floating));
+        // The tone sits in a soft disc, as in a web toast.
+        p.fillRound(RRect::uniform(b.x + 14.0, b.midY() - 16.0, 32.0, 32.0, 16.0), Brush::solid(soft.fill.rgb, soft.fill.a));
+        Icons::draw(p, Alert::iconOf(self.tone), b.x + 21.0, b.midY() - 9.0, 18.0, soft.fg);
         let base : f64 = ctx.baselineIn(FaceKind::Sans, TOAST_PX, b.y, b.h);
-        p.textElided(FaceKind::Sans, self.text, b.x + 42.0, base, TOAST_PX, b.w - 56.0, pal.text);
+        p.textElided(FaceKind::Sans, self.text, b.x + 58.0, base, TOAST_PX, b.w - 74.0, pal.text);
         p.setOpacity(prev);
     }
 }

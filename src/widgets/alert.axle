@@ -9,7 +9,7 @@
 
 use crate::gfx::tint::Tint;
 use crate::gfx::shapes::{RRect, Brush};
-use crate::style::styles::BadgeStyle;
+use crate::style::palette::Soft;
 use crate::style::variants::{Tone, TextRole};
 use crate::core::geometry::{Size, Bounds, Limits, Insets, Align};
 use crate::core::event::UiEvent;
@@ -21,7 +21,7 @@ use crate::widgets::label::{Label, LabelProps};
 use crate::widgets::icon::{IconKind, Icons};
 
 /** Room the icon takes at the left: its margin, its size, and the gap after it. */
-const ALERT_GUTTER : f64 = 46.0;
+const ALERT_GUTTER : f64 = 48.0;
 
 /** A tinted box around an icon, a title and a message. The icon is drawn by the box, in the tone's colour. */
 pub class Alert : Base, Widget {
@@ -54,11 +54,11 @@ pub class Alert : Base, Widget {
 
     /** The widgets inside: the icon, then the title over the message. */
     pub(file) static fn content(tone : Tone, title : string, message : string) : dyn Widget {
-        let mut text : Column = new Column(FlexProps { gap: 4.0, padding: Insets { top: 12.0, right: 14.0, bottom: 12.0, left: ALERT_GUTTER } });
+        let mut text : Column = new Column(FlexProps { gap: 4.0, padding: Insets { top: 16.0, right: 16.0, bottom: 16.0, left: ALERT_GUTTER } });
         if (title.byteLength > 0) {
             text.add(new Label(title, TextRole::Strong));
         }
-        text.add(new Label(LabelProps { role: TextRole::Body, wrap: true }, message));
+        text.add(new Label(LabelProps { role: TextRole::Dim, wrap: true }, message));
         return text;
     }
 
@@ -74,11 +74,11 @@ pub class Alert : Base, Widget {
     }
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
-        let st : BadgeStyle = ctx.theme.badge(self.tone);
-        let rr : RRect = self.area.round(ctx.theme.metrics.radiusMd);
-        p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
-        p.strokeRound(rr, 1.0, Brush::solid(st.border.rgb, st.border.a));
-        Icons::draw(p, Alert::iconOf(self.tone), self.area.x + 14.0, self.area.y + 13.0, 18.0, st.text);
+        let soft : Soft = ctx.theme.soft(self.tone);
+        let rr : RRect = self.area.round(ctx.theme.metrics.radiusSurface);
+        p.fillRound(rr, Brush::solid(soft.fill.rgb, soft.fill.a));
+        p.strokeRound(rr, 1.0, Brush::solid(soft.line.rgb, soft.line.a));
+        Icons::draw(p, Alert::iconOf(self.tone), self.area.x + 16.0, self.area.y + 17.0, 20.0, soft.fg);
         let c : dyn Widget = self.kid[0];
         c.paint(ctx, p);
     }

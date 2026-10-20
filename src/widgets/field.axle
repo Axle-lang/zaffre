@@ -54,6 +54,9 @@ pub struct FieldProps {
 
     /** The share of a parent's spare room it asks for. */
     pub grow : f64 = 0.0;
+
+    /** Whether the value is wrong: a red outline and halo. */
+    pub invalid : bool = false;
 }
 
 /** The handler a field without one runs. */
@@ -341,11 +344,19 @@ pub class TextField : Control, Widget {
             fill = st.fillOff;
         }
         p.fillRound(rr, fill.brush(a.y, a.h));
-        let edge : Tint = st.border.mixed(st.borderHover, hv).mixed(st.borderFocus, act);
+        let mut focusEdge : Tint = st.borderFocus;
+        let mut halo : Tint = st.ring;
+        let mut rest : Tint = st.border.mixed(st.borderHover, hv);
+        if (self.props.invalid) {
+            focusEdge = st.borderInvalid;
+            halo = st.ringInvalid;
+            rest = st.borderInvalid;
+        }
+        let edge : Tint = rest.mixed(focusEdge, act);
         p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
         if (act > 0) {
-            let ring : Tint = st.ring.faded(act);
-            p.strokeRound(a.grown(2.0).round(st.radius + 2.0), 2.0, Brush::solid(ring.rgb, ring.a));
+            let ring : Tint = halo.faded(act);
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
         }
         let kind : FaceKind = FaceKind::Sans;
         if (self.props.icon != IconKind::None) {
@@ -381,7 +392,7 @@ pub class TextField : Control, Widget {
             }
             let mut ink : Tint = st.text;
             if (off) {
-                ink = st.placeholder;
+                ink = ctx.theme.palette.textOff;
             }
             p.text(kind, s, ox, base, st.px, ink);
             if (self.isFocused(ctx) && !self.hasSelection()) {

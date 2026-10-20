@@ -15,6 +15,8 @@
 use crate::gfx::mathx::Mathx;
 use crate::gfx::shapes::{RRect, Brush};
 use crate::style::ease::{Eased, Rate};
+use crate::style::styles::PanelStyle;
+use crate::style::variants::Elevation;
 use crate::text::fonts::FaceKind;
 use crate::core::geometry::{Size, Bounds, Limits};
 use crate::core::event::{UiEvent, EventKind};
@@ -26,7 +28,7 @@ use crate::paint::painter::Painter;
 const TIP_DELAY : f64 = 0.55;
 
 /** Text size and padding of the note. */
-const TIP_PX : f64 = 12.5;
+const TIP_PX : f64 = 12.0;
 const TIP_PAD_X : f64 = 10.0;
 const TIP_PAD_Y : f64 = 6.0;
 
@@ -52,8 +54,8 @@ pub class TipOverlay : Base, Widget {
 
     pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
         self.area = area;
-        let w : f64 = ctx.textWidth(FaceKind::Sans, self.text, TIP_PX) + 2.0 * TIP_PAD_X;
-        let h : f64 = ctx.lineHeight(FaceKind::Sans, TIP_PX) + 2.0 * TIP_PAD_Y;
+        let w : f64 = ctx.textWidth(FaceKind::Bold, self.text, TIP_PX) + 2.0 * TIP_PAD_X;
+        let h : f64 = ctx.lineHeight(FaceKind::Bold, TIP_PX) + 2.0 * TIP_PAD_Y;
         let mut y : f64 = self.anchor.bottom() + 8.0;
         self.above = false;
         if (y + h > area.bottom() - 6.0 && self.anchor.y - 8.0 - h >= area.y + 6.0) {
@@ -108,12 +110,12 @@ pub class TipOverlay : Base, Widget {
             rise = 0.0 - rise;
         }
         let b : Bounds = self.sheet.moved(0.0, 0.0 - rise);
-        let rr : RRect = b.round(ctx.theme.metrics.radiusSm + 1.0);
-        p.shadow(rr, 0.0, 4.0, 14.0, -2.0, pal.shadow.faded(110));
-        p.fillRound(rr, Brush::solid(pal.overlay.rgb, pal.overlay.a));
-        p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
-        let base : f64 = ctx.baselineIn(FaceKind::Sans, TIP_PX, b.y, b.h);
-        p.text(FaceKind::Sans, self.text, b.x + TIP_PAD_X, base, TIP_PX, pal.text);
+        let rr : RRect = b.round(ctx.theme.metrics.radiusInline);
+        let chip : PanelStyle = ctx.theme.panel(Elevation::Overlay);
+        p.shadow(rr, 0.0, chip.shadowDy, chip.shadowBlur, chip.shadowSpread, chip.shadow);
+        p.fillRound(rr, Brush::solid(pal.inverse.rgb, pal.inverse.a));
+        let base : f64 = ctx.baselineIn(FaceKind::Bold, TIP_PX, b.y, b.h);
+        p.text(FaceKind::Bold, self.text, b.x + TIP_PAD_X, base, TIP_PX, pal.inverseText);
         p.setOpacity(prev);
     }
 }

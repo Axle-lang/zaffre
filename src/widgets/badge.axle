@@ -8,7 +8,7 @@ use crate::gfx::mathx::Mathx;
 use crate::gfx::tint::{Tint, Px};
 use crate::gfx::shapes::{RRect, Brush};
 use crate::style::styles::BadgeStyle;
-use crate::style::variants::Tone;
+use crate::style::variants::{Tone, BadgeLook, BadgeSize};
 use crate::text::fonts::FaceKind;
 use crate::text::typeset::Utf8;
 use crate::text::strings::Strings;
@@ -17,43 +17,78 @@ use crate::core::context::Context;
 use crate::core::widget::{Widget, Base};
 use crate::paint::painter::Painter;
 
-/** A pill of text. */
+/** How a badge looks. */
+pub struct BadgeProps {
+    /** What it says. */
+    pub text : string = "";
+
+    /** What it is saying: the colour. */
+    pub tone : Tone = Tone::Accent;
+
+    /** A soft wash with dark ink, or a solid fill with white ink. */
+    pub look : BadgeLook = BadgeLook::Subtle;
+
+    /** How large it is. */
+    pub size : BadgeSize = BadgeSize::Md;
+
+    /** Whether a status dot leads the text. */
+    pub dot : bool = false;
+}
+
+/** A small label: a count, a status, a tag. */
 pub class Badge : Base, Widget {
-    text : string;
-    tone : Tone;
+    props : BadgeProps;
 
     /** A neutral badge saying `text`. */
     constructor(text : string) {
-        self.text = text;
-        self.tone = Tone::Neutral;
+        self.props = BadgeProps { text: text, tone: Tone::Neutral };
     }
 
     /** A badge saying `text` in `tone`. */
     constructor(text : string, tone : Tone) {
-        self.text = text;
-        self.tone = tone;
+        self.props = BadgeProps { text: text, tone: tone };
+    }
+
+    /** A badge set as `props` say. */
+    constructor(own props : BadgeProps) {
+        self.props = props;
     }
 
     /** Change what it says. */
     pub fn setText(mut self, text : string) : void {
-        self.text = text;
+        self.props = BadgeProps { text: text, ..self.props };
+    }
+
+    pub(file) fn style(self, ctx : Context) : BadgeStyle {
+        return ctx.theme.badgeOf(self.props.tone, self.props.look, self.props.size);
     }
 
     pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
-        let st : BadgeStyle = ctx.theme.badge(self.tone);
-        let w : f64 = ctx.textWidth(FaceKind::Bold, self.text, st.px) + 2.0 * st.padX;
+        let st : BadgeStyle = self.style(ctx);
+        let mut w : f64 = ctx.textWidth(FaceKind::Bold, self.props.text, st.px) + 2.0 * st.padX;
+        if (self.props.dot) {
+            w = w + 6.0 + 6.0;
+        }
         return limits.constrain(Size { w: Mathx::fmax(w, st.height), h: st.height });
     }
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
-        let st : BadgeStyle = ctx.theme.badge(self.tone);
+        let st : BadgeStyle = self.style(ctx);
         let a : Bounds = self.area;
-        let rr : RRect = a.round(a.h * 0.5);
+        let rr : RRect = a.round(st.radius);
         p.fillRound(rr, Brush::solid(st.fill.rgb, st.fill.a));
-        p.strokeRound(rr, 1.0, Brush::solid(st.border.rgb, st.border.a));
-        let w : f64 = ctx.textWidth(FaceKind::Bold, self.text, st.px);
+        let w : f64 = ctx.textWidth(FaceKind::Bold, self.props.text, st.px);
+        let mut full : f64 = w;
+        if (self.props.dot) {
+            full = full + 12.0;
+        }
+        let mut x : f64 = a.x + (a.w - full) * 0.5;
+        if (self.props.dot) {
+            p.line(x + 3.0, a.midY(), x + 3.0, a.midY(), 6.0, st.dot);
+            x = x + 12.0;
+        }
         let base : f64 = ctx.baselineIn(FaceKind::Bold, st.px, a.y, a.h);
-        p.text(FaceKind::Bold, self.text, a.x + (a.w - w) * 0.5, base, st.px, st.text);
+        p.text(FaceKind::Bold, self.props.text, x, base, st.px, st.text);
     }
 }
 

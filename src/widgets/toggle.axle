@@ -18,11 +18,12 @@ use crate::gfx::shapes::{RRect, Brush};
 use crate::style::ease::{Eased, Rate};
 use crate::style::fill::Fill;
 use crate::style::styles::ToggleStyle;
+use crate::style::palette::Palette;
 use crate::style::variants::ControlSize;
 use crate::text::fonts::FaceKind;
 use crate::core::geometry::{Size, Bounds, Limits};
 use crate::core::event::{UiEvent, EventKind, Key};
-use crate::core::context::Context;
+use crate::core::context::{Context, Cursor};
 use crate::core::model::Model;
 use crate::core::widget::{Widget, Control, Gesture};
 use crate::paint::painter::Painter;
@@ -86,7 +87,11 @@ pub class Toggle : Control {
         self.enabled = !self.props.disabled;
         let g : Gesture = self.pointer(ctx, e);
         if (e.kind == EventKind::PointerMove && self.hovered) {
-            self.wantHand(ctx);
+            if (self.props.disabled) {
+                ctx.wantCursor(Cursor::NotAllowed);
+            } else {
+                self.wantHand(ctx);
+            }
         }
         if (g == Gesture::Click || g == Gesture::Press) {
             return g;
@@ -129,7 +134,32 @@ pub class Toggle : Control {
             return;
         }
         let ring : Tint = st.ring.faded(self.focusT.alpha());
-        p.strokeRound(rr.grown(3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+        let gap : f64 = ctx.theme.metrics.ringOffset + ctx.theme.metrics.ring;
+        p.strokeRound(rr.grown(gap), ctx.theme.metrics.ring, Brush::solid(ring.rgb, ring.a));
+    }
+
+    /** The fill of a checkbox or a radio: the surface, filled with the accent when `filled` and on. */
+    pub(derived) fn boxFill(self, ctx : Context, st : ToggleStyle, filled : bool) : Fill {
+        let pal : Palette = ctx.theme.palette;
+        if (self.props.disabled) {
+            if (filled) {
+                return Fill::flat(pal.raised.mixed(pal.textOff, self.valueT.alpha()));
+            }
+            return Fill::flat(pal.raised);
+        }
+        if (filled) {
+            return st.boxOff.mixed(st.on, self.valueT.alpha());
+        }
+        return st.boxOff;
+    }
+
+    /** The outline of a mark: the strong line, darker under the pointer, the accent when on. */
+    pub(derived) fn boxEdge(self, ctx : Context, st : ToggleStyle) : Tint {
+        let pal : Palette = ctx.theme.palette;
+        if (self.props.disabled) {
+            return pal.line.mixed(pal.textOff, self.valueT.alpha());
+        }
+        return st.borderOff.mixed(pal.textFaint, self.hoverT.alpha()).mixed(st.borderOn, self.valueT.alpha());
     }
 
     /** The fill of a mark between its off and on states, brightened under the pointer. */
@@ -137,7 +167,7 @@ pub class Toggle : Control {
         let hover : Fill = Fill::flat(ctx.theme.hoverOf(st.off.top));
         let rest : Fill = st.off.mixed(hover, self.hoverT.alpha());
         if (self.props.disabled) {
-            return rest.faded(120);
+            return rest.faded(128);
         }
         return rest.mixed(st.on, self.valueT.alpha());
     }
@@ -201,8 +231,8 @@ pub class Checkbox : Toggle, Widget {
         let y : f64 = a.midY() - st.mark * 0.5;
         let rr : RRect = RRect::uniform(a.x, y, st.mark, st.mark, st.radius);
         let on : i32 = self.valueT.alpha();
-        p.fillRound(rr, self.markFill(ctx, st).brush(y, st.mark));
-        let edge : Tint = st.borderOff.mixed(st.borderOn, on);
+        p.fillRound(rr, self.boxFill(ctx, st, true).brush(y, st.mark));
+        let edge : Tint = self.boxEdge(ctx, st);
         p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
         if (on > 0) {
             let g : f64 = st.mark * 0.85;
@@ -276,7 +306,7 @@ pub class Switch : Toggle, Widget {
         let knobD : f64 = st.trackH - 4.0;
         let kx : f64 = Mathx::lerp(a.x + 2.0, a.x + st.trackW - 2.0 - knobD, t);
         let knob : RRect = RRect::uniform(kx, y + 2.0, knobD, knobD, knobD * 0.5);
-        p.shadow(knob, 0.0, 1.0, 3.0, 0.0, ctx.theme.palette.shadow.withAlpha(90));
+        p.shadow(knob, 0.0, 1.0, 2.0, -1.0, ctx.theme.palette.shadow.withAlpha(ctx.theme.isDark ? 128 : 26));
         p.fillRound(knob, Brush::solid(st.knob.rgb, st.knob.a));
         self.drawRing(ctx, p, st, track);
         self.drawLabel(ctx, p, st, a.x + st.trackW + st.gap);
@@ -346,13 +376,17 @@ pub class Radio : Toggle, Widget {
         let y : f64 = a.midY() - st.mark * 0.5;
         let rr : RRect = RRect::uniform(a.x, y, st.mark, st.mark, st.mark * 0.5);
         let on : i32 = self.valueT.alpha();
-        p.fillRound(rr, self.markFill(ctx, st).brush(y, st.mark));
-        let edge : Tint = st.borderOff.mixed(st.borderOn, on);
+        p.fillRound(rr, self.boxFill(ctx, st, false).brush(y, st.mark));
+        let edge : Tint = self.boxEdge(ctx, st);
         p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
         if (on > 0) {
-            let d : f64 = st.mark * 0.38 * self.valueT.value;
+            let d : f64 = st.mark * 0.45 * self.valueT.value;
             let dot : RRect = RRect::uniform(a.x + (st.mark - d) * 0.5, y + (st.mark - d) * 0.5, d, d, d * 0.5);
-            p.fillRound(dot, Brush::solid(st.glyph.rgb, st.glyph.a));
+            let mut dotInk : Tint = st.borderOn;
+            if (self.props.disabled) {
+                dotInk = ctx.theme.palette.textOff;
+            }
+            p.fillRound(dot, Brush::solid(dotInk.rgb, dotInk.a));
         }
         self.drawRing(ctx, p, st, rr);
         self.drawLabel(ctx, p, st, a.x + st.mark + st.gap);

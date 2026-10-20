@@ -72,6 +72,9 @@ pub class App {
             Cursor::Beam => CursorShape::Beam,
             Cursor::ResizeH => CursorShape::ResizeH,
             Cursor::ResizeV => CursorShape::ResizeV,
+            Cursor::Wait => CursorShape::Wait,
+            Cursor::NotAllowed => CursorShape::NotAllowed,
+            Cursor::Move => CursorShape::Move,
             _ => CursorShape::Arrow,
         };
     }

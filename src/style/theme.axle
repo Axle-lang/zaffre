@@ -20,18 +20,24 @@
 
 use crate::gfx::tint::Tint;
 use crate::style::fill::Fill;
-use crate::style::palette::{Palette, Metrics};
+use crate::style::palette::{Palette, Metrics, Hue, Soft};
 use crate::style::styles::{
     TextStyle, ButtonStyle, FieldStyle, ToggleStyle, SliderStyle, PanelStyle, BadgeStyle, ProgressStyle,
     ItemStyle
 };
-use crate::style::variants::{ButtonKind, ControlSize, Tone, TextRole, Elevation};
+use crate::style::variants::{ButtonKind, ControlSize, Tone, TextRole, Elevation, BadgeLook, BadgeSize};
 
 /** Entries in each per-size table. */
-const THEME_SIZES : i32 = 3;
+const THEME_SIZES : i32 = 5;
 
 /** Button kinds. */
-const THEME_KINDS : i32 = 5;
+const THEME_KINDS : i32 = 9;
+
+/** Tones. */
+const THEME_TONES : i32 = 6;
+
+/** Elevations. */
+const THEME_LEVELS : i32 = 5;
 
 /** A palette, metrics, and the style records built from them. */
 pub class Theme {
@@ -50,14 +56,14 @@ pub class Theme {
     /** Whether the palette is a dark one (a few derivations differ). */
     pub isDark : bool;
 
-    pub buttons : ButtonStyle[] = malloc<ButtonStyle>(15 as i64);
-    pub fields : FieldStyle[] = malloc<FieldStyle>(3 as i64);
-    pub checks : ToggleStyle[] = malloc<ToggleStyle>(3 as i64);
-    pub sliders : SliderStyle[] = malloc<SliderStyle>(3 as i64);
-    pub panels : PanelStyle[] = malloc<PanelStyle>(3 as i64);
-    pub badges : BadgeStyle[] = malloc<BadgeStyle>(5 as i64);
-    pub progress : ProgressStyle[] = malloc<ProgressStyle>(3 as i64);
-    pub items : ItemStyle[] = malloc<ItemStyle>(3 as i64);
+    pub buttons : ButtonStyle[] = malloc<ButtonStyle>(45 as i64);
+    pub fields : FieldStyle[] = malloc<FieldStyle>(5 as i64);
+    pub checks : ToggleStyle[] = malloc<ToggleStyle>(5 as i64);
+    pub sliders : SliderStyle[] = malloc<SliderStyle>(5 as i64);
+    pub panels : PanelStyle[] = malloc<PanelStyle>(5 as i64);
+    pub badges : BadgeStyle[] = malloc<BadgeStyle>(36 as i64);
+    pub progress : ProgressStyle[] = malloc<ProgressStyle>(5 as i64);
+    pub items : ItemStyle[] = malloc<ItemStyle>(5 as i64);
     pub texts : TextStyle[] = malloc<TextStyle>(10 as i64);
 
     /** A theme that switches between two palettes, starting in the dark one when `startDark`. */
@@ -128,9 +134,57 @@ pub class Theme {
         return self.panels[(level as i32) as i64];
     }
 
-    /** The style of a badge of `tone`. */
+    /** The style of a subtle, medium badge of `tone`. */
     pub fn badge(self, tone : Tone) : BadgeStyle {
-        return self.badges[(tone as i32) as i64];
+        return self.badgeOf(tone, BadgeLook::Subtle, BadgeSize::Md);
+    }
+
+    /** The style of a badge of `tone`, drawn `look`, at `size`. */
+    pub fn badgeOf(self, tone : Tone, look : BadgeLook, size : BadgeSize) : BadgeStyle {
+        return self.badges[(((tone as i32) * 2 + (look as i32)) * 3 + (size as i32)) as i64];
+    }
+
+    /** The soft recipe of `tone`: wash, hover wash, border and ink. */
+    pub fn soft(self, tone : Tone) : Soft {
+        let p : Palette = self.palette;
+        return match tone {
+            Tone::Accent => p.softPrimary,
+            Tone::Ok => p.softSuccess,
+            Tone::Warn => p.softWarning,
+            Tone::Danger => p.softDanger,
+            Tone::Info => p.softInfo,
+            _ => p.softNeutral,
+        };
+    }
+
+    /** The solid shades of `tone`. */
+    pub fn hue(self, tone : Tone) : Hue {
+        let p : Palette = self.palette;
+        return match tone {
+            Tone::Accent => p.primary,
+            Tone::Ok => p.success,
+            Tone::Warn => p.warning,
+            Tone::Danger => p.danger,
+            Tone::Info => p.info,
+            _ => Hue { s500: Tint::hex(0x6B7280), s600: Tint::hex(0x4B5563), s700: Tint::hex(0x374151), s800: Tint::hex(0x1F2937) },
+        };
+    }
+
+    /** The focus ring's colour. */
+    pub fn ringTint(self) : Tint {
+        return self.palette.primary.s500;
+    }
+
+    /** Height of a control at `size`. */
+    pub fn heightOf(self, size : ControlSize) : f64 {
+        let m : Metrics = self.metrics;
+        return match size {
+            ControlSize::Xs => m.controlXs,
+            ControlSize::Sm => m.controlSm,
+            ControlSize::Lg => m.controlLg,
+            ControlSize::Xl => m.controlXl,
+            _ => m.controlMd,
+        };
     }
 
     /** The style of a progress bar at `size`. */
@@ -183,7 +237,7 @@ pub class Theme {
 
     /** The track of a slider or progress bar: between a hairline and an outline. */
     pub fn trackTint(self) : Tint {
-        return self.palette.line.mixed(self.palette.lineStrong, 140);
+        return self.palette.track;
     }
 
     // ─── Rebuilding ──────────────────────────────────────────────
@@ -202,115 +256,121 @@ pub class Theme {
             self.progress[z as i64] = self.makeBar(z);
             self.items[z as i64] = self.makeItem(z);
         }
-        for (e of 0..3) {
+        for (e of 0..THEME_LEVELS) {
             self.panels[e as i64] = self.makePanel(e);
         }
-        for (t of 0..5) {
-            self.badges[t as i64] = self.makeBadge(t);
+        for (t of 0..THEME_TONES) {
+            for (l of 0..2) {
+                for (z of 0..3) {
+                    self.badges[((t * 2 + l) * 3 + z) as i64] = self.makeBadge(t, l, z);
+                }
+            }
         }
         for (r of 0..10) {
             self.texts[r as i64] = self.makeText(r);
         }
     }
 
-    /** Height, text size and horizontal padding for size index `z`. */
+    /** Height, text size, horizontal padding and icon gap for size index `z`. */
     pub(file) fn sizeOf(self, z : i32) : (h: f64, px: f64, pad: f64) {
+        let m : Metrics = self.metrics;
         if (z == 0) {
-            return (self.metrics.controlSm, self.metrics.fontSm, self.metrics.space(3.0));
+            return (m.controlXs, m.fontXs, 10.0);
         }
-        if (z == 2) {
-            return (self.metrics.controlLg, self.metrics.fontLg, self.metrics.space(5.0));
+        if (z == 1) {
+            return (m.controlSm, m.fontSm, 12.0);
         }
-        return (self.metrics.controlMd, self.metrics.fontMd, self.metrics.space(4.0));
+        if (z == 3) {
+            return (m.controlLg, m.fontMd + 1.0, 20.0);
+        }
+        if (z == 4) {
+            return (m.controlXl, m.fontLg, 24.0);
+        }
+        return (m.controlMd, m.fontMd, 16.0);
     }
 
     pub(file) fn makeButton(self, k : i32, z : i32) : ButtonStyle {
         let p : Palette = self.palette;
         let (h, px, pad) = self.sizeOf(z);
-        let mut radius : f64 = self.metrics.radiusMd;
-        if (z == 0) {
-            radius = self.metrics.radiusSm + 2.0;
-        }
         let none : Tint = Tint::hexA(0, 0);
+        let clear : Tint = p.hover.withAlpha(0);
+        let mut gap : f64 = 8.0;
+        if (z == 0) {
+            gap = 6.0;
+        }
+        let lift : Tint = p.shadow.withAlpha(self.isDark ? 128 : 26);
         let mut b : ButtonStyle = ButtonStyle {
-            radius: radius,
+            radius: self.metrics.radiusControl,
             height: h,
             padX: pad,
-            gap: self.metrics.space(2.0),
+            gap: gap,
             px: px,
             bold: true,
-            fill: Fill::flat(p.raised),
-            fillHover: Fill::flat(self.hoverOf(p.raised)),
-            fillPress: Fill::flat(self.pressOf(p.raised)),
-            fillOff: Fill::flat(p.raised.faded(120)),
-            border: p.lineStrong,
-            borderHover: p.accent,
+            fill: Fill::flat(p.hover),
+            fillHover: Fill::flat(p.active),
+            fillPress: Fill::flat(p.active),
+            fillOff: Fill::flat(p.hover.faded(128)),
+            border: none,
+            borderHover: none,
             borderW: self.metrics.hairline,
             text: p.text,
-            textOff: p.textFaint,
+            textHover: p.text,
+            textOff: p.textOff,
             shadow: none,
             shadowBlur: 0.0,
             shadowDy: 0.0,
             underline: false,
         };
         if (k == 0) {
-            // Primary: the accent, nearly flat, with a hairline of light on top and a small shadow.
-            let rest : Fill = Fill::vertical(Theme::lighten(p.accent, 10), p.accent);
-            let hover : Fill = Fill::vertical(Theme::lighten(p.accent, 44), Theme::lighten(p.accent, 28));
-            let press : Fill = Fill::vertical(Theme::darken(p.accent, 36), Theme::darken(p.accent, 28));
-            b = ButtonStyle {
-                fill: rest,
-                fillHover: hover,
-                fillPress: press,
-                fillOff: Fill::flat(p.raised.faded(120)),
-                border: Tint::hexA(0xFFFFFF, 22),
-                borderHover: Tint::hexA(0xFFFFFF, 50),
-                text: p.onAccent,
-                shadow: p.shadow.withAlpha(self.isDark ? 90 : 38),
-                shadowBlur: 4.0,
-                shadowDy: 1.0,
-                ..b
-            };
+            b = self.solid(b, p.primary, p.onAccent, lift);
         } else if (k == 1) {
+            let s : Soft = p.softPrimary;
             b = ButtonStyle {
-                shadow: p.shadow.withAlpha(self.isDark ? 0 : 40),
-                shadowBlur: 3.0,
-                shadowDy: 1.0,
-                ..b
-            };
-        } else if (k == 2) {
-            b = ButtonStyle {
-                fill: Fill::none(),
-                fillHover: Fill::flat(p.raised),
-                fillPress: Fill::flat(self.pressOf(p.raised)),
-                fillOff: Fill::none(),
-                border: none,
-                borderHover: none,
-                text: p.textDim,
+                fill: Fill::flat(s.fill),
+                fillHover: Fill::flat(s.hover),
+                fillPress: Fill::flat(s.hover),
+                fillOff: Fill::flat(s.fill.faded(128)),
+                text: s.fg,
+                textHover: s.fg,
                 ..b
             };
         } else if (k == 3) {
-            // Danger: a quiet tint of the danger colour that fills in under the pointer.
+            // Outline: a clear border, a wash only under the pointer.
             b = ButtonStyle {
-                fill: Fill::flat(p.danger.withAlpha(26)),
-                fillHover: Fill::flat(p.danger.withAlpha(58)),
-                fillPress: Fill::flat(p.danger.withAlpha(84)),
-                fillOff: Fill::flat(p.danger.withAlpha(12)),
-                border: p.danger.withAlpha(90),
-                borderHover: p.danger.withAlpha(190),
-                text: p.danger,
+                fill: Fill::flat(clear),
+                fillHover: Fill::flat(p.hover),
+                fillPress: Fill::flat(p.active),
+                fillOff: Fill::none(),
+                border: p.lineStrong,
+                borderHover: p.lineStrong,
                 ..b
             };
-        } else {
+        } else if (k == 4) {
+            b = ButtonStyle {
+                fill: Fill::flat(clear),
+                fillHover: Fill::flat(p.hover),
+                fillPress: Fill::flat(p.active),
+                fillOff: Fill::none(),
+                text: p.textDim,
+                textHover: p.text,
+                ..b
+            };
+        } else if (k == 5) {
+            b = self.solid(b, p.danger, p.onAccent, lift);
+        } else if (k == 6) {
+            b = self.solid(b, p.success, p.onAccent, lift);
+        } else if (k == 7) {
+            b = self.solid(b, p.important, Tint::hex(0x111827), lift);
+            b = ButtonStyle { fillHover: Fill::flat(p.important.s600), fillPress: Fill::flat(p.important.s700), fill: Fill::flat(p.important.s500), ..b };
+        } else if (k == 8) {
             b = ButtonStyle {
                 padX: 0.0,
                 fill: Fill::none(),
                 fillHover: Fill::none(),
                 fillPress: Fill::none(),
                 fillOff: Fill::none(),
-                border: none,
-                borderHover: none,
-                text: p.accentTop,
+                text: p.link,
+                textHover: p.link,
                 bold: false,
                 underline: true,
                 ..b
@@ -319,29 +379,44 @@ pub class Theme {
         return b;
     }
 
+    /** `b` as a solid button in `hue`, its label `ink`, with the raised shadow `lift`. */
+    pub(file) fn solid(self, b : ButtonStyle, hue : Hue, ink : Tint, lift : Tint) : ButtonStyle {
+        return ButtonStyle {
+            fill: Fill::flat(hue.s600),
+            fillHover: Fill::flat(hue.s700),
+            fillPress: Fill::flat(hue.s800),
+            fillOff: Fill::flat(hue.s600.faded(128)),
+            text: ink,
+            textHover: ink,
+            textOff: ink.faded(150),
+            shadow: lift,
+            shadowBlur: 3.0,
+            shadowDy: 1.0,
+            ..b
+        };
+    }
+
     pub(file) fn makeField(self, z : i32) : FieldStyle {
         let p : Palette = self.palette;
         let (h, px, pad) = self.sizeOf(z);
-        let mut base : Tint = p.raised;
-        if (self.isDark) {
-            base = p.background;
-        }
         return FieldStyle {
-            radius: self.metrics.radiusMd,
+            radius: self.metrics.radiusControl,
             height: h,
-            padX: self.metrics.space(3.0),
+            padX: 12.0,
             px: px,
-            fill: Fill::flat(base),
-            fillFocus: Fill::flat(base),
-            fillOff: Fill::flat(base.faded(130)),
-            border: p.line,
-            borderHover: p.lineStrong,
-            borderFocus: p.accent,
-            ring: p.accentSoft,
+            fill: Fill::flat(p.surface),
+            fillFocus: Fill::flat(p.surface),
+            fillOff: Fill::flat(p.raised),
+            border: p.lineStrong,
+            borderHover: p.textFaint,
+            borderFocus: p.primary.s500,
+            borderInvalid: p.danger.s500,
+            ring: p.primary.s500.withAlpha(51),
+            ringInvalid: p.danger.s500.withAlpha(51),
             text: p.text,
             placeholder: p.textFaint,
             caret: p.accentTop,
-            selection: p.accentSoft,
+            selection: p.primary.s500.withAlpha(self.isDark ? 90 : 70),
         };
     }
 
@@ -349,33 +424,32 @@ pub class Theme {
         let p : Palette = self.palette;
         let (h, px, pad) = self.sizeOf(z);
         let mut mark : f64 = 18.0;
-        let mut trackW : f64 = 38.0;
-        let mut trackH : f64 = 22.0;
-        if (z == 0) {
-            mark = 16.0;
-            trackW = 32.0;
-            trackH = 18.0;
-        } else if (z == 2) {
-            mark = 22.0;
-            trackW = 46.0;
-            trackH = 26.0;
+        let mut trackW : f64 = 44.0;
+        let mut trackH : f64 = 24.0;
+        if (z <= 1) {
+            mark = 14.0;
+            trackW = 36.0;
+            trackH = 20.0;
+        } else if (z >= 3) {
+            mark = 20.0;
         }
         return ToggleStyle {
             mark: mark,
-            radius: 5.0,
+            radius: 4.0,
             trackW: trackW,
             trackH: trackH,
-            gap: self.metrics.space(2.5),
+            gap: 10.0,
             px: px,
-            off: Fill::flat(self.trackTint()),
-            on: Fill::vertical(p.accentTop, p.accentBottom),
+            boxOff: Fill::flat(p.surface),
+            off: Fill::flat(p.track),
+            on: Fill::flat(p.primary.s600),
             borderOff: p.lineStrong,
-            borderOn: p.accentBottom,
+            borderOn: p.primary.s600,
             glyph: p.onAccent,
             knob: Tint::hex(0xFFFFFF),
             text: p.text,
-            textOff: p.textFaint,
-            ring: p.accentSoft,
+            textOff: p.textOff,
+            ring: self.ringTint(),
         };
     }
 
@@ -384,12 +458,12 @@ pub class Theme {
         let (h, px, pad) = self.sizeOf(z);
         return SliderStyle {
             trackH: 6.0,
-            thumb: 18.0 + (z as f64) * 2.0,
-            track: self.trackTint(),
-            fill: Fill::vertical(p.accentTop, p.accentBottom),
-            knob: Tint::hex(0xFFFFFF),
-            knobBorder: p.shadow.withAlpha(30),
-            ring: p.accentSoft,
+            thumb: 18.0,
+            track: p.track,
+            fill: Fill::flat(p.primary.s500),
+            knob: p.surface,
+            knobBorder: p.primary.s500,
+            ring: self.ringTint(),
             px: px,
             text: p.textDim,
         };
@@ -399,86 +473,139 @@ pub class Theme {
         let p : Palette = self.palette;
         let none : Tint = Tint::hexA(0, 0);
         let dark : bool = self.isDark;
-        if (e == 0) {
-            return PanelStyle {
-                radius: self.metrics.radiusLg,
-                fill: Fill::flat(p.surface),
-                border: p.line,
-                borderW: self.metrics.hairline,
-                shadow: none,
-                shadowBlur: 0.0,
-                shadowDy: 0.0,
-                shadow2: none,
-                shadow2Blur: 0.0,
-                shadow2Dy: 0.0,
-            };
-        }
+        let sh : Tint = p.shadow;
+        let mut radius : f64 = self.metrics.radiusSurface;
+        let mut fill : Tint = p.surface;
+        let mut wide : Tint = none;
+        let mut wideDy : f64 = 0.0;
+        let mut wideBlur : f64 = 0.0;
+        let mut wideSpread : f64 = 0.0;
+        let mut tight : Tint = none;
+        let mut tightDy : f64 = 0.0;
+        let mut tightBlur : f64 = 0.0;
+        let mut tightSpread : f64 = 0.0;
         if (e == 1) {
-            return PanelStyle {
-                radius: self.metrics.radiusLg,
-                fill: Fill::flat(p.surface),
-                border: p.line,
-                borderW: self.metrics.hairline,
-                shadow: p.shadow.withAlpha(dark ? 140 : 56),
-                shadowBlur: 24.0,
-                shadowDy: 8.0,
-                shadow2: p.shadow.withAlpha(dark ? 90 : 36),
-                shadow2Blur: 3.0,
-                shadow2Dy: 1.0,
-            };
+            // raised: sits on the page without floating.
+            wide = sh.withAlpha(dark ? 89 : 15);
+            wideDy = 1.0;
+            wideBlur = 3.0;
+            tight = sh.withAlpha(dark ? 128 : 26);
+            tightDy = 1.0;
+            tightBlur = 2.0;
+            tightSpread = -1.0;
+        } else if (e == 2) {
+            // overlay: menus, popovers, anchored to a trigger.
+            fill = p.overlay;
+            wide = sh.withAlpha(dark ? 153 : 41);
+            wideDy = 14.0;
+            wideBlur = 28.0;
+            wideSpread = -8.0;
+            tight = sh.withAlpha(dark ? 128 : 26);
+            tightDy = 2.0;
+            tightBlur = 6.0;
+            tightSpread = -2.0;
+        } else if (e == 3) {
+            // lifted: a raised card under the pointer.
+            wide = sh.withAlpha(dark ? 140 : 36);
+            wideDy = 10.0;
+            wideBlur = 20.0;
+            wideSpread = -6.0;
+            tight = sh.withAlpha(dark ? 128 : 26);
+            tightDy = 2.0;
+            tightBlur = 4.0;
+            tightSpread = -2.0;
+        } else if (e == 4) {
+            // floating: dialogs, drawers, toasts.
+            radius = self.metrics.radiusOverlay;
+            fill = p.overlay;
+            wide = sh.withAlpha(dark ? 179 : 61);
+            wideDy = 24.0;
+            wideBlur = 48.0;
+            wideSpread = -12.0;
+            tight = sh.withAlpha(dark ? 140 : 31);
+            tightDy = 4.0;
+            tightBlur = 10.0;
+            tightSpread = -3.0;
         }
         return PanelStyle {
-            radius: self.metrics.radiusLg,
-            fill: Fill::flat(p.overlay),
-            border: p.lineStrong,
+            radius: radius,
+            fill: Fill::flat(fill),
+            border: p.line,
             borderW: self.metrics.hairline,
-            shadow: p.shadow.withAlpha(dark ? 190 : 80),
-            shadowBlur: 40.0,
-            shadowDy: 16.0,
-            shadow2: p.shadow.withAlpha(dark ? 110 : 44),
-            shadow2Blur: 4.0,
-            shadow2Dy: 1.0,
+            shadow: wide,
+            shadowBlur: wideBlur,
+            shadowDy: wideDy,
+            shadowSpread: wideSpread,
+            shadow2: tight,
+            shadow2Blur: tightBlur,
+            shadow2Dy: tightDy,
+            shadow2Spread: tightSpread,
         };
     }
 
-    pub(file) fn makeBadge(self, t : i32) : BadgeStyle {
+    pub(file) fn makeBadge(self, t : i32, l : i32, z : i32) : BadgeStyle {
         let p : Palette = self.palette;
-        let mut ink : Tint = p.textDim;
-        let mut fill : Tint = p.raised;
-        let mut edge : Tint = p.line;
+        let mut tone : Tone = Tone::Neutral;
         if (t == 1) {
-            ink = p.accentTop;
-            fill = p.accentSoft;
-            edge = p.accent.withAlpha(90);
+            tone = Tone::Accent;
         } else if (t == 2) {
-            ink = p.ok;
-            fill = p.ok.withAlpha(36);
-            edge = p.ok.withAlpha(90);
+            tone = Tone::Ok;
         } else if (t == 3) {
-            ink = p.warn;
-            fill = p.warn.withAlpha(36);
-            edge = p.warn.withAlpha(90);
+            tone = Tone::Warn;
         } else if (t == 4) {
-            ink = p.danger;
-            fill = p.danger.withAlpha(36);
-            edge = p.danger.withAlpha(90);
+            tone = Tone::Danger;
+        } else if (t == 5) {
+            tone = Tone::Info;
+        }
+        let soft : Soft = self.soft(tone);
+        let hue : Hue = self.hue(tone);
+        let none : Tint = Tint::hexA(0, 0);
+        let mut fill : Tint = soft.fill;
+        let mut ink : Tint = soft.fg;
+        if (l == 1) {
+            fill = hue.s600;
+            ink = Tint::hex(0xFFFFFF);
+            if (t == 3) {
+                fill = hue.s500;
+                ink = Tint::hex(0x111827);
+            }
+        }
+        let mut height : f64 = 24.0;
+        let mut pad : f64 = 10.0;
+        let mut px : f64 = 12.0;
+        if (z == 0) {
+            height = 20.0;
+            pad = 8.0;
+            px = 11.0;
+        } else if (z == 2) {
+            height = 28.0;
+            pad = 12.0;
+            px = 14.0;
         }
         return BadgeStyle {
             fill: fill,
-            border: edge,
+            border: none,
             text: ink,
-            height: 22.0,
-            padX: 9.0,
-            px: self.metrics.fontSm,
+            height: height,
+            padX: pad,
+            px: px,
+            radius: self.metrics.radiusInline,
+            dot: ink.withAlpha(178),
         };
     }
 
     pub(file) fn makeBar(self, z : i32) : ProgressStyle {
         let p : Palette = self.palette;
+        let mut h : f64 = 8.0;
+        if (z <= 1) {
+            h = 6.0;
+        } else if (z >= 3) {
+            h = 12.0;
+        }
         return ProgressStyle {
-            height: 4.0 + (z as f64) * 2.0,
-            track: self.trackTint(),
-            fill: Fill::vertical(p.accentTop, p.accentBottom),
+            height: h,
+            track: p.track,
+            fill: Fill::flat(p.primary.s500),
             spinner: 18.0 + (z as f64) * 4.0,
         };
     }
@@ -488,14 +615,14 @@ pub class Theme {
         let (h, px, pad) = self.sizeOf(z);
         return ItemStyle {
             height: h - 4.0,
-            radius: self.metrics.radiusSm + 2.0,
-            padX: self.metrics.space(2.5),
+            radius: self.metrics.radiusInline,
+            padX: 12.0,
             px: px,
-            hover: p.raised,
-            selected: p.accentSoft,
+            hover: p.hover,
+            selected: p.softPrimary.fill,
             text: p.text,
-            textSelected: p.accentTop,
-            textOff: p.textFaint,
+            textSelected: p.softPrimary.fg,
+            textOff: p.textOff,
         };
     }
 
@@ -509,10 +636,10 @@ pub class Theme {
             return TextStyle { px: m.fontMd, bold: false, mono: false, color: p.textFaint };
         }
         if (r == 3) {
-            return TextStyle { px: m.fontSm, bold: false, mono: false, color: p.textFaint };
+            return TextStyle { px: m.fontXs, bold: false, mono: false, color: p.textFaint };
         }
         if (r == 4) {
-            return TextStyle { px: m.fontSm + 1.0, bold: true, mono: false, color: p.textDim };
+            return TextStyle { px: m.fontMd, bold: true, mono: false, color: p.text };
         }
         if (r == 5) {
             return TextStyle { px: m.fontH3, bold: true, mono: false, color: p.text };

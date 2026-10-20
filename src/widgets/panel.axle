@@ -38,6 +38,23 @@ pub struct PanelProps {
     pub grow : f64 = 0.0;
 }
 
+/** Surfaces drawn by widgets that are not panels: a menu, a dialog, a toast, a tooltip. */
+pub class Surfaces {
+    /** Draw `rr` as the theme's surface `st`: its shadows, its fill, its hairline. */
+    pub static fn draw(p : Painter, rr : RRect, a : Bounds, st : PanelStyle) : void {
+        if (st.shadow.a > 0) {
+            p.shadow(rr, 0.0, st.shadowDy, st.shadowBlur, st.shadowSpread, st.shadow);
+        }
+        if (st.shadow2.a > 0) {
+            p.shadow(rr, 0.0, st.shadow2Dy, st.shadow2Blur, st.shadow2Spread, st.shadow2);
+        }
+        p.fillRound(rr, st.fill.brush(a.y, a.h));
+        if (st.border.a > 0) {
+            p.strokeRound(rr, st.borderW, Brush::solid(st.border.rgb, st.border.a));
+        }
+    }
+}
+
 /** A surface around one child. */
 pub class Panel : Base, Widget {
     props : PanelProps;
@@ -80,16 +97,7 @@ pub class Panel : Base, Widget {
             r = self.props.radius;
         }
         let rr : RRect = a.round(r);
-        if (st.shadow.a > 0) {
-            p.shadow(rr, 0.0, st.shadowDy, st.shadowBlur, 0.0 - st.shadowBlur * 0.08, st.shadow);
-        }
-        if (st.shadow2.a > 0) {
-            p.shadow(rr, 0.0, st.shadow2Dy, st.shadow2Blur, 0.0, st.shadow2);
-        }
-        p.fillRound(rr, st.fill.brush(a.y, a.h));
-        if (st.border.a > 0) {
-            p.strokeRound(rr, st.borderW, Brush::solid(st.border.rgb, st.border.a));
-        }
+        Surfaces::draw(p, rr, a, st);
         let c : dyn Widget = self.kid[0];
         c.paint(ctx, p);
     }

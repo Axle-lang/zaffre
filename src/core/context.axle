@@ -37,6 +37,15 @@ pub enum Cursor : i32 {
 
     /** A vertical resize arrow. */
     ResizeV = 4,
+
+    /** Busy: the thing under the pointer is working on it. */
+    Wait = 5,
+
+    /** Refused: the thing under the pointer is switched off. */
+    NotAllowed = 6,
+
+    /** Four arrows: this can be dragged anywhere. */
+    Move = 7,
 }
 
 /** What the interface knows about itself. */
