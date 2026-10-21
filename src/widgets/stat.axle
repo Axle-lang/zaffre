@@ -13,7 +13,7 @@ use crate::gfx::mathx::Mathx;
 use crate::gfx::tint::Tint;
 use crate::gfx::shapes::{RRect, Brush};
 use crate::style::styles::PanelStyle;
-use crate::style::variants::Elevation;
+use crate::style::variants::{Elevation, Tone};
 use crate::text::fonts::FaceKind;
 use crate::core::geometry::{Size, Bounds, Limits, Length};
 use crate::core::event::UiEvent;
@@ -46,6 +46,15 @@ pub struct StatProps {
 
     /** How it moved, as text ("12.4 %"); nothing when empty. */
     pub delta : string = "";
+
+    /** A quiet line under the figure, with no arrow: what the figure counts, or a detail. */
+    pub note : string = "";
+
+    /** A word set beside the figure, small and quiet: "internet addresses". */
+    pub unit : string = "";
+
+    /** The colour of a dot before the label; `Tone::Neutral` for no dot. */
+    pub dot : Tone = Tone::Neutral;
 
     /** Whether the arrow points up (the figure rose) rather than down. */
     pub rising : bool = true;
@@ -104,6 +113,9 @@ pub class Stat : Base, Widget {
         let mut h : f64 = ctx.lineHeight(FaceKind::Sans, STAT_SMALL_PX) + 6.0 + ctx.lineHeight(FaceKind::Bold, STAT_VALUE_PX);
         if (self.props.delta.byteLength > 0) {
             h = h + 6.0 + ctx.lineHeight(FaceKind::Bold, STAT_SMALL_PX);
+        }
+        if (self.props.note.byteLength > 0) {
+            h = h + 6.0 + ctx.lineHeight(FaceKind::Sans, STAT_SMALL_PX);
         }
         return h;
     }
@@ -165,10 +177,19 @@ pub class Stat : Base, Widget {
         let mut y : f64 = a.y + STAT_PAD;
         let lh : f64 = ctx.lineHeight(FaceKind::Medium, STAT_SMALL_PX);
         let base : f64 = ctx.baselineIn(FaceKind::Medium, STAT_SMALL_PX, y, lh);
-        p.text(FaceKind::Medium, self.props.label, x, base, STAT_SMALL_PX, label);
+        let mut lx : f64 = x;
+        if (self.props.dot != Tone::Neutral) {
+            let c = ctx.theme.hue(self.props.dot).s500;
+            p.fillRound(RRect::uniform(x, y + lh * 0.5 - 4.0, 8.0, 8.0, 4.0), Brush::solid(c.rgb, 255));
+            lx = x + 16.0;
+        }
+        p.text(FaceKind::Medium, self.props.label, lx, base, STAT_SMALL_PX, label);
         y = y + lh + 6.0;
         let vh : f64 = ctx.lineHeight(FaceKind::Bold, STAT_VALUE_PX);
-        p.text(FaceKind::Bold, self.props.value, x, ctx.baselineIn(FaceKind::Bold, STAT_VALUE_PX, y, vh), STAT_VALUE_PX, value);
+        let end : f64 = p.text(FaceKind::Bold, self.props.value, x, ctx.baselineIn(FaceKind::Bold, STAT_VALUE_PX, y, vh), STAT_VALUE_PX, value);
+        if (self.props.unit.byteLength > 0) {
+            p.text(FaceKind::Sans, self.props.unit, end + 8.0, ctx.baselineIn(FaceKind::Sans, STAT_SMALL_PX, y, vh) + 1.0, STAT_SMALL_PX, label);
+        }
         y = y + vh;
         if (self.props.delta.byteLength > 0) {
             y = y + 6.0;
@@ -186,6 +207,11 @@ pub class Stat : Base, Widget {
             }
             Icons::draw(p, arrow, x - 1.0, y + (dh - 14.0) * 0.5, 14.0, tone);
             p.text(FaceKind::Bold, self.props.delta, x + 15.0, ctx.baselineIn(FaceKind::Bold, STAT_SMALL_PX, y, dh), STAT_SMALL_PX, tone);
+        }
+        if (self.props.note.byteLength > 0) {
+            y = y + 6.0;
+            let nh : f64 = ctx.lineHeight(FaceKind::Sans, STAT_SMALL_PX);
+            p.text(FaceKind::Sans, self.props.note, x, ctx.baselineIn(FaceKind::Sans, STAT_SMALL_PX, y, nh), STAT_SMALL_PX, accent ? Tint::hexA(0xFFFFFF, 200) : pal.textDim);
         }
         if (self.hasFooter) {
             let f : dyn Widget = self.footer[0];

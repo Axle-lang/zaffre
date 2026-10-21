@@ -28,6 +28,10 @@ def host(widget, w=700.0, h=500.0):
     return v
 
 
+def key(v, k):
+    v.input(ev(z.EventKind.KeyDown, key=k))
+
+
 def at(v, kind, x, y, **kw):
     v.input(ev(kind, x, y, **kw))
 
@@ -162,6 +166,64 @@ for i in range(1, 5):
 check("typing a hex code chooses the colour", cm.get() == 0x4F46E5, cm.get())
 grid = z.SwatchGrid(z.Model(C.NONE), z.Model(True))
 check("the grid has fifty swatches", len(grid.colors) == 50, len(grid.colors))
+
+# --- DataGrid over a TextGrid ----------------------------------------------------------------
+cellsT = ["beta", "20", "x", "alpha", "3", "x", "child-b", "9", "y", "child-a", "11", "y", "gamma", "100", "x"]
+depthsT = [0, 0, 1, 1, 0]
+gs = z.DataState()
+src = z.TextGrid(3, cellsT, depthsT, gs)
+cols = [lit(z.DataColumn, title="Name", sortable=True), lit(z.DataColumn, title="N", width=z.Length.Px(80.0), sortable=True), lit(z.DataColumn, title="K", width=z.Length.Px(80.0))]
+dg = z.DataGrid(lit(z.DataGridProps, height=z.Length.Px(300.0)), cols, src, gs)
+v = host(dg, 700.0, 500.0)
+check("a grid shows its rows", dg.count == 5, dg.count)
+check("only the rows in view are built", dg.cellCount == 15, dg.cellCount)
+rb = dg.rowBox(1)
+at(v, z.EventKind.PointerMove, rb.x + 200, rb.y + 10)
+at(v, z.EventKind.PointerDown, rb.x + 200, rb.y + 10, button=0)
+at(v, z.EventKind.PointerUp, rb.x + 200, rb.y + 10, button=0)
+check("a click picks the row's key", gs.picked == 1, gs.picked)
+tb = dg.twistyBox(1)
+at(v, z.EventKind.PointerMove, tb.x + 12, tb.y + 10)
+at(v, z.EventKind.PointerDown, tb.x + 12, tb.y + 10, button=0)
+at(v, z.EventKind.PointerUp, tb.x + 12, tb.y + 10, button=0)
+v.layout()
+check("the chevron folds a group", dg.count == 3, dg.count)
+hb = dg.area.x + 30
+at(v, z.EventKind.PointerMove, hb, dg.area.y + 20)
+at(v, z.EventKind.PointerDown, hb, dg.area.y + 20, button=0)
+at(v, z.EventKind.PointerUp, hb, dg.area.y + 20, button=0)
+v.layout()
+names = [src.shown[i] for i in range(src.shownCount)]
+check("a header press sorts by the column", gs.sortCol == 0 and names == [1, 0, 4], (gs.sortCol, names))
+key(v, z.Key.End)
+check("End picks the last row", gs.picked == 4, gs.picked)
+key(v, z.Key.Up)
+check("Up picks the one above", gs.picked == 0, gs.picked)
+
+# --- Toggle chip, search input, meter ----------------------------------------------------------
+flag = z.Model(False)
+chip = z.ToggleChip("Local traffic", z.Model(78), flag)
+v = host(chip)
+cb = chip.bounds()
+at(v, z.EventKind.PointerMove, cb.x + 20, cb.y + 10)
+at(v, z.EventKind.PointerDown, cb.x + 20, cb.y + 10, button=0)
+at(v, z.EventKind.PointerUp, cb.x + 20, cb.y + 10, button=0)
+check("a click anywhere on the chip flips its switch", flag.get() is True)
+query = z.Model("")
+si = z.SearchInput(lit(z.SearchProps, width=z.Length.Px(300.0)), query)
+v = host(si)
+v.input(ev(z.EventKind.Text, cp=ord("/")))
+v.input(ev(z.EventKind.Text, cp=ord("a")))
+v.input(ev(z.EventKind.Text, cp=ord("b")))
+check("the shortcut jumps to the field, and the typing goes in", query.get() == "ab", repr(query.get()))
+v.input(ev(z.EventKind.KeyDown, key=z.Key.Escape))
+check("Escape clears it and gives up the focus", query.get() == "" and v.ctx.focus == 0, (query.get(), v.ctx.focus))
+mt = z.ScoreMeter(4)
+host(mt)
+check("a five-segment meter is 62 px wide", abs(mt.bounds().w - 62.0) < 0.01, mt.bounds().w)
+rl = z.ReasonList(lit(z.ReasonProps, title="Trust", total="3 / 5"), [lit(z.Reason, weight="+0.5", text="Seen every visit", tone=z.Tone.Ok), lit(z.Reason, weight="-1.0", text="A very long sentence that has to wrap onto a second line because the list is narrow", tone=z.Tone.Danger)])
+host(rl, 300.0, 400.0)
+check("a list of reasons has a height", rl.bounds().h > 100.0, rl.bounds().h)
 
 print("all ok" if not fails else "FAILED: %s" % fails)
 sys.exit(1 if fails else 0)

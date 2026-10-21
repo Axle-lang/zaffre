@@ -1,0 +1,794 @@
+// datagrid — a table for data that is large, live, and sometimes a tree.
+//
+//     class Connections : DataSource {
+//         fn count(self) : i32 { … }
+//         fn key(self, row : i32) : i64 { … }
+//         fn cell(mut self, row : i32, col : i32) : dyn Widget { … }
+//     }
+//
+//     let state : Shared<DataState> = new shared DataState();
+//     new DataGrid(DataGridProps { }, columns, new Connections(), state)
+//
+// A `Table` holds all its widgets at once; a `DataGrid` asks for them. It never sees the data, only a
+// `DataSource` that says how many rows are showing, what each one is called (`key`), how deep it sits,
+// whether it folds, how tall it is and — for the rows in view, and only those — what widget goes in
+// each column. The program keeps the data and the order; the grid keeps what the reader is doing, in
+// a `DataState` both can see, so that nothing the reader chose is ever an index into data that moves:
+//
+//   · `picked` is the *key* of the selected row, `-1` for none;
+//   · `scroll` is pixels;
+//   · `sortCol` and `sortDesc` are the header the reader last pressed, for the program to sort by;
+//   · `hovering` is true while the pointer is over the rows, so a program that re-sorts live can hold
+//     still while someone is reaching for a row.
+//
+// Rows at depth 0 that can fold are drawn as groups; a click on a row's chevron folds it, the rest of
+// the row picks it. The header stays put while the rows scroll under it. Cells are built again at
+// each layout, so a program's own state belongs in the program, not in a cell. Keys: Up and Down,
+// Page Up and Down, Home and End move the pick; Right opens and Left folds a group (Left on a row
+// inside one picks the group); Enter opens or folds, and counts as an activation.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length, Align};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** What a grid shows: rows and, for those in view, the widgets that fill them. */
+pub trait DataSource {
+    /** How many rows are showing, children of open groups included. It is asked first at every layout, so a source can bring itself up to date here. */
+    fn count(mut self) : i32;
+
+    /** The identity of row `row`: what selection and folding follow, never the index. */
+    fn key(self, row : i32) : i64;
+
+    /** The widget in column `col` of row `row`, made for this layout. */
+    fn cell(mut self, row : i32, col : i32) : dyn Widget;
+
+    /** How deep row `row` sits: 0 at the top, 1 under a group, and so on. */
+    fn depth(self, row : i32) : i32 {
+        return 0;
+    }
+
+    /** Whether row `row` can fold: it has rows under it. */
+    fn branch(self, row : i32) : bool {
+        return false;
+    }
+
+    /** Whether row `row` is open. */
+    fn opened(self, row : i32) : bool {
+        return false;
+    }
+
+    /** Open row `row` if it is folded, fold it if it is open. */
+    fn toggle(mut self, row : i32) : void {
+    }
+
+    /** The height of row `row`, in pixels. */
+    fn height(self, row : i32) : f64 {
+        return 44.0;
+    }
+}
+
+/** What the reader has done to a grid, shared with the program. */
+pub class DataState {
+    /** The key of the picked row, -1 for none. */
+    pub picked : i64 = -1;
+
+    /** The index of the column the reader last sorted by, -1 for none. */
+    pub sortCol : i32 = -1;
+
+    /** Whether that sort runs from the largest down. */
+    pub sortDesc : bool = false;
+
+    /** How far the rows are scrolled, in pixels. */
+    pub scroll : f64 = 0.0;
+
+    /** The key of the row last activated (Enter or a double click), -1 for none. */
+    pub activated : i64 = -1;
+
+    /** How many times a row has been activated, so the same row twice is two events. */
+    pub activations : i64 = 0;
+
+    /** Whether the pointer is over the rows. */
+    pub hovering : bool = false;
+
+    /** Whether the grid shows placeholders instead of rows. */
+    pub loading : bool = false;
+
+    /** Goes up whenever the pick or the sort changes, for a program that polls. */
+    pub changes : i64 = 0;
+
+    /** Scroll to `y` pixels. */
+    pub fn scrollTo(mut self, y : f64) : void {
+        self.scroll = y;
+    }
+
+    /** Pick the row called `key` (-1 to clear the pick). */
+    pub fn pick(mut self, key : i64) : void {
+        if (self.picked != key) {
+            self.picked = key;
+            self.changes = self.changes + 1;
+        }
+    }
+
+    /** Sort by column `col`: a new column ascending, the same one again the other way round. */
+    pub fn sortBy(mut self, col : i32) : void {
+        if (self.sortCol == col) {
+            self.sortDesc = !self.sortDesc;
+        } else {
+            self.sortCol = col;
+            self.sortDesc = false;
+        }
+        self.changes = self.changes + 1;
+    }
+
+    /** Record that row `key` was activated. */
+    pub fn activate(mut self, key : i64) : void {
+        self.activated = key;
+        self.activations = self.activations + 1;
+    }
+
+    /** Say whether the pointer is over the rows. */
+    pub fn hover(mut self, on : bool) : void {
+        self.hovering = on;
+    }
+
+    /** Show placeholders instead of rows, or rows again. */
+    pub fn load(mut self, on : bool) : void {
+        self.loading = on;
+    }
+}
+
+/** One column of a grid. */
+pub struct DataColumn {
+    /** The title in the header. */
+    pub title : string = "";
+
+    /** The column's width: a fixed number, or a share of what is left (`Length::Fill`, the default). */
+    pub width : Length = Length::Fill;
+
+    /** Where cells sit across the column. */
+    pub align : Align = Align::Start;
+
+    /** Whether pressing the title sorts by this column. */
+    pub sortable : bool = false;
+}
+
+/** How a grid looks. */
+pub struct DataGridProps {
+    /** The grid's height: 420 px, a fixed number, or as much as it is offered. */
+    pub height : Length = Length::Fill;
+
+    /** The grid's width. */
+    pub width : Length = Length::Fill;
+
+    /** Whether the grid is drawn inside its own bordered surface. */
+    pub framed : bool = true;
+
+    /** Whether every other row is tinted. */
+    pub striped : bool = false;
+
+    /** Whether rows at depth 0 that fold are drawn on a raised band. */
+    pub groups : bool = true;
+
+    /** Whether a row under a group is joined to it by a branch line. */
+    pub guides : bool = true;
+
+    /** How far each level of depth is indented. */
+    pub indent : f64 = 20.0;
+
+    /** What the grid says when there are no rows. */
+    pub empty : string = "Nothing to show";
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** Height of the header. */
+const DG_HEAD : f64 = 44.0;
+
+/** Space at either side of a cell. */
+const DG_PAD : f64 = 12.0;
+
+/** Width of the chevron's click target. */
+const DG_TWISTY : f64 = 24.0;
+
+/** How far the wheel moves the rows in one notch. */
+const DG_WHEEL : f64 = 60.0;
+
+/** Thickness of the scrollbar's thumb, and the shortest it gets. */
+const DG_THUMB : f64 = 6.0;
+const DG_THUMB_MIN : f64 = 34.0;
+
+/** The most columns a grid holds. */
+const DG_MAX_COLUMNS : i32 = 16;
+
+/** A table that asks its source for what is in view. */
+pub class DataGrid : Control, Widget {
+    props : DataGridProps;
+    columns : DataColumn[];
+    cols : i32;
+    src : dyn DataSource[];
+    state : Shared<DataState>;
+    count : i32 = 0;
+    tops : f64[];
+    topsCap : i32 = 0;
+    widths : f64[];
+    lefts : f64[];
+    cells : dyn Widget[];
+    cellsCap : i32 = 0;
+    cellCount : i32 = 0;
+    first : i32 = 0;
+    last : i32 = -1;
+    hotRow : i32 = -1;
+    hotHead : i32 = -1;
+    hotTwisty : bool = false;
+    grabbed : bool = false;
+    grabY : f64 = 0.0;
+    grabScroll : f64 = 0.0;
+    over : bool = false;
+
+    /** A grid of `columns` over `source`, which it takes; what the reader does goes into `state`. */
+    constructor(own props : DataGridProps, columns : DataColumn[], own source : dyn DataSource, state : Shared<DataState>) {
+        super();
+        self.props = props;
+        self.columns = columns;
+        self.cols = Mathx::clampI(columns.length as i32, 1, DG_MAX_COLUMNS);
+        self.src = malloc<dyn DataSource>(1 as i64);
+        self.src[0] = source;
+        self.state = state;
+        self.widths = malloc<f64>(self.cols as i64);
+        self.lefts = malloc<f64>(self.cols as i64);
+        self.tops = malloc<f64>(1 as i64);
+        self.cells = malloc<dyn Widget>(1 as i64);
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size {
+            w: self.props.width.resolve(limits.maxW, 640.0),
+            h: self.props.height.resolve(limits.maxH, 420.0),
+        });
+    }
+
+    // ─── Geometry ────────────────────────────────────────────────
+
+    /** The top of the rows' window: under the header. */
+    pub(file) fn bodyTop(self) : f64 {
+        return self.area.y + DG_HEAD;
+    }
+
+    /** The height of the rows' window. */
+    pub(file) fn bodyH(self) : f64 {
+        return Mathx::fmax(0.0, self.area.h - DG_HEAD);
+    }
+
+    /** The height of all the rows together. */
+    pub(file) fn contentH(self) : f64 {
+        return self.tops[self.count as i64];
+    }
+
+    /** How far the rows can scroll. */
+    pub(file) fn maxScroll(self) : f64 {
+        return Mathx::fmax(0.0, self.contentH() - self.bodyH());
+    }
+
+    /** The box of row `row` at the current scroll. */
+    pub(file) fn rowBox(self, row : i32) : Bounds {
+        let s : dyn DataSource = self.src[0];
+        let w : f64 = self.maxScroll() > 0.0 ? self.area.w - DG_THUMB - 6.0 : self.area.w;
+        return Bounds::make(self.area.x, self.bodyTop() + self.tops[row as i64] - self.state.scroll, w, s.height(row));
+    }
+
+    /** The row under (`x`, `y`) among those in view, or -1. */
+    pub(file) fn rowAt(self, x : f64, y : f64) : i32 {
+        if (y < self.bodyTop() || y >= self.area.bottom() || x < self.area.x || x >= self.area.right()) {
+            return -1;
+        }
+        for (r of self.first..(self.last + 1)) {
+            if (self.rowBox(r).contains(x, y)) {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    /** The column whose header is under `x`, or -1. */
+    pub(file) fn headAt(self, x : f64, y : f64) : i32 {
+        if (y < self.area.y || y >= self.bodyTop()) {
+            return -1;
+        }
+        for (c of 0..self.cols) {
+            let left : f64 = self.area.x + self.lefts[c as i64];
+            if (x >= left && x < left + self.widths[c as i64]) {
+                return c;
+            }
+        }
+        return -1;
+    }
+
+    /** The box of the chevron of row `row`. */
+    pub(file) fn twistyBox(self, row : i32) : Bounds {
+        let s : dyn DataSource = self.src[0];
+        let rb : Bounds = self.rowBox(row);
+        return Bounds::make(rb.x + DG_PAD + (s.depth(row) as f64) * self.props.indent, rb.y, DG_TWISTY, rb.h);
+    }
+
+    /** Whether row `row` folds. */
+    pub(file) fn isBranch(self, row : i32) : bool {
+        let s : dyn DataSource = self.src[0];
+        return s.branch(row);
+    }
+
+    /** The row holding `key` among all those showing, or -1. */
+    pub(file) fn rowOfKey(self, key : i64) : i32 {
+        let s : dyn DataSource = self.src[0];
+        for (r of 0..self.count) {
+            if (s.key(r) == key) {
+                return r;
+            }
+        }
+        return -1;
+    }
+
+    // ─── Layout ──────────────────────────────────────────────────
+
+    /** Make the arrays that depend on the number of rows big enough. */
+    pub(file) fn fit(mut self, rows : i32, visible : i32) : void {
+        if (rows + 1 > self.topsCap) {
+            self.topsCap = rows + 64;
+            self.tops = malloc<f64>(self.topsCap as i64);
+        }
+        if (visible * self.cols > self.cellsCap) {
+            self.cellsCap = visible * self.cols + 16;
+            self.cells = malloc<dyn Widget>(self.cellsCap as i64);
+        }
+    }
+
+    /** Work out the columns' widths and lefts. */
+    pub(file) fn spread(mut self) : void {
+        let room : f64 = self.maxScroll() > 0.0 ? self.area.w - DG_THUMB - 6.0 : self.area.w;
+        let mut fixed : f64 = 0.0;
+        let mut shares : i32 = 0;
+        for (c of 0..self.cols) {
+            let width : Length = self.columns[c as i64].width;
+            if (width.isFill() || width.isAuto()) {
+                shares = shares + 1;
+            } else {
+                fixed = fixed + width.resolve(room, 0.0);
+            }
+        }
+        let each : f64 = shares > 0 ? Mathx::fmax(80.0, (room - fixed) / (shares as f64)) : 0.0;
+        let mut x : f64 = 0.0;
+        for (c of 0..self.cols) {
+            let width : Length = self.columns[c as i64].width;
+            let w : f64 = (width.isFill() || width.isAuto()) ? each : width.resolve(room, 0.0);
+            self.widths[c as i64] = w;
+            self.lefts[c as i64] = x;
+            x = x + w;
+        }
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        if (self.focusable) {
+            if (self.token == 0) {
+                self.token = ctx.mint();
+            }
+            ctx.announce(self.token);
+        }
+        let s : dyn DataSource = self.src[0];
+        self.count = s.count();
+        self.fit(self.count, Mathx::ceilI(self.bodyH() / 24.0) + 2);
+        self.tops[0 as i64] = 0.0;
+        for (r of 0..self.count) {
+            self.tops[(r + 1) as i64] = self.tops[r as i64] + s.height(r);
+        }
+        self.state.scrollTo(Mathx::clampF(self.state.scroll, 0.0, self.maxScroll()));
+        self.spread();
+        self.window();
+        self.build(ctx);
+    }
+
+    /** Find the rows that are in view. */
+    pub(file) fn window(mut self) : void {
+        let top : f64 = self.state.scroll;
+        self.first = 0;
+        self.last = -1;
+        if (self.state.loading) {
+            return;
+        }
+        for (r of 0..self.count) {
+            let y0 : f64 = self.tops[r as i64];
+            let y1 : f64 = self.tops[(r + 1) as i64];
+            if (y1 <= top) {
+                self.first = r + 1;
+            } else if (y0 < top + self.bodyH()) {
+                self.last = r;
+            }
+        }
+    }
+
+    /** Ask the source for the cells of the rows in view and lay them out. */
+    pub(file) fn build(mut self, ctx : Context) : void {
+        let s : dyn DataSource = self.src[0];
+        self.cellCount = 0;
+        for (r of self.first..(self.last + 1)) {
+            let rb : Bounds = self.rowBox(r);
+            for (c of 0..self.cols) {
+                if (self.cellCount >= self.cellsCap) {
+                    return;
+                }
+                let w : dyn Widget = s.cell(r, c);
+                let mut left : f64 = self.area.x + self.lefts[c as i64] + DG_PAD;
+                let mut room : f64 = self.widths[c as i64] - 2.0 * DG_PAD;
+                if (c == 0) {
+                    let skip : f64 = (s.depth(r) as f64) * self.props.indent + DG_TWISTY;
+                    left = left + skip;
+                    room = room - skip;
+                }
+                let size : Size = w.measure(ctx, Limits { minW: 0.0, maxW: Mathx::fmax(0.0, room), minH: 0.0, maxH: rb.h });
+                let mut x : f64 = left;
+                let align : Align = self.columns[c as i64].align;
+                if (align == Align::End) {
+                    x = left + room - size.w;
+                } else if (align == Align::Center) {
+                    x = left + (room - size.w) * 0.5;
+                }
+                w.arrange(ctx, Bounds::make(x, rb.y + (rb.h - size.h) * 0.5, size.w, size.h));
+                self.cells[self.cellCount as i64] = w;
+                self.cellCount = self.cellCount + 1;
+            }
+        }
+    }
+
+    // ─── Doing things ────────────────────────────────────────────
+
+    /** Scroll so that row `row` is wholly in view. */
+    pub(file) fn reveal(mut self, row : i32) : void {
+        if (row < 0 || row >= self.count) {
+            return;
+        }
+        let top : f64 = self.tops[row as i64];
+        let bottom : f64 = self.tops[(row + 1) as i64];
+        let mut y : f64 = self.state.scroll;
+        if (top < y) {
+            y = top;
+        } else if (bottom > y + self.bodyH()) {
+            y = bottom - self.bodyH();
+        }
+        self.state.scrollTo(Mathx::clampF(y, 0.0, self.maxScroll()));
+    }
+
+    /** Pick row `row`. */
+    pub(file) fn pick(mut self, ctx : Context, row : i32) : void {
+        if (row < 0 || row >= self.count) {
+            return;
+        }
+        let s : dyn DataSource = self.src[0];
+        self.state.pick(s.key(row));
+        self.reveal(row);
+        ctx.invalidate();
+    }
+
+    /** Fold or unfold row `row`. */
+    pub(file) fn fold(mut self, ctx : Context, row : i32) : void {
+        let s : dyn DataSource = self.src[0];
+        if (!s.branch(row)) {
+            return;
+        }
+        s.toggle(row);
+        ctx.invalidate();
+    }
+
+    /** Record that row `row` was activated. */
+    pub(file) fn activate(mut self, ctx : Context, row : i32) : void {
+        let s : dyn DataSource = self.src[0];
+        self.state.activate(s.key(row));
+        ctx.invalidate();
+    }
+
+    /** The scrollbar thumb, or an empty box when there is nothing to scroll. */
+    pub(file) fn thumb(self) : Bounds {
+        let travel : f64 = self.maxScroll();
+        if (travel <= 0.0) {
+            return Bounds::zero();
+        }
+        let track : f64 = self.bodyH() - 8.0;
+        let len : f64 = Mathx::fmax(DG_THUMB_MIN, track * self.bodyH() / self.contentH());
+        let y : f64 = self.bodyTop() + 4.0 + (track - len) * (self.state.scroll / travel);
+        return Bounds::make(self.area.right() - DG_THUMB - 4.0, y, DG_THUMB, len);
+    }
+
+    // ─── Events ──────────────────────────────────────────────────
+
+    pub(file) fn onKey(mut self, ctx : Context, e : UiEvent) : bool {
+        let s : dyn DataSource = self.src[0];
+        let at : i32 = self.rowOfKey(self.state.picked);
+        let page : i32 = Mathx::clampI(Mathx::floorI(self.bodyH() / 44.0), 1, 50);
+        if (e.key == Key::Down || e.key == Key::Up || e.key == Key::PageDown || e.key == Key::PageUp) {
+            let step : i32 = (e.key == Key::Down || e.key == Key::Up) ? 1 : page;
+            let dir : i32 = (e.key == Key::Down || e.key == Key::PageDown) ? 1 : -1;
+            self.pick(ctx, Mathx::clampI(at < 0 ? 0 : at + dir * step, 0, self.count - 1));
+            return true;
+        }
+        if (e.key == Key::Home) {
+            self.pick(ctx, 0);
+            return true;
+        }
+        if (e.key == Key::End) {
+            self.pick(ctx, self.count - 1);
+            return true;
+        }
+        if (at < 0) {
+            return false;
+        }
+        if (e.key == Key::Right && s.branch(at) && !s.opened(at)) {
+            self.fold(ctx, at);
+            return true;
+        }
+        if (e.key == Key::Left) {
+            if (s.branch(at) && s.opened(at)) {
+                self.fold(ctx, at);
+            } else if (s.depth(at) > 0) {
+                let mut up : i32 = at - 1;
+                while (up > 0 && s.depth(up) >= s.depth(at)) {
+                    up = up - 1;
+                }
+                self.pick(ctx, up);
+            }
+            return true;
+        }
+        if (e.key == Key::Enter || e.key == Key::Space) {
+            if (e.key == Key::Space && s.branch(at)) {
+                self.fold(ctx, at);
+            } else {
+                self.activate(ctx, at);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        let inside : bool = self.area.contains(e.x, e.y) && !ctx.blocked;
+        // The cells see the event first, so a button in a cell is a button.
+        if (inside && !self.grabbed) {
+            for (i of 0..self.cellCount) {
+                let w : dyn Widget = self.cells[i as i64];
+                if (w.event(ctx, e)) {
+                    return true;
+                }
+            }
+        }
+        if (e.kind == EventKind::PointerMove) {
+            self.over = inside;
+            if (self.grabbed) {
+                let room : f64 = self.bodyH() - 8.0 - self.thumb().h;
+                if (room > 0.0) {
+                    self.state.scrollTo(Mathx::clampF(self.grabScroll + (e.y - self.grabY) * self.maxScroll() / room, 0.0, self.maxScroll()));
+                    ctx.invalidate();
+                }
+                return true;
+            }
+            self.hotRow = self.rowAt(e.x, e.y);
+            self.hotHead = self.headAt(e.x, e.y);
+            self.hotTwisty = self.hotRow >= 0 && self.twistyBox(self.hotRow).contains(e.x, e.y);
+            self.state.hover(self.hotRow >= 0);
+            if (self.hotRow >= 0 || (self.hotHead >= 0 && self.columns[self.hotHead as i64].sortable)) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+            ctx.invalidate();
+        }
+        if (e.kind == EventKind::PointerLeave) {
+            self.over = false;
+            self.hotRow = -1;
+            self.hotHead = -1;
+            self.state.hover(false);
+        }
+        if (e.kind == EventKind::PointerUp && self.grabbed) {
+            self.grabbed = false;
+            ctx.invalidate();
+            return true;
+        }
+        if (e.kind == EventKind::PointerDown && e.button == 0 && inside) {
+            let t : Bounds = self.thumb();
+            if (!t.isEmpty() && t.grown(6.0).contains(e.x, e.y)) {
+                self.grabbed = true;
+                self.grabY = e.y;
+                self.grabScroll = self.state.scroll;
+                return true;
+            }
+        }
+        if (e.kind == EventKind::Wheel && inside) {
+            let to : f64 = Mathx::clampF(self.state.scroll - e.wheel * DG_WHEEL, 0.0, self.maxScroll());
+            if (to != self.state.scroll) {
+                self.state.scrollTo(to);
+                ctx.invalidate();
+                return true;
+            }
+            return false;
+        }
+        if (g == Gesture::Click) {
+            let head : i32 = self.headAt(e.x, e.y);
+            if (head >= 0 && self.columns[head as i64].sortable) {
+                self.state.sortBy(head);
+                ctx.invalidate();
+                return true;
+            }
+            let row : i32 = self.rowAt(e.x, e.y);
+            if (row >= 0) {
+                if (self.twistyBox(row).contains(e.x, e.y) && self.isBranch(row)) {
+                    self.fold(ctx, row);
+                } else {
+                    self.pick(ctx, row);
+                    if (e.clicks == 2) {
+                        self.activate(ctx, row);
+                    }
+                }
+                return true;
+            }
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            return self.onKey(ctx, e);
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut moving : bool = self.animate(ctx, dt);
+        for (i of 0..self.cellCount) {
+            let w : dyn Widget = self.cells[i as i64];
+            if (w.tick(ctx, dt)) {
+                moving = true;
+            }
+        }
+        if (self.state.loading) {
+            ctx.wakeIn(0.05);
+            return true;
+        }
+        return moving;
+    }
+
+    // ─── Painting ────────────────────────────────────────────────
+
+    /** The header: a title per column, with the sort glyph on sortable ones. */
+    pub(file) fn paintHead(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let st : Shared<DataState> = self.state;
+        let a : Bounds = self.area;
+        p.fillRound(RRect::corners(a.x, a.y, a.w, DG_HEAD, ctx.theme.metrics.radiusSurface, ctx.theme.metrics.radiusSurface, 0.0, 0.0), Brush::solid(pal.raised.rgb, pal.raised.a));
+        p.line(a.x, a.y + DG_HEAD - 0.5, a.right(), a.y + DG_HEAD - 0.5, 1.0, pal.line);
+        for (c of 0..self.cols) {
+            let col : DataColumn = self.columns[c as i64];
+            let left : f64 = a.x + self.lefts[c as i64] + DG_PAD;
+            let room : f64 = self.widths[c as i64] - 2.0 * DG_PAD;
+            let active : bool = st.sortCol == c;
+            let mut ink : Tint = active ? pal.text : pal.textFaint;
+            if (self.hotHead == c && col.sortable) {
+                ink = pal.text;
+            }
+            let tw : f64 = ctx.textWidth(FaceKind::Bold, col.title, 13.0);
+            let glyph : f64 = col.sortable ? 18.0 : 0.0;
+            let mut x : f64 = left;
+            if (c == 0) {
+                x = x + DG_TWISTY;
+            }
+            if (col.align == Align::End) {
+                x = left + room - tw - glyph;
+            } else if (col.align == Align::Center) {
+                x = left + (room - tw - glyph) * 0.5;
+            }
+            p.text(FaceKind::Bold, col.title, x, ctx.baselineIn(FaceKind::Bold, 13.0, a.y, DG_HEAD), 13.0, ink);
+            if (col.sortable) {
+                let icon : IconKind = active ? (st.sortDesc ? IconKind::ArrowDown : IconKind::ArrowUp) : IconKind::Sort;
+                Icons::draw(p, icon, x + tw + 5.0, a.y + DG_HEAD * 0.5 - 6.0, 12.0, active ? pal.accentTop : ink.faded(150));
+            }
+        }
+    }
+
+    /** The branch line that joins row `row` to the group above it. */
+    pub(file) fn paintGuide(self, ctx : Context, p : Painter, row : i32, rb : Bounds) : void {
+        let s : dyn DataSource = self.src[0];
+        let pal = ctx.theme.palette;
+        let depth : i32 = s.depth(row);
+        let x : f64 = rb.x + DG_PAD + ((depth - 1) as f64) * self.props.indent + DG_TWISTY * 0.5;
+        let lastOfRun : bool = row + 1 >= self.count || s.depth(row + 1) < depth;
+        let cy : f64 = rb.y + 22.0;
+        p.line(x, rb.y, x, lastOfRun ? cy : rb.bottom(), 1.0, pal.line);
+        p.line(x, cy, x + 10.0, cy, 1.0, pal.line);
+    }
+
+    /** The background and the chevron of row `row`. */
+    pub(file) fn paintRow(self, ctx : Context, p : Painter, row : i32) : void {
+        let s : dyn DataSource = self.src[0];
+        let pal = ctx.theme.palette;
+        let rb : Bounds = self.rowBox(row);
+        let key : i64 = s.key(row);
+        let picked : bool = key == self.state.picked;
+        let group : bool = self.props.groups && s.depth(row) == 0 && s.branch(row);
+        if (group) {
+            p.fillRound(rb.round(0.0), Brush::solid(pal.raised.rgb, pal.raised.a));
+        } else if (self.props.striped && row % 2 == 1) {
+            p.fillRound(rb.round(0.0), Brush::solid(pal.hover.rgb, pal.hover.a / 2));
+        }
+        if (picked) {
+            p.fillRound(rb.round(0.0), Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+            p.fillRound(Bounds::make(rb.x, rb.y, 3.0, rb.h).round(0.0), Brush::solid(pal.primary.s500.rgb, 255));
+        } else if (row == self.hotRow) {
+            p.fillRound(rb.round(0.0), Brush::solid(pal.hover.rgb, pal.hover.a));
+        }
+        p.line(rb.x, rb.bottom() - 0.5, rb.right(), rb.bottom() - 0.5, 1.0, pal.line);
+        if (self.props.guides && s.depth(row) > 0) {
+            self.paintGuide(ctx, p, row, rb);
+        }
+        if (s.branch(row)) {
+            let tb : Bounds = self.twistyBox(row);
+            let hot : bool = row == self.hotRow && self.hotTwisty;
+            let glyph : IconKind = s.opened(row) ? IconKind::ChevronDown : IconKind::ChevronRight;
+            Icons::draw(p, glyph, tb.midX() - 7.0, tb.midY() - 7.0, 14.0, hot ? pal.text : pal.textFaint);
+        }
+    }
+
+    /** Placeholder rows while `loading`: pulsing bars where the text will be. */
+    pub(file) fn paintLoading(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let pulse : f64 = 0.55 + 0.45 * Mathx::smooth(Mathx::fract(ctx.now * 0.8));
+        let alpha : i32 = Mathx::roundI(pulse * 90.0);
+        let mut y : f64 = self.bodyTop() + 12.0;
+        while (y + 20.0 < self.area.bottom()) {
+            for (c of 0..self.cols) {
+                let w : f64 = (self.widths[c as i64] - 2.0 * DG_PAD) * (c % 2 == 0 ? 0.7 : 0.45);
+                p.fillRound(RRect::uniform(self.area.x + self.lefts[c as i64] + DG_PAD, y, w, 12.0, 6.0), Brush::solid(pal.textFaint.rgb, alpha));
+            }
+            y = y + 40.0;
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let radius : f64 = ctx.theme.metrics.radiusSurface;
+        if (self.props.framed) {
+            p.fillRound(a.round(radius), Brush::solid(pal.surface.rgb, pal.surface.a));
+        }
+        p.pushClip(a.x, self.bodyTop(), a.w, self.bodyH());
+        if (self.state.loading) {
+            self.paintLoading(ctx, p);
+        } else if (self.count == 0) {
+            let msg : string = self.props.empty;
+            let mw : f64 = ctx.textWidth(FaceKind::Sans, msg, 14.0);
+            p.text(FaceKind::Sans, msg, a.midX() - mw * 0.5, ctx.baselineIn(FaceKind::Sans, 14.0, self.bodyTop(), self.bodyH()), 14.0, pal.textFaint);
+        }
+        for (r of self.first..(self.last + 1)) {
+            self.paintRow(ctx, p, r);
+        }
+        for (i of 0..self.cellCount) {
+            let w : dyn Widget = self.cells[i as i64];
+            w.paint(ctx, p);
+        }
+        p.popClip();
+        self.paintHead(ctx, p);
+        let t : Bounds = self.thumb();
+        if (!t.isEmpty()) {
+            let level : i32 = self.grabbed ? 230 : (self.over ? 160 : 80);
+            p.fillRound(t.round(DG_THUMB * 0.5), Brush::solid(pal.textFaint.rgb, level));
+        }
+        if (self.props.framed) {
+            p.strokeRound(a.round(radius), 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        }
+        if (self.ringShown(ctx)) {
+            let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+            p.strokeRound(a.grown(3.0).round(radius + 3.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

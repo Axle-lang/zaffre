@@ -1,0 +1,132 @@
+// reasons — the working behind a verdict: each signal that applied, and what it cost or earned.
+//
+//     let signals : Reason[] = [
+//         Reason { weight: "+0.5", text: "Seen on every visit for an hour", tone: Tone::Ok },
+//         Reason { weight: "−1.0", text: "Reconnects every 30 s, to the millisecond", tone: Tone::Danger },
+//         Reason { weight: "±0.0", text: "Hosted in a data centre" },
+//     ];
+//     new ReasonList(ReasonProps { title: "Trust", total: "3.5 / 5" }, signals)
+//
+// A score nobody can interrogate is believed blindly or ignored, so a verdict is shown with its
+// reasons: one row per signal, the signed weight in the tone of what it did to the score, then the
+// sentence that explains it; the total under a rule. Long sentences wrap.
+
+use crate::gfx::shapes::Brush;
+use crate::style::variants::{Tone, TextRole};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length, Align, Insets};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::flex::{Column, Row, FlexProps};
+use crate::widgets::label::{Label, LabelProps};
+use crate::widgets::spacer::Divider;
+
+/** One signal that was weighed. */
+pub struct Reason {
+    /** The signed weight as it is written: "+0.5", "−1.0". */
+    pub weight : string = "";
+
+    /** The sentence that explains it. */
+    pub text : string = "";
+
+    /** What it did to the score: green for a gain, red for a cost, grey for neither. */
+    pub tone : Tone = Tone::Neutral;
+}
+
+/** How a list of reasons looks. */
+pub struct ReasonProps {
+    /** The heading over the rows; empty for none. */
+    pub title : string = "";
+
+    /** The total, as written, at the foot; empty for no total row. */
+    pub total : string = "";
+
+    /** What the total row says before the total. */
+    pub totalLabel : string = "Score";
+}
+
+/** The signed weight of one reason, on a wash of its tone. */
+pub class WeightTag : Base, Widget {
+    text : string;
+    tone : Tone;
+
+    /** A tag saying `text` in `tone`. */
+    constructor(text : string, tone : Tone) {
+        self.text = text;
+        self.tone = tone;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: 48.0, h: 22.0 });
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let soft = ctx.theme.soft(self.tone);
+        let a : Bounds = self.area;
+        p.fillRound(a.round(ctx.theme.metrics.radiusInline), Brush::solid(soft.fill.rgb, soft.fill.a));
+        let w : f64 = ctx.textWidth(FaceKind::Mono, self.text, 12.0);
+        p.text(FaceKind::Mono, self.text, a.x + (a.w - w) * 0.5, ctx.baselineIn(FaceKind::Mono, 12.0, a.y, a.h), 12.0, soft.fg);
+    }
+}
+
+/** A verdict with its working. */
+pub class ReasonList : Base, Widget {
+    kid : dyn Widget[];
+
+    /** A list of `reasons`. */
+    constructor(own props : ReasonProps, reasons : Reason[]) {
+        let mut column : Column = new Column(FlexProps { gap: 10.0, align: Align::Stretch, capacity: (reasons.length as i32) + 4 });
+        if (props.title.byteLength > 0) {
+            column.add(new Label(props.title, TextRole::Strong));
+        }
+        for (i of 0..(reasons.length as i32)) {
+            column.add(ReasonList::row(reasons[i as i64]));
+        }
+        if (props.total.byteLength > 0) {
+            column.add(new Divider());
+            column.add(ReasonList::total(props));
+        }
+        self.kid = malloc<dyn Widget>(1 as i64);
+        self.kid[0] = column;
+    }
+
+    /** One row: the weight, then the sentence, which wraps. */
+    pub(file) static fn row(reason : Reason) : Row {
+        let mut row : Row = new Row(FlexProps { gap: 10.0, align: Align::Start, capacity: 2 });
+        row.add(new WeightTag(reason.weight, reason.tone));
+        row.add(new Label(LabelProps { role: TextRole::Dim, wrap: true, width: Length::Fill, grow: 1.0 }, reason.text));
+        return row;
+    }
+
+    /** The total row: what it is called, and the figure at the far end. */
+    pub(file) static fn total(props : ReasonProps) : Row {
+        let mut row : Row = new Row(FlexProps { gap: 8.0, align: Align::Center, capacity: 3, width: Length::Fill });
+        row.add(new Label(props.totalLabel, TextRole::Dim));
+        row.add(new Label(LabelProps { grow: 1.0 }, ""));
+        row.add(new Label(props.total, TextRole::H3));
+        return row;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+}

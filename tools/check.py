@@ -344,11 +344,23 @@ def check_file(path, idx, smalt, smalt_methods, errors, rel_root):
 
 def duplicate_names(idx):
     """Two top-level declarations, public or not, with one name collide in the package (E0003: `Column` the layout and the
-    table's; `doNothing` in two modules)."""
+    table's; `doNothing` in two modules). The library is one package, and so is each example."""
+    out = duplicates_in(idx.src)
+    examples = os.path.join(idx.root, "examples")
+    if os.path.isdir(examples):
+        for name in sorted(os.listdir(examples)):
+            src = os.path.join(examples, name, "src")
+            if os.path.isdir(src):
+                out += duplicates_in(src)
+    return out
+
+
+def duplicates_in(src):
+    """The names declared in two files under `src`."""
     seen = {}
     out = []
-    for f in files_under(idx.src):
-        mod = os.path.relpath(f, idx.src)[:-5]
+    for f in files_under(src):
+        mod = os.path.relpath(f, src)[:-5]
         for m in re.finditer(r"^(?:pub(?:\([a-z]+\))?\s+)?(?:class|struct|enum|trait|fn|const)\s+(\w+)", code_of(f), re.M):
             name = m.group(1)
             if name in seen and seen[name] != mod:

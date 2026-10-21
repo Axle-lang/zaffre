@@ -1,0 +1,260 @@
+// textgrid — a `DataGrid` source for rows of plain text.
+//
+//     let cells : string[] = [
+//         "svchost.exe", "11 processes", "4",
+//         "443 → 20.42.65.91", "open", "2",
+//         "chrome.exe", "2 processes", "3",
+//     ];
+//     let depths : i32[] = [0, 1, 0];
+//     let state : Shared<DataState> = new shared DataState();
+//     new DataGrid(DataGridProps { }, columns, new TextGrid(3, cells, depths, state), state)
+//
+// The cells are given row by row (`cols` strings per row). `depths` says how deep each row sits: a
+// row followed by a deeper one is a group that folds, and its children follow it. Without depths
+// every row is a leaf. Pressing a sortable header orders the rows by that column — numbers as
+// numbers, anything else as text without regard to case — and a group's children are ordered
+// among themselves, under it. The first column of a group is set in the label weight.
+
+use crate::gfx::mathx::Mathx;
+use crate::text::strings::Strings;
+use crate::style::variants::TextRole;
+use crate::core::geometry::Align;
+use crate::core::widget::Widget;
+use crate::widgets::label::{Label, LabelProps};
+use crate::widgets::datagrid::{DataSource, DataState};
+
+/** Rows of text, in an order the reader can change. */
+pub class TextGrid : DataSource {
+    cols : i32;
+    cells : string[];
+    depths : i32[];
+    total : i32;
+    open : bool[];
+    order : i32[];
+    shown : i32[];
+    shownCount : i32 = 0;
+    state : Shared<DataState>;
+    seen : i64 = -1;
+
+    /** `cells` laid out `cols` to a row, nested as `depths` say, sorted as `state` says. */
+    constructor(cols : i32, cells : string[], depths : i32[], state : Shared<DataState>) {
+        self.cols = cols;
+        self.cells = cells;
+        self.depths = depths;
+        self.total = (cells.length as i32) / cols;
+        self.state = state;
+        self.open = malloc<bool>(self.total as i64);
+        self.order = malloc<i32>(self.total as i64);
+        self.shown = malloc<i32>(self.total as i64);
+        for (i of 0..self.total) {
+            self.open[i as i64] = true;
+            self.order[i as i64] = i;
+        }
+        self.reshow();
+    }
+
+    /** `cells` laid out `cols` to a row, every row a leaf. */
+    constructor(cols : i32, cells : string[], state : Shared<DataState>) {
+        self.cols = cols;
+        self.cells = cells;
+        self.total = (cells.length as i32) / cols;
+        self.depths = malloc<i32>(self.total as i64);
+        self.state = state;
+        self.open = malloc<bool>(self.total as i64);
+        self.order = malloc<i32>(self.total as i64);
+        self.shown = malloc<i32>(self.total as i64);
+        for (i of 0..self.total) {
+            self.depths[i as i64] = 0;
+            self.open[i as i64] = true;
+            self.order[i as i64] = i;
+        }
+        self.reshow();
+    }
+
+    /** The text of cell (`row`, `col`) of the original data. */
+    pub(file) fn text(self, row : i32, col : i32) : string {
+        return self.cells[(row * self.cols + col) as i64];
+    }
+
+    /** Whether original row `row` has a deeper row after it. */
+    pub(file) fn isGroup(self, row : i32) : bool {
+        return row + 1 < self.total && self.depths[(row + 1) as i64] > self.depths[row as i64];
+    }
+
+    /** The number a text starts with, if it starts with one: (found, value). */
+    pub(file) static fn number(s : string) : (found: bool, value: f64) {
+        let mut i : i64 = 0;
+        let len : i64 = s.byteLength;
+        let mut sign : f64 = 1.0;
+        if (i < len && s.byteAt(i) == 45) {
+            sign = -1.0;
+            i = i + 1;
+        }
+        let mut seen : bool = false;
+        let mut v : f64 = 0.0;
+        while (i < len && s.byteAt(i) >= 48 && s.byteAt(i) <= 57) {
+            v = v * 10.0 + ((s.byteAt(i) - 48) as f64);
+            seen = true;
+            i = i + 1;
+        }
+        if (seen && i < len && s.byteAt(i) == 46) {
+            i = i + 1;
+            let mut scale : f64 = 0.1;
+            while (i < len && s.byteAt(i) >= 48 && s.byteAt(i) <= 57) {
+                v = v + scale * ((s.byteAt(i) - 48) as f64);
+                scale = scale * 0.1;
+                i = i + 1;
+            }
+        }
+        return (seen, sign * v);
+    }
+
+    /** -1, 0 or 1 as `a` is before, equal to or after `b`, byte by byte. */
+    pub(file) static fn compare(a : string, b : string) : i32 {
+        let n : i64 = a.byteLength < b.byteLength ? a.byteLength : b.byteLength;
+        let mut i : i64 = 0;
+        while (i < n) {
+            let x : i32 = a.byteAt(i);
+            let y : i32 = b.byteAt(i);
+            if (x != y) {
+                return x < y ? -1 : 1;
+            }
+            i = i + 1;
+        }
+        if (a.byteLength == b.byteLength) {
+            return 0;
+        }
+        return a.byteLength < b.byteLength ? -1 : 1;
+    }
+
+    /** Whether original row `a` sorts before original row `b` by column `col`. */
+    pub(file) fn before(self, a : i32, b : i32, col : i32, desc : bool) : bool {
+        let ta : string = self.text(a, col);
+        let tb : string = self.text(b, col);
+        let (fa, va) = TextGrid::number(ta);
+        let (fb, vb) = TextGrid::number(tb);
+        let mut less : bool = false;
+        let mut same : bool = false;
+        if (fa && fb) {
+            less = va < vb;
+            same = va == vb;
+        } else {
+            let order : i32 = TextGrid::compare(Strings::lower(ta), Strings::lower(tb));
+            less = order < 0;
+            same = order == 0;
+        }
+        if (same) {
+            return a < b;
+        }
+        return desc ? !less : less;
+    }
+
+    /** Put the rows of `lo` .. `hi` that sit at `depth` in order, each followed by its own children in order. */
+    pub(file) fn place(mut self, lo : i32, hi : i32, depth : i32, col : i32, desc : bool, at : i32) : i32 {
+        let mut heads : i32[] = malloc<i32>((hi - lo + 1) as i64);
+        let mut n : i32 = 0;
+        for (r of lo..hi) {
+            if (self.depths[r as i64] == depth) {
+                heads[n as i64] = r;
+                n = n + 1;
+            }
+        }
+        // An insertion sort: the runs are short, and it is stable.
+        for (i of 1..n) {
+            let item : i32 = heads[i as i64];
+            let mut j : i32 = i - 1;
+            while (j >= 0 && self.before(item, heads[j as i64], col, desc)) {
+                heads[(j + 1) as i64] = heads[j as i64];
+                j = j - 1;
+            }
+            heads[(j + 1) as i64] = item;
+        }
+        let mut cursor : i32 = at;
+        for (k of 0..n) {
+            let head : i32 = heads[k as i64];
+            let mut stop : i32 = head + 1;
+            while (stop < hi && self.depths[stop as i64] > depth) {
+                stop = stop + 1;
+            }
+            self.order[cursor as i64] = head;
+            cursor = cursor + 1;
+            if (stop > head + 1) {
+                cursor = self.place(head + 1, stop, depth + 1, col, desc, cursor);
+            }
+        }
+        return cursor;
+    }
+
+    /** Order the rows by what the reader last sorted by. */
+    pub(file) fn resort(mut self) : void {
+        let col : i32 = self.state.sortCol;
+        if (col < 0 || col >= self.cols) {
+            for (i of 0..self.total) {
+                self.order[i as i64] = i;
+            }
+            return;
+        }
+        let base : i32 = self.total > 0 ? self.depths[0 as i64] : 0;
+        let end : i32 = self.place(0, self.total, base, col, self.state.sortDesc, 0);
+    }
+
+    /** List the rows that are showing: those whose groups above them are all open. */
+    pub(file) fn reshow(mut self) : void {
+        self.shownCount = 0;
+        let mut hideBelow : i32 = 1000000;
+        for (k of 0..self.total) {
+            let row : i32 = self.order[k as i64];
+            let d : i32 = self.depths[row as i64];
+            if (d > hideBelow) {
+                continue;
+            }
+            hideBelow = 1000000;
+            self.shown[self.shownCount as i64] = row;
+            self.shownCount = self.shownCount + 1;
+            if (self.isGroup(row) && !self.open[row as i64]) {
+                hideBelow = d;
+            }
+        }
+    }
+
+    pub fn count(mut self) : i32 {
+        if (self.state.changes != self.seen) {
+            self.seen = self.state.changes;
+            self.resort();
+            self.reshow();
+        }
+        return self.shownCount;
+    }
+
+    pub fn key(self, row : i32) : i64 {
+        return self.shown[row as i64] as i64;
+    }
+
+    pub fn depth(self, row : i32) : i32 {
+        return self.depths[self.shown[row as i64] as i64];
+    }
+
+    pub fn branch(self, row : i32) : bool {
+        return self.isGroup(self.shown[row as i64]);
+    }
+
+    pub fn opened(self, row : i32) : bool {
+        return self.open[self.shown[row as i64] as i64];
+    }
+
+    pub fn toggle(mut self, row : i32) : void {
+        let at : i32 = self.shown[row as i64];
+        self.open[at as i64] = !self.open[at as i64];
+        self.reshow();
+    }
+
+    pub fn height(self, row : i32) : f64 {
+        return 44.0;
+    }
+
+    pub fn cell(mut self, row : i32, col : i32) : dyn Widget {
+        let at : i32 = self.shown[row as i64];
+        let group : bool = col == 0 && self.isGroup(at);
+        return new Label(self.text(at, col), group ? TextRole::Label : TextRole::Body);
+    }
+}

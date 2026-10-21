@@ -1,0 +1,113 @@
+// searchinput — a field for filtering: a lens, a clear cross, and a key that jumps to it.
+//
+//     let query : Shared<Model<string>> = new shared Model<string>("");
+//     new SearchInput(SearchProps { placeholder: "Filter by program, host or address" }, query)
+//
+// It is a `TextField` with the lens and the cross switched on, plus a small key cap at the right
+// edge while the field is empty and unfocused, naming the shortcut (`/` by default). Pressing that
+// key while nothing else has the focus puts the caret here, so a list can be filtered without
+// reaching for the mouse. Escape, while the field has the focus, clears it and gives the focus up.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::IconKind;
+use crate::widgets::field::{TextField, FieldProps};
+
+/** How a search field looks. */
+pub struct SearchProps {
+    /** What it says while empty. */
+    pub placeholder : string = "Search";
+
+    /** The key that jumps to it, as it is written on the key cap; empty for none. */
+    pub shortcut : string = "/";
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** The field's width. */
+    pub width : Length = Length::Fill;
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+}
+
+/** A filter field. */
+pub class SearchInput : Base, Widget {
+    props : SearchProps;
+    model : Shared<Model<string>>;
+    field : TextField;
+
+    /** A search field editing `model`. */
+    constructor(own props : SearchProps, model : Shared<Model<string>>) {
+        let fieldProps : FieldProps = FieldProps {
+            placeholder: props.placeholder,
+            size: props.size,
+            width: props.width,
+            icon: IconKind::Search,
+            clearable: true,
+            grow: props.grow,
+        };
+        self.field = new TextField(fieldProps, model);
+        self.props = props;
+        self.model = model;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return self.field.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.field.arrange(ctx, area);
+    }
+
+    /** Whether the key cap shows: there is a shortcut, and nothing typed, and the field is not in use. */
+    pub(file) fn capShows(self, ctx : Context) : bool {
+        return self.props.shortcut.byteLength > 0 && self.model.get().byteLength == 0 && !self.field.isFocused(ctx);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        if (e.kind == EventKind::Text && ctx.focus == 0 && self.props.shortcut.byteLength > 0 && e.cp == (self.props.shortcut.byteAt(0 as i64) as i32)) {
+            ctx.setFocus(self.field.token, true);
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && e.key == Key::Escape && self.field.isFocused(ctx)) {
+            self.model.set("");
+            ctx.setFocus(0, false);
+            ctx.invalidate();
+            return true;
+        }
+        return self.field.event(ctx, e);
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.field.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.field.paint(ctx, p);
+        if (self.capShows(ctx)) {
+            let pal = ctx.theme.palette;
+            let a : Bounds = self.area;
+            let w : f64 = Mathx::fmax(22.0, ctx.textWidth(FaceKind::Mono, self.props.shortcut, 11.0) + 14.0);
+            let cap : Bounds = Bounds::make(a.right() - 12.0 - w, a.midY() - 11.0, w, 22.0);
+            let rr : RRect = cap.round(ctx.theme.metrics.radiusInline - 2.0);
+            p.fillRound(rr, Brush::solid(pal.raised.rgb, pal.raised.a));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+            let tw : f64 = ctx.textWidth(FaceKind::Mono, self.props.shortcut, 11.0);
+            p.text(FaceKind::Mono, self.props.shortcut, cap.x + (cap.w - tw) * 0.5, ctx.baselineIn(FaceKind::Mono, 11.0, cap.y, cap.h), 11.0, pal.textDim);
+        }
+    }
+}

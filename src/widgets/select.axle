@@ -241,6 +241,9 @@ pub struct SelectProps {
     /** What it says while nothing is chosen (the model is negative). */
     pub placeholder : string = "Select…";
 
+    /** A word before the choice, in the quiet colour: "Sort" in "Sort  Salience". */
+    pub prefix : string = "";
+
     /** How large it is. */
     pub size : ControlSize = ControlSize::Md;
 
@@ -376,11 +379,15 @@ pub class Select : Control, Widget {
         }
         let i : i32 = self.model.get();
         let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, a.h);
-        let room : f64 = a.w - 2.0 * st.padX - st.px * 1.3;
+        let mut left : f64 = a.x + st.padX;
+        if (self.props.prefix.byteLength > 0) {
+            left = p.text(FaceKind::Sans, self.props.prefix, left, base, st.px, ctx.theme.palette.textFaint) + 8.0;
+        }
+        let room : f64 = a.right() - st.padX - st.px * 1.3 - left;
         if (i >= 0 && i < (self.options.length as i32)) {
-            p.textElided(FaceKind::Sans, self.options[i as i64], a.x + st.padX, base, st.px, room, st.text);
+            p.textElided(FaceKind::Sans, self.options[i as i64], left, base, st.px, room, st.text);
         } else {
-            p.textElided(FaceKind::Sans, self.props.placeholder, a.x + st.padX, base, st.px, room, st.placeholder);
+            p.textElided(FaceKind::Sans, self.props.placeholder, left, base, st.px, room, st.placeholder);
         }
         let isz : f64 = st.px * 1.3;
         let mut chev : IconKind = IconKind::ChevronDown;

@@ -1,0 +1,292 @@
+// audit — what a monitoring window is made of: key figures, a filter, and a tree of live data.
+//
+// The grid at the bottom is a `DataGrid` over a source this page writes itself (`Connections`): the
+// rows are programs, each folding open onto the addresses it talks to, and the cells are ordinary
+// widgets — an avatar, a protocol tag, a score meter, a badge. The grid asks for the cells of the
+// rows in view and for nothing else, so the same code would serve ten thousand rows.
+
+use zaffre::{
+    Model, Stat, StatProps, SearchInput, SearchProps, Select, SelectProps, ToggleChip,
+    DataGrid, DataGridProps, DataColumn, DataSource, DataState, ScoreMeter, StatusBar, StatusProps, KeyHint,
+    ReasonList, ReasonProps, Reason, Avatar, Badge, BadgeProps, Tag, TagProps, Label, LabelProps, Column, Row,
+    Widget, FlexProps, Strings, Tone, TextRole, StatLook, BadgeLook, BadgeSize, ControlSize, Length, Align, Insets, Justify,
+};
+use demo::Demo;
+use kit::{section, half, lineup, stacked, side, pageOf};
+
+/** Whether `text` holds `word`, ignoring case. */
+fn holds(text : string, word : string) : bool {
+    return Strings::holds(text, word);
+}
+
+/** The data behind the grid: programs, and under each the endpoints it talks to. */
+class Connections : DataSource {
+    depths : i32[];
+    names : string[];
+    notes : string[];
+    networks : string[];
+    scores : i32[];
+    rhythms : string[];
+    seen : string[];
+    total : i32;
+    open : bool[];
+    shown : i32[];
+    shownCount : i32 = 0;
+    query : Shared<Model<string>>;
+    asked : string = "";
+
+    /** The sample data, filtered by `query`. */
+    constructor(query : Shared<Model<string>>) {
+        self.query = query;
+        self.depths = [0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1];
+        self.names = [
+            "svchost.exe", "[2603:1020:805:3::402]:443",
+            "Discord.exe", "162.159.135.234:443",
+            "chrome.exe", "140.82.112.25:443", "18.97.36.60:443", "[2a00:1450:400c:c06::bc]:5228",
+            "ssh.exe", "167.235.116.252:22", "10.0.0.8:22",
+        ];
+        self.notes = [
+            "11 processes", "no name published",
+            "2 processes", "no name published",
+            "2 processes", "lb-140-82-112-25-iad.github.com", "ec2-18-97-36-60.compute-1.amazonaws.com", "resolving name…",
+            "1 process", "static.252.116.235.167.clients.your-server.de", "gateway.lan",
+        ];
+        self.networks = [
+            "3 endpoints", "AS8075 Microsoft Corporation",
+            "1 endpoint", "AS13335 Cloudflare, Inc.",
+            "3 endpoints", "AS36459 GitHub, Inc.", "AS14618 Amazon.com, Inc.", "AS15169 Google LLC",
+            "2 endpoints", "AS24940 Hetzner Online GmbH", "private network",
+        ];
+        self.scores = [5, 5, 5, 5, 4, 5, 4, 5, 3, 3, -1];
+        self.rhythms = ["", "seen once", "", "seen once", "", "seen once", "×214 · every 30 s", "seen once", "", "×40 · every 30 s", "seen once"];
+        self.seen = ["", "open now", "", "open now", "", "open now", "open now", "open now", "", "open now", "known for 8 s"];
+        self.total = 11;
+        self.open = malloc<bool>(11 as i64);
+        self.shown = malloc<i32>(11 as i64);
+        for (i of 0..11) {
+            self.open[i as i64] = true;
+        }
+        self.refresh();
+    }
+
+    /** Whether row `i` matches what was typed: by its own text, or, for a program, by any of its endpoints. */
+    pub(file) fn matches(self, i : i32, word : string) : bool {
+        if (word.byteLength == 0) {
+            return true;
+        }
+        if (holds(self.names[i as i64], word) || holds(self.notes[i as i64], word) || holds(self.networks[i as i64], word)) {
+            return true;
+        }
+        if (self.depths[i as i64] == 0) {
+            let mut k : i32 = i + 1;
+            while (k < self.total && self.depths[k as i64] > 0) {
+                if (self.matches(k, word)) {
+                    return true;
+                }
+                k = k + 1;
+            }
+        }
+        return false;
+    }
+
+    /** List the rows that show: those that match, under programs that are open. */
+    pub(file) fn refresh(mut self) : void {
+        let word : string = self.query.get();
+        self.asked = word;
+        self.shownCount = 0;
+        let mut folded : bool = false;
+        for (i of 0..self.total) {
+            if (self.depths[i as i64] == 0) {
+                folded = !self.open[i as i64];
+                if (self.matches(i, word)) {
+                    self.shown[self.shownCount as i64] = i;
+                    self.shownCount = self.shownCount + 1;
+                } else {
+                    folded = true;
+                }
+            } else if (!folded && self.matches(i, word)) {
+                self.shown[self.shownCount as i64] = i;
+                self.shownCount = self.shownCount + 1;
+            }
+        }
+    }
+
+    pub fn count(mut self) : i32 {
+        if (self.query.get() != self.asked) {
+            self.refresh();
+        }
+        return self.shownCount;
+    }
+
+    pub fn key(self, row : i32) : i64 {
+        return self.shown[row as i64] as i64;
+    }
+
+    pub fn depth(self, row : i32) : i32 {
+        return self.depths[self.shown[row as i64] as i64];
+    }
+
+    pub fn branch(self, row : i32) : bool {
+        return self.depths[self.shown[row as i64] as i64] == 0;
+    }
+
+    pub fn opened(self, row : i32) : bool {
+        return self.open[self.shown[row as i64] as i64];
+    }
+
+    pub fn toggle(mut self, row : i32) : void {
+        let at : i32 = self.shown[row as i64];
+        self.open[at as i64] = !self.open[at as i64];
+        self.refresh();
+    }
+
+    pub fn height(self, row : i32) : f64 {
+        return self.depths[self.shown[row as i64] as i64] == 0 ? 48.0 : 60.0;
+    }
+
+    /** Two lines of text, the second quieter. */
+    pub(file) static fn twoLines(first : string, second : string) : Column {
+        let kids : dyn Widget[] = [
+            new Label(first, TextRole::Body),
+            new Label(second, TextRole::Caption),
+        ];
+        return new Column(FlexProps { gap: 1.0 }, kids);
+    }
+
+    /** A program: its monogram and name, how many processes, its best score, how many endpoints are live. */
+    pub(file) fn groupCell(self, at : i32, col : i32) : dyn Widget {
+        if (col == 0) {
+            let kids : dyn Widget[] = [new Avatar(self.names[at as i64], 24.0), new Label(self.names[at as i64], TextRole::Label)];
+            return new Row(FlexProps { gap: 10.0, align: Align::Center }, kids);
+        }
+        if (col == 1) {
+            return new Label(self.notes[at as i64], TextRole::Dim);
+        }
+        if (col == 2) {
+            return new ScoreMeter(self.scores[at as i64]);
+        }
+        return new Badge(BadgeProps { text: self.networks[at as i64], tone: Tone::Ok, dot: true });
+    }
+
+    /** An endpoint: protocol and address, name and network, score, rhythm and last seen. */
+    pub(file) fn endpointCell(self, at : i32, col : i32) : dyn Widget {
+        if (col == 0) {
+            let kids : dyn Widget[] = [new Tag(TagProps { text: "TCP", tone: Tone::Info, size: BadgeSize::Sm }), new Label(self.names[at as i64], TextRole::Body)];
+            return new Row(FlexProps { gap: 10.0, align: Align::Center }, kids);
+        }
+        if (col == 1) {
+            return Connections::twoLines(self.notes[at as i64], self.networks[at as i64]);
+        }
+        if (col == 2) {
+            return new ScoreMeter(self.scores[at as i64]);
+        }
+        return Connections::twoLines(self.rhythms[at as i64], self.seen[at as i64]);
+    }
+
+    pub fn cell(mut self, row : i32, col : i32) : dyn Widget {
+        let at : i32 = self.shown[row as i64];
+        if (self.depths[at as i64] == 0) {
+            return self.groupCell(at, col);
+        }
+        return self.endpointCell(at, col);
+    }
+}
+
+/** The key figures: each a title with a dot, a number and a line of detail. */
+fn auditFigures() : Row {
+    let kids : dyn Widget[] = [
+        new Stat(StatProps { label: "Live conversations", value: "47", note: "47 in the journal", dot: Tone::Accent, grow: 1.0 }),
+        new Stat(StatProps { label: "Programs", value: "25", note: "40 processes holding sockets", dot: Tone::Ok, grow: 1.0 }),
+        new Stat(StatProps { label: "Reach", value: "16", unit: "internet addresses", note: "9 networks · 6 countries", dot: Tone::Info, grow: 1.0 }),
+        new Stat(StatProps { label: "Flagged", value: "0", unit: "endpoints", note: "worst 4/5", dot: Tone::Warn, grow: 1.0 }),
+    ];
+    return side(kids);
+}
+
+/** The strip above the grid: a filter, a ranking, and the two toggles that reveal what is hidden. */
+fn toolbar(demo : Demo, query : Shared<Model<string>>) : Row {
+    let ranking = demo.ranking;
+    let local = demo.showLocal;
+    let hidden = demo.localCount;
+    let listening = demo.showListening;
+    let more = demo.listeningCount;
+    let rankings : string[] = ["Salience", "Traffic", "Risk", "Rhythm", "Recent"];
+    let kids : dyn Widget[] = [
+        new SearchInput(SearchProps { placeholder: "Filter by program, host, network or address", grow: 1.0 }, query),
+        new Select(SelectProps { prefix: "Sort", width: Length::Px(200.0) }, rankings, ranking),
+        new ToggleChip("Local traffic", hidden, local),
+        new ToggleChip("Listening / UDP", more, listening),
+    ];
+    return new Row(FlexProps { gap: 12.0, align: Align::Center, width: Length::Fill }, kids);
+}
+
+/** The columns of the grid. */
+fn columns() : DataColumn[] {
+    let cols : DataColumn[] = [
+        DataColumn { title: "Program / endpoint", width: Length::Px(340.0), sortable: true },
+        DataColumn { title: "Name / network", sortable: true },
+        DataColumn { title: "Trust", width: Length::Px(110.0), sortable: true },
+        DataColumn { title: "Repetition / rhythm", width: Length::Px(200.0) },
+    ];
+    return cols;
+}
+
+/** The grid, with the toolbar over it and the status bar under it. */
+fn monitor(demo : Demo) : Column {
+    let query = demo.filter;
+    let state = demo.audit;
+    let message = demo.status;
+    let hints : KeyHint[] = [
+        KeyHint { key: "Enter", what: "details" },
+        KeyHint { key: "/", what: "filter" },
+        KeyHint { key: "S", what: "sort" },
+        KeyHint { key: "Space", what: "pause" },
+    ];
+    let grid = new DataGrid(DataGridProps { height: Length::Px(460.0) }, columns(), new Connections(query), state);
+    let kids : dyn Widget[] = [toolbar(demo, query), grid, new StatusBar(StatusProps { }, message, hints)];
+    return stacked(kids);
+}
+
+/** The working behind a verdict. */
+fn verdict() : Column {
+    let signals : Reason[] = [
+        Reason { weight: "+0.5", text: "Seen on every visit for the last hour", tone: Tone::Ok },
+        Reason { weight: "−1.0", text: "Reconnects every 30 seconds, to the millisecond, which no person does", tone: Tone::Danger },
+        Reason { weight: "−0.5", text: "The address belongs to a hosting provider", tone: Tone::Warn },
+        Reason { weight: "±0.0", text: "No name is published for the address" },
+    ];
+    let kids : dyn Widget[] = [new ReasonList(ReasonProps { title: "Trust", total: "3 / 5" }, signals)];
+    return stacked(kids);
+}
+
+/** A meter with the words under it. */
+fn captioned(score : i32, words : string) : Column {
+    let kids : dyn Widget[] = [new ScoreMeter(score), new Label(words, TextRole::Caption)];
+    return new Column(FlexProps { gap: 6.0 }, kids);
+}
+
+/** Score meters, as they read from good to bad to not known. */
+fn meters() : Row {
+    let kids : dyn Widget[] = [
+        captioned(5, "5 of 5"),
+        captioned(4, "4 of 5"),
+        captioned(3, "3 of 5"),
+        captioned(1, "1 of 5"),
+        captioned(-1, "not known"),
+    ];
+    return new Row(FlexProps { gap: 28.0, align: Align::Start }, kids);
+}
+
+/** The page. */
+pub fn auditPage(demo : Demo) : Column {
+    let lower : dyn Widget[] = [
+        half("Reasons", "A verdict shown with every signal that went into it.", verdict()),
+        half("Score meters", "Segments lit in green, amber or red; an empty outline means not known.", meters()),
+    ];
+    let rows : dyn Widget[] = [
+        auditFigures(),
+        section("Connections", "A grid that asks for only the rows in view. Type to filter; the chevron folds a program; press a header to sort.", monitor(demo)),
+        side(lower),
+    ];
+    return pageOf(rows);
+}

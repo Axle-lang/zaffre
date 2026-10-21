@@ -1,0 +1,88 @@
+// meter — a score drawn as a row of segments.
+//
+//     new ScoreMeter(4)                                   // four of five lit, green
+//     new ScoreMeter(MeterProps { segments: 10, good: 8, fair: 5 }, 6)
+//
+// The lit segments take the colour of how good the score is: green from `good` up, amber from `fair`,
+// red below. A score of -1 (not known) draws every segment as an empty outline, which is not the
+// same thing as a score of zero and must not look like it.
+
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** How a meter looks. */
+pub struct MeterProps {
+    /** How many segments it has. */
+    pub segments : i32 = 5;
+
+    /** The lowest score that is drawn green. */
+    pub good : i32 = 4;
+
+    /** The lowest score that is drawn amber. */
+    pub fair : i32 = 3;
+
+    /** The width of a segment. */
+    pub segmentW : f64 = 10.0;
+
+    /** The height of a segment. */
+    pub segmentH : f64 = 6.0;
+
+    /** The space between segments. */
+    pub gap : f64 = 3.0;
+}
+
+/** A score as lit segments. */
+pub class ScoreMeter : Base, Widget {
+    props : MeterProps;
+    score : i32;
+
+    /** A five-segment meter showing `score` (-1 for not known). */
+    constructor(score : i32) {
+        self.props = MeterProps { };
+        self.score = score;
+    }
+
+    /** A meter set as `props` say, showing `score`. */
+    constructor(own props : MeterProps, score : i32) {
+        self.props = props;
+        self.score = score;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let n : f64 = self.props.segments as f64;
+        return limits.constrain(Size { w: n * self.props.segmentW + (n - 1.0) * self.props.gap, h: self.props.segmentH });
+    }
+
+    /** The colour a score is drawn in. */
+    pub(file) fn tone(self, ctx : Context) : Tint {
+        let pal = ctx.theme.palette;
+        if (self.score >= self.props.good) {
+            return pal.success.s500;
+        }
+        if (self.score >= self.props.fair) {
+            return pal.warning.s500;
+        }
+        return pal.danger.s500;
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let lit : Tint = self.tone(ctx);
+        for (i of 0..self.props.segments) {
+            let x : f64 = a.x + (self.props.segmentW + self.props.gap) * (i as f64);
+            let seg : RRect = RRect::uniform(x, a.midY() - self.props.segmentH * 0.5, self.props.segmentW, self.props.segmentH, 2.0);
+            if (self.score < 0) {
+                p.strokeRound(seg, 1.0, Brush::solid(pal.textFaint.rgb, 140));
+            } else if (i < self.score) {
+                p.fillRound(seg, Brush::solid(lit.rgb, 255));
+            } else {
+                p.fillRound(seg, Brush::solid(pal.track.rgb, pal.track.a));
+            }
+        }
+    }
+}

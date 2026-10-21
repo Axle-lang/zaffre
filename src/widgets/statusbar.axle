@@ -1,0 +1,106 @@
+// statusbar — the strip along the bottom of a window: what is happening, and what the keys do.
+//
+//     let hints : KeyHint[] = [
+//         KeyHint { key: "Enter", what: "details" },
+//         KeyHint { key: "/", what: "filter" },
+//         KeyHint { key: "Space", what: "pause" },
+//     ];
+//     new StatusBar(StatusProps { }, message, hints)
+//
+// On the left, a light and a message, read from a `Model<string>` so the program says what it is
+// doing by writing it; on the right, the key hints, each a key cap and the word for what it does. The
+// hints that do not fit are dropped from the left, so the ones that matter most go last.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::variants::Tone;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+
+/** One key and what it does. */
+pub struct KeyHint {
+    /** The key, as it is written on the cap. */
+    pub key : string = "";
+
+    /** What pressing it does. */
+    pub what : string = "";
+}
+
+/** How a status bar looks. */
+pub struct StatusProps {
+    /** The colour of the light before the message; `Tone::Neutral` for none. */
+    pub tone : Tone = Tone::Accent;
+
+    /** Whether a hairline runs along the top edge. */
+    pub rule : bool = true;
+}
+
+/** Height of the bar. */
+const BAR_HEIGHT : f64 = 36.0;
+
+/** A bar with a message and key hints. */
+pub class StatusBar : Base, Widget {
+    props : StatusProps;
+    message : Shared<Model<string>>;
+    hints : KeyHint[];
+
+    /** A bar showing `message` and `hints`. */
+    constructor(own props : StatusProps, message : Shared<Model<string>>, hints : KeyHint[]) {
+        self.props = props;
+        self.message = message;
+        self.hints = hints;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return limits.constrain(Size { w: limits.boundedW() ? limits.maxW : 640.0, h: BAR_HEIGHT });
+    }
+
+    /** The width of hint `i`: its cap, a gap, and its word. */
+    pub(file) fn hintWidth(self, ctx : Context, i : i32) : f64 {
+        let h : KeyHint = self.hints[i as i64];
+        return Mathx::fmax(22.0, ctx.textWidth(FaceKind::Mono, h.key, 11.0) + 14.0) + 8.0 + ctx.textWidth(FaceKind::Sans, h.what, 12.0);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        if (self.props.rule) {
+            p.line(a.x, a.y + 0.5, a.right(), a.y + 0.5, 1.0, pal.line);
+        }
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, 12.0, a.y, a.h);
+        let mut x : f64 = a.x + 16.0;
+        if (self.props.tone != Tone::Neutral) {
+            let c = ctx.theme.hue(self.props.tone).s500;
+            p.fillRound(RRect::uniform(x, a.midY() - 3.5, 7.0, 7.0, 3.5), Brush::solid(c.rgb, 255));
+            x = x + 17.0;
+        }
+        // Hints from the right edge inwards, as many as leave room for the message.
+        let msg : string = self.message.get();
+        let mw : f64 = ctx.textWidth(FaceKind::Sans, msg, 12.0);
+        let mut right : f64 = a.right() - 16.0;
+        let floor : f64 = x + Mathx::fmin(mw, 200.0) + 24.0;
+        let mut k : i32 = (self.hints.length as i32) - 1;
+        while (k >= 0) {
+            let w : f64 = self.hintWidth(ctx, k);
+            if (right - w < floor) {
+                break;
+            }
+            let h : KeyHint = self.hints[k as i64];
+            let capW : f64 = Mathx::fmax(22.0, ctx.textWidth(FaceKind::Mono, h.key, 11.0) + 14.0);
+            let cap : Bounds = Bounds::make(right - w, a.midY() - 11.0, capW, 22.0);
+            let rr : RRect = cap.round(ctx.theme.metrics.radiusInline - 2.0);
+            p.fillRound(rr, Brush::solid(pal.raised.rgb, pal.raised.a));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+            let kw : f64 = ctx.textWidth(FaceKind::Mono, h.key, 11.0);
+            p.text(FaceKind::Mono, h.key, cap.x + (capW - kw) * 0.5, ctx.baselineIn(FaceKind::Mono, 11.0, cap.y, cap.h), 11.0, pal.textDim);
+            p.text(FaceKind::Sans, h.what, cap.right() + 8.0, base, 12.0, pal.textFaint);
+            right = right - w - 20.0;
+            k = k - 1;
+        }
+        p.textElided(FaceKind::Sans, msg, x, base, 12.0, Mathx::fmax(0.0, right - x), pal.textDim);
+    }
+}

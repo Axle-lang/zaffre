@@ -1,0 +1,122 @@
+// togglechip — a pill that holds a switch, a word and, optionally, a count.
+//
+//     let local : Shared<Model<bool>> = new shared Model<bool>(false);
+//     let hidden : Shared<Model<i32>> = new shared Model<i32>(78);
+//     new ToggleChip("Local traffic", hidden, local)
+//
+// For a filter that reveals something: the count says how much is behind it. The whole pill is the
+// target, so a click anywhere on it flips the switch, and Space or Enter does when it has the focus.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::text::fonts::FaceKind;
+use crate::core::format::Format;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+
+/** Height of the pill, width of the switch, and the space around things in it. */
+const CHIP_HEIGHT : f64 = 40.0;
+const SWITCH_W : f64 = 32.0;
+const SWITCH_H : f64 = 18.0;
+const CHIP_PAD : f64 = 16.0;
+const CHIP_GAP : f64 = 12.0;
+
+/** A pill with a switch in it. */
+pub class ToggleChip : Control, Widget {
+    label : string;
+    count : Shared<Model<i32>>;
+    counted : bool;
+    model : Shared<Model<bool>>;
+    knob : Eased;
+
+    /** A pill saying `label` that flips `model`. */
+    constructor(label : string, model : Shared<Model<bool>>) {
+        super();
+        self.label = label;
+        self.count = new shared Model<i32>(0);
+        self.counted = false;
+        self.model = model;
+        self.knob = Eased::at(model.get() ? 1.0 : 0.0);
+    }
+
+    /** A pill saying `label` and the number in `count`, that flips `model`. */
+    constructor(label : string, count : Shared<Model<i32>>, model : Shared<Model<bool>>) {
+        super();
+        self.label = label;
+        self.count = count;
+        self.counted = true;
+        self.model = model;
+        self.knob = Eased::at(model.get() ? 1.0 : 0.0);
+    }
+
+    /** The count as text, or nothing when there is none to show. */
+    pub(file) fn countText(self) : string {
+        return self.counted ? Format::whole(self.count.get() as f64) : "";
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let mut w : f64 = 2.0 * CHIP_PAD + ctx.textWidth(FaceKind::Sans, self.label, 14.0) + CHIP_GAP + SWITCH_W;
+        if (self.counted) {
+            w = w + ctx.textWidth(FaceKind::Mono, self.countText(), 13.0) + CHIP_GAP;
+        }
+        return limits.constrain(Size { w: w, h: CHIP_HEIGHT });
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Click || (e.kind == EventKind::KeyDown && self.isFocused(ctx) && (e.key == Key::Space || e.key == Key::Enter))) {
+            self.model.set(!self.model.get());
+            ctx.invalidate();
+            return true;
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.knob = self.knob.toward(self.model.get() ? 1.0 : 0.0).step(dt, Rate::HOVER);
+        let moving : bool = self.animate(ctx, dt);
+        return moving || !self.knob.settled();
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(a.h * 0.5);
+        let on : bool = self.model.get();
+        let mut fill : Tint = pal.surface.mixed(pal.hover, self.hoverT.alpha());
+        let mut edge : Tint = pal.line.mixed(pal.lineStrong, self.hoverT.alpha());
+        if (on) {
+            fill = fill.mixed(pal.accentSoft, 255);
+            edge = edge.mixed(pal.primary.s500, 120);
+        }
+        p.fillRound(rr, Brush::solid(fill.rgb, fill.a));
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        let base : f64 = ctx.baselineIn(FaceKind::Sans, 14.0, a.y, a.h);
+        let mut x : f64 = a.x + CHIP_PAD;
+        x = p.text(FaceKind::Sans, self.label, x, base, 14.0, pal.text) + CHIP_GAP;
+        if (self.counted) {
+            let word : string = self.countText();
+            p.text(FaceKind::Mono, word, x, ctx.baselineIn(FaceKind::Mono, 13.0, a.y, a.h), 13.0, pal.textFaint);
+        }
+        // The switch: a track that fills with the accent, and a knob that slides.
+        let track : Bounds = Bounds::make(a.right() - CHIP_PAD - SWITCH_W + 4.0, a.midY() - SWITCH_H * 0.5, SWITCH_W - 4.0, SWITCH_H);
+        let tone : Tint = pal.track.mixed(pal.primary.s600, Mathx::roundI(self.knob.value * 255.0));
+        p.fillRound(track.round(SWITCH_H * 0.5), Brush::solid(tone.rgb, tone.a));
+        let d : f64 = SWITCH_H - 4.0;
+        let kx : f64 = Mathx::lerp(track.x + 2.0, track.right() - 2.0 - d, self.knob.value);
+        p.fillRound(RRect::uniform(kx, track.y + 2.0, d, d, d * 0.5), Brush::solid(0xFFFFFF, 255));
+        if (self.ringShown(ctx)) {
+            let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+            p.strokeRound(a.grown(3.0).round(a.h * 0.5 + 3.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

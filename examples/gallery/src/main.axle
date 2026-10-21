@@ -23,6 +23,7 @@ use page_navigation::navigationPage;
 use page_data::dataPage;
 use page_layout::layoutPage;
 use page_overlays::overlaysPage;
+use page_audit::auditPage;
 use std::sys::process::{argc, argAt};
 use std::lang::IndexOutOfBoundsException;
 
@@ -44,13 +45,14 @@ fn entries() : SidebarItem[] {
         SidebarItem { label: "Data", icon: IconKind::Chart },
         SidebarItem { label: "Layout", icon: IconKind::Grid },
         SidebarItem { label: "Overlays", icon: IconKind::Copy },
+        SidebarItem { label: "Audit", icon: IconKind::Search },
     ];
     return items;
 }
 
 /** The title of each entry, for the top bar. */
 fn names() : string[] {
-    let titles : string[] = ["Components", "Overview", "Buttons", "Forms", "Feedback", "Navigation", "Data", "Layout", "Overlays"];
+    let titles : string[] = ["Components", "Overview", "Buttons", "Forms", "Feedback", "Navigation", "Data", "Layout", "Overlays", "Audit"];
     return titles;
 }
 
@@ -112,6 +114,7 @@ fn buildOn(start : i32) : View {
         dataPage(demo),
         layoutPage(demo),
         overlaysPage(demo),
+        auditPage(demo),
     ];
     let side = new Sidebar(SidebarProps { title: "Zaffre" }, entries(), page);
     let top = new TopBar(names(), page, topActions(notes, dark));

@@ -62,6 +62,17 @@ Space + arrows, shared `Order`), `TransferList`, `LatencyIndicator`, `Eyebrow`, 
 detail (`notes.notify`) and sit bottom-right with a dismiss cross. Dialog follows the web layout
 (header, body, footer band, close cross). Labels, buttons, tabs and badges use a Medium weight.
 
+Written from what `netaudit` draws by hand (a monitoring window: key figures, a filter, a live tree of
+programs and the addresses they talk to): `DataGrid` (virtualised, tree-shaped table over a `DataSource`
+trait — the program says how many rows, their keys, depths and cells; the grid asks for the widgets of the
+rows in view only, and keeps the pick as a key, the scroll in pixels, the sort header and `hovering` in a
+shared `DataState`), `TextGrid` (a ready source for rows of text: groups, folding, sorting), `ScoreMeter`
+(segments on a green/amber/red ramp, an outline for "not known"), `ToggleChip` (a pill with a count and a
+switch), `SearchInput` (lens, clear cross, a key cap and a key that jumps to it), `StatusBar` with
+`KeyHint`s, `ReasonList` (a verdict with every signed signal behind it), `Select` with a `prefix`, `Stat`
+with a `dot`, a `unit` and a `note`. The gallery's Audit page assembles them into a small version of the
+program.
+
 ## Not yet written
 
 Virtual list, file input, a GPU painter, right-to-left and shaped text.

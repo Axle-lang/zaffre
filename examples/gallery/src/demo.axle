@@ -6,7 +6,7 @@
 // A handler (a lambda) cannot capture the `Demo` itself, only handles, so pages copy the handle
 // they need into a local before they build a handler around it.
 
-use zaffre::{Model, Notifier, Dates, Times, Order};
+use zaffre::{Model, Notifier, Dates, Times, Order, DataState};
 
 /** The values of the gallery. */
 pub class Demo {
@@ -75,6 +75,16 @@ pub class Demo {
     /** Lists put in order and carried between. */
     pub order : Shared<Order> = new shared Order(5);
     pub rights : Shared<Model<i32>> = new shared Model<i32>(5);
+
+    /** The audit page: the filter, the ranking, the two reveals with their counts, the grid's state, the status line. */
+    pub filter : Shared<Model<string>> = new shared Model<string>("");
+    pub ranking : Shared<Model<i32>> = new shared Model<i32>(0);
+    pub showLocal : Shared<Model<bool>> = new shared Model<bool>(false);
+    pub localCount : Shared<Model<i32>> = new shared Model<i32>(78);
+    pub showListening : Shared<Model<bool>> = new shared Model<bool>(false);
+    pub listeningCount : Shared<Model<i32>> = new shared Model<i32>(50);
+    pub audit : Shared<DataState> = new shared DataState();
+    pub status : Shared<Model<string>> = new shared Model<string>("11 names still resolving through reverse DNS");
 
     /** The row picked in the table and in the list. */
     pub picked : Shared<Model<i32>> = new shared Model<i32>(-1);
