@@ -31,6 +31,6 @@ What Zaffre does not do, and what has not been proven. Written from what was run
 
 ## 3. Platform notes (from smalt)
 
-* The pointer's shape needs smalt's `dev` branch (`Window::setCursor`); the clipboard too. On Wayland
+* The pointer's shape (`Window::setCursor`) and the clipboard come from smalt. On Wayland
   both depend on the compositor (cursor-shape protocol, or a built-in pointer; a data device).
 * Key repeat is not synthesised on Wayland.

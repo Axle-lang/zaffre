@@ -98,8 +98,8 @@ cd examples/gallery
 axle run                     # or: axle build; add -- --snap for a picture with no window
 ```
 
-`vendor/smalt` is a submodule pinned to smalt's `dev` branch, which carries what the shell uses and
-`main` does not yet: `Window::setCursor`, the system clipboard, click counts and `MouseLeft`.
+`vendor/smalt` is a submodule pinned to smalt's `main` branch, which carries what the shell uses:
+`Window::setCursor`, the system clipboard, click counts and `MouseLeft`.
 
 ## Verification
 

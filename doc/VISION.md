@@ -71,6 +71,6 @@ The levels follow atomic design. Each level may use the ones before it and nothi
 ## What it needs from smalt
 
 The pointer's shape, the system clipboard, click counts, a damaged-rectangle present and the pointer
-leaving the window are in smalt's `dev` branch and used by the shell. Still missing: the window's scale
+leaving the window are in smalt and used by the shell. Still missing: the window's scale
 factor, key repeat on Wayland, and a 2-D batch pipeline for a GPU painter (instanced distance-field
 quads and a glyph atlas) — Zaffre will not own Vulkan.
