@@ -15,7 +15,7 @@ def ev(kind, x=0.0, y=0.0, **kw):
     return _rt_lit(z.UiEvent, None, kind=kind, x=x, y=y, **kw)
 
 
-names = ["", "overview", "buttons", "forms", "feedback", "navigation", "data", "layout", "overlays"]
+names = ["", "overview", "buttons", "forms", "feedback", "navigation", "data", "layout", "overlays", "audit"]
 clock = [0.0]
 
 
@@ -25,7 +25,7 @@ def tick(view, n=3):
         view.update(clock[0])
 
 
-for page in range(1, 9):
+for page in range(1, 10):
     rt._top[0] = 64          # the runtime's heap is a bump allocator; the previous page is gone
     view = z.buildOn(page)
     view.resize(1360.0, 900.0)
