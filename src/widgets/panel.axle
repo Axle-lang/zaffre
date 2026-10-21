@@ -52,6 +52,10 @@ pub class Surfaces {
         if (st.border.a > 0) {
             p.strokeRound(rr, st.borderW, Brush::solid(st.border.rgb, st.border.a));
         }
+        if (st.highlight.a > 0) {
+            // Just under the border, between the rounded corners.
+            p.line(rr.x + rr.tl, rr.y + st.borderW + 0.5, rr.x + rr.w - rr.tr, rr.y + st.borderW + 0.5, 1.0, st.highlight);
+        }
     }
 }
 

@@ -123,6 +123,6 @@ pub class Spinner : Base, Widget {
         let a : Bounds = self.area;
         // A stretched spinner stays round: the largest square in its box, centred.
         let side : f64 = Mathx::fmin(a.w, a.h);
-        Spinners::draw(ctx, p, a.midX() - side * 0.5, a.midY() - side * 0.5, side, ctx.theme.palette.primary.s600);
+        Spinners::draw(ctx, p, a.midX() - side * 0.5, a.midY() - side * 0.5, side, ctx.theme.palette.accentTop);
     }
 }

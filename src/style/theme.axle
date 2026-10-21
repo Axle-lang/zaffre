@@ -407,7 +407,7 @@ pub class Theme {
             fill: Fill::flat(p.surface),
             fillFocus: Fill::flat(p.surface),
             fillOff: Fill::flat(p.raised),
-            border: p.lineStrong,
+            border: p.fieldLine,
             borderHover: p.textFaint,
             borderFocus: p.primary.s500,
             borderInvalid: p.danger.s500,
@@ -416,7 +416,7 @@ pub class Theme {
             text: p.text,
             placeholder: p.textFaint,
             caret: p.accentTop,
-            selection: p.primary.s500.withAlpha(self.isDark ? 90 : 70),
+            selection: p.selection,
         };
     }
 
@@ -443,7 +443,7 @@ pub class Theme {
             boxOff: Fill::flat(p.surface),
             off: Fill::flat(p.track),
             on: Fill::flat(p.primary.s600),
-            borderOff: p.lineStrong,
+            borderOff: p.fieldLine,
             borderOn: p.primary.s600,
             glyph: p.onAccent,
             knob: Tint::hex(0xFFFFFF),
@@ -484,6 +484,7 @@ pub class Theme {
         let mut tightDy : f64 = 0.0;
         let mut tightBlur : f64 = 0.0;
         let mut tightSpread : f64 = 0.0;
+        let mut highlight : Tint = none;
         if (e == 1) {
             // raised: sits on the page without floating.
             wide = sh.withAlpha(dark ? 89 : 15);
@@ -504,6 +505,7 @@ pub class Theme {
             tightDy = 2.0;
             tightBlur = 6.0;
             tightSpread = -2.0;
+            highlight = dark ? Tint::hexA(0xFFFFFF, 13) : none;
         } else if (e == 3) {
             // lifted: a raised card under the pointer.
             wide = sh.withAlpha(dark ? 140 : 36);
@@ -526,6 +528,7 @@ pub class Theme {
             tightDy = 4.0;
             tightBlur = 10.0;
             tightSpread = -3.0;
+            highlight = dark ? Tint::hexA(0xFFFFFF, 15) : none;
         }
         return PanelStyle {
             radius: radius,
@@ -540,6 +543,7 @@ pub class Theme {
             shadow2Blur: tightBlur,
             shadow2Dy: tightDy,
             shadow2Spread: tightSpread,
+            highlight: highlight,
         };
     }
 
@@ -621,7 +625,7 @@ pub class Theme {
             hover: p.hover,
             selected: p.softPrimary.fill,
             text: p.text,
-            textSelected: p.softPrimary.fg,
+            textSelected: p.accentTop,
             textOff: p.textOff,
         };
     }

@@ -159,7 +159,7 @@ pub class Banner : Control, Widget {
         } else if (self.props.tone == Tone::Warn) {
             fill = hue.s500;
         } else if (self.props.tone == Tone::Neutral) {
-            fill = Tint::hex(0x111827);
+            fill = ctx.theme.palette.night;
         }
         p.fillRound(a.round(0.0), Brush::solid(fill.rgb, fill.a));
         if (self.props.look == BannerLook::Subtle) {

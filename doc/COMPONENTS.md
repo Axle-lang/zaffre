@@ -12,6 +12,8 @@
 | Icons | 44 stroked icons on a 24-unit grid (`doc/img/icons.png`) |
 | Cursors | Arrow, Hand, Beam, ResizeH/V, Wait, NotAllowed, Move |
 
+Tokens follow the web kit's latest: an indigo-tinted dark theme, a `fieldLine` for field, checkbox and radio outlines, a `selection` wash, an always-dark `night` for code windows and neutral banners, and a hairline of light on dark overlays.
+
 ## Atoms
 
 `Label`, `Spacer`, `Divider`, `LabeledDivider`, `Icon`, `IconDisc`, `Button` (nine kinds · five sizes ·

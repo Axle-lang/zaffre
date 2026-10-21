@@ -72,7 +72,12 @@ pub class Eyebrow : Base, Widget {
 
     pub fn paint(mut self, ctx : Context, p : Painter) : void {
         let a : Bounds = self.area;
-        let ink = self.tone == Tone::Neutral ? ctx.theme.palette.textFaint : ctx.theme.soft(self.tone).fg;
+        let mut ink = ctx.theme.soft(self.tone).fg;
+        if (self.tone == Tone::Neutral) {
+            ink = ctx.theme.palette.textFaint;
+        } else if (self.tone == Tone::Accent) {
+            ink = ctx.theme.palette.accentTop;
+        }
         p.text(FaceKind::Bold, self.text, a.x, ctx.baselineIn(FaceKind::Bold, 11.0, a.y, a.h), 11.0, ink);
     }
 }

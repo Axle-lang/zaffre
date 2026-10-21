@@ -82,21 +82,21 @@ pub class Syntax {
             return Tint::hex(dark ? 0xFCD34D : 0xB45309);
         }
         if (k == 4) {
-            return Tint::hex(dark ? 0x6B7280 : 0x6B7280);
+            return Tint::hex(dark ? 0x717998 : 0x6B7280);
         }
         if (k == 5) {
             return Tint::hex(dark ? 0x93C5FD : 0x1D4ED8);
         }
         if (k == 6) {
-            return Tint::hex(dark ? 0x9CA3AF : 0x6B7280);
+            return Tint::hex(dark ? 0x949BB9 : 0x6B7280);
         }
-        return Tint::hex(dark ? 0xE5E7EB : 0x1F2937);
+        return Tint::hex(dark ? 0xD6DAEB : 0x1F2937);
     }
 
     /** The fill of a code surface: near black in the dark theme, the raised grey in the light one. */
     pub static fn background(ctx : Context) : Tint {
         if (ctx.theme.isDark) {
-            return Tint::hex(0x030712);
+            return ctx.theme.palette.night;
         }
         return ctx.theme.palette.raised;
     }

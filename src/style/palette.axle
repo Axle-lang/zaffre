@@ -70,6 +70,15 @@ pub struct Palette {
     /** A control's outline, a divider that must be seen. */
     pub lineStrong : Tint;
 
+    /** The outline of a field, a checkbox, a radio: a step quieter than `lineStrong` on a dark page. */
+    pub fieldLine : Tint;
+
+    /** The wash behind selected text. */
+    pub selection : Tint;
+
+    /** Chrome that stays dark in both themes: a code window, a solid neutral banner. */
+    pub night : Tint;
+
     /** The main text. */
     pub text : Tint;
 
@@ -206,6 +215,9 @@ pub struct Palette {
             overlay: Tint::hex(0xFFFFFF),
             line: Tint::hex(0xE5E7EB),
             lineStrong: Tint::hex(0xD1D5DB),
+            fieldLine: Tint::hex(0xD1D5DB),
+            selection: Tint::hexA(0x5566ED, 56),
+            night: Tint::hex(0x090B14),
             text: Tint::hex(0x1F2937),
             textDim: Tint::hex(0x4B5563),
             textFaint: Tint::hex(0x6B7280),
@@ -241,24 +253,27 @@ pub struct Palette {
     /** The dark theme. */
     pub static fn dark() : Palette {
         return Palette {
-            background: Tint::hex(0x111827),
-            surface: Tint::hex(0x1F2937),
-            raised: Tint::hex(0x374151),
-            overlay: Tint::hex(0x1F2937),
-            line: Tint::hex(0x4B5563),
-            lineStrong: Tint::hex(0x6B7280),
-            text: Tint::hex(0xFFFFFF),
-            textDim: Tint::hex(0xD1D5DB),
-            textFaint: Tint::hex(0x9CA3AF),
-            textOff: Tint::hex(0x6B7280),
+            background: Tint::hex(0x0D0F1A),
+            surface: Tint::hex(0x151826),
+            raised: Tint::hex(0x1C2031),
+            overlay: Tint::hex(0x151826),
+            line: Tint::hex(0x212538),
+            lineStrong: Tint::hex(0x3E4562),
+            fieldLine: Tint::hex(0x474B58),
+            selection: Tint::hexA(0x6E7DF1, 102),
+            night: Tint::hex(0x090B14),
+            text: Tint::hex(0xECEEF8),
+            textDim: Tint::hex(0xB0B6CD),
+            textFaint: Tint::hex(0x858CA8),
+            textOff: Tint::hex(0x545B76),
             link: Tint::hex(0xA5B4FC),
-            hover: Tint::hex(0x374151),
-            active: Tint::hex(0x4B5563),
-            track: Tint::hex(0x374151),
-            inverse: Tint::hex(0xF3F4F6),
-            inverseText: Tint::hex(0x111827),
-            scrim: Tint::hexA(0x030712, 102),
-            shadow: Tint::hex(0x000000),
+            hover: Tint::hex(0x22273B),
+            active: Tint::hex(0x2B3149),
+            track: Tint::hex(0x262B40),
+            inverse: Tint::hex(0xECEEF8),
+            inverseText: Tint::hex(0x0D0F1A),
+            scrim: Tint::hexA(0x05060E, 166),
+            shadow: Tint::hex(0x02030A),
             accent: Tint::hex(0x4654C8),
             accentTop: Tint::hex(0x8E9BF5),
             accentBottom: Tint::hex(0x2A3379),
@@ -270,7 +285,7 @@ pub struct Palette {
             danger: Palette::hueDanger(),
             info: Palette::hueInfo(),
             important: Palette::hueImportant(),
-            softNeutral: Palette::softLight(0x374151, 0x4B5563, 0x6B7280, 0xE5E7EB),
+            softNeutral: Palette::softLight(0x22273B, 0x2B3149, 0x3E4562, 0xD4D8EB),
             softPrimary: Palette::softDark(0x5566ED, 0x8E9BF5),
             softSuccess: Palette::softDark(0x22C55E, 0x4ADE80),
             softWarning: Palette::softDark(0xF59E0B, 0xFCD34D),

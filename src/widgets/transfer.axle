@@ -234,7 +234,7 @@ pub class TransferList : Control, Widget {
             p.fillRound(mark.round(4.0), Brush::solid(pal.primary.s600.rgb, 255));
             Icons::draw(p, IconKind::Check, mark.x + 2.0, mark.y + 2.0, 12.0, Tint::hex(0xFFFFFF));
         } else {
-            p.strokeRound(mark.round(4.0), 1.0, Brush::solid(pal.lineStrong.rgb, pal.lineStrong.a));
+            p.strokeRound(mark.round(4.0), 1.0, Brush::solid(pal.fieldLine.rgb, pal.fieldLine.a));
         }
         p.textElided(FaceKind::Sans, self.items[item as i64], box.x + 36.0, ctx.baselineIn(FaceKind::Sans, 13.0, box.y, box.h), 13.0, box.w - 46.0, ink);
     }
@@ -275,7 +275,7 @@ pub class TransferList : Control, Widget {
             if (live && self.hotArrow == n) {
                 p.fillRound(rr, Brush::solid(pal.hover.rgb, pal.hover.a));
             }
-            p.strokeRound(rr, 1.0, Brush::solid(pal.lineStrong.rgb, live ? pal.lineStrong.a : pal.lineStrong.a / 2));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.fieldLine.rgb, live ? pal.fieldLine.a : pal.fieldLine.a / 2));
             let icon : IconKind = n == 0 ? IconKind::ChevronRight : IconKind::ChevronLeft;
             Icons::draw(p, icon, box.midX() - 8.0, box.midY() - 8.0, 16.0, live ? pal.textDim : pal.textOff);
         }

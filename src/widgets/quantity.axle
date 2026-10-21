@@ -132,7 +132,7 @@ pub class QuantityInput : Control, Widget {
         if (self.hot == 2 && v < self.props.max) {
             p.fillRound(RRect::corners(plus.x, plus.y, plus.w, plus.h, 0.0, r, r, 0.0), Brush::solid(pal.hover.rgb, pal.hover.a));
         }
-        let mut edge : Tint = pal.lineStrong;
+        let mut edge : Tint = pal.fieldLine;
         if (self.ringShown(ctx)) {
             edge = ctx.theme.ringTint();
         }

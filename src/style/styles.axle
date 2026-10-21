@@ -262,6 +262,9 @@ pub struct PanelStyle {
 
     /** How far the tight shadow grows. */
     pub shadow2Spread : f64;
+
+    /** A hairline of light just inside the top edge, which lifts a dark menu or dialog off the page; clear for none. */
+    pub highlight : Tint;
 }
 
 /** A badge or chip: a small pill of text. */
