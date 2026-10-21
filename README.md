@@ -2,14 +2,31 @@
 
 # 🔷 Zaffre
 
-### A native UI library for Axle — soft, typographic, themeable, and nothing but [smalt](https://github.com/Axle-lang/smalt)
+### A native UI library for [**Axle**](https://axle-lang.dev) — soft, typographic, themeable, and nothing but [smalt](https://github.com/Axle-lang/smalt)
+
+<p align="center">
+  <a href="https://axle-lang.dev"><img alt="Powered by Axle 0.18" src="https://img.shields.io/badge/powered%20by-Axle%200.18-5B4BE1?style=for-the-badge&labelColor=1b1b2b"></a>
+  <a href="https://github.com/Axle-lang/smalt"><img alt="Built on smalt" src="https://img.shields.io/badge/built%20on-smalt-1D6FB8?style=for-the-badge&labelColor=1b1b2b"></a>
+</p>
+<p align="center">
+  <img alt="Rendering: CPU" src="https://img.shields.io/badge/rendering-CPU-FF7A45?style=flat-square&labelColor=1b1b2b">
+  <img alt="Dependencies: smalt only" src="https://img.shields.io/badge/dependencies-smalt%20only-2E7D32?style=flat-square&labelColor=1b1b2b">
+  <img alt="Themes: light and dark" src="https://img.shields.io/badge/themes-light%20%C2%B7%20dark-9C27B0?style=flat-square&labelColor=1b1b2b">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-555555?style=flat-square&labelColor=1b1b2b">
+</p>
 
 <img src="doc/img/gallery-data-dark.png" width="49%"> <img src="doc/img/gallery-forms-light.png" width="49%">
 <img src="doc/img/weather-dark.png" width="49%"> <img src="doc/img/weather-light.png" width="49%">
 
-*The weather example, in both themes — `examples/weather`.*
+<sub>The gallery's data page in the dark theme and its forms page in the light one, then the weather example in both — all written by the programs themselves: <code>--snap</code> draws one frame and puts it in a file.</sub>
+
+<br>
+
+<sub><a href="#examples">Examples</a> · <a href="#building">Building</a> · <a href="#verification">Verification</a> · <a href="doc/VISION.md">Vision</a> · <a href="doc/ARCHITECTURE.md">Architecture</a> · <a href="doc/COMPONENTS.md">Components</a> · <a href="LIMITATIONS.md">Limitations</a> · <a href="https://github.com/Axle-lang/smalt">smalt ↗</a> · <a href="https://axle-lang.dev">Axle ↗</a></sub>
 
 </div>
+
+---
 
 > **Status.** The library and its two examples build and run with the development build of Axle
 > (0.18.1-dev), on Windows; the released 0.18 stops on cross-crate types (`E0014`). `axle check` is the
