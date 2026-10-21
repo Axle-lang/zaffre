@@ -88,10 +88,7 @@ pub class Mathx {
         }
         // The arctangent of a ratio in [0, 1], by a polynomial good to about 1e-5.
         let swap : bool = ay > ax;
-        let mut z : f64 = ay / ax;
-        if (swap) {
-            z = ax / ay;
-        }
+        let z : f64 = swap ? ax / ay : ay / ax;
         let z2 : f64 = z * z;
         let mut a : f64 = z * (0.9998660 + z2 * (-0.3302995 + z2 * (0.1801410 + z2 * (-0.0851330 + z2 * 0.0208351))));
         if (swap) {
