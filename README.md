@@ -11,11 +11,10 @@
 
 </div>
 
-> **Status.** The library builds with Axle 0.18 and its gallery runs (the maintainer's own build, on
-> Windows). Everything added since — the weather app, tooltip, dialog, toast, and the shell's use of
-> smalt's new cursor, clipboard and click APIs — has been written without a compiler and checked by
-> the tools in `tools/` (see [Verification](#verification)). `LIMITATIONS.md` says what is built, what
-> is unverified and what is missing.
+> **Status.** The library and its two examples build and run with the development build of Axle
+> (0.18.1-dev), on Windows; the released 0.18 stops on cross-crate types (`E0014`). `axle check` is the
+> last word, and `tools/` holds what runs beside it (see [Verification](#verification)).
+> `LIMITATIONS.md` says what is built, what is unverified and what is missing.
 
 Zaffre draws the interface you would expect from a good web app — rounded surfaces, soft shadows,
 real typography, motion — through smalt's CPU frame, with no library outside smalt. The look is
@@ -23,26 +22,41 @@ yours: every colour, radius, shadow and duration is a token, every widget is mad
 and a theme is a value.
 
 ```rs
-let dark = new shared Model<bool>(true);
-let volume = new shared Model<f64>(0.62);
-let notes = new shared Notifier();
+use zaffre::{
+    View, Theme, Fonts, App, AppDesc, Notifier, Notifications, Model, Widget, Button, ButtonProps,
+    ButtonKind, Switch, Panel, PanelProps, Elevation, Column, Row, FlexProps, Label, TextRole, Slider,
+    SliderProps, Tone,
+    // Named by the defaults of the structs above, so the program names them too.
+    Insets, Length, ControlSize, IconKind, Align, Justify,
+};
 
-let rowKids : dyn Widget[] = [
-    new Button(ButtonProps { label: "Save", kind: ButtonKind::Primary }, () => notes.toast("Saved", Tone::Ok)),
-    new Switch("Dark mode", dark),
-];
-let card = new Panel(PanelProps { elevation: Elevation::Raised }, new Column(FlexProps { gap: 14.0 }, [
-    new Label("Preferences", TextRole::H3),
-    new Slider(SliderProps { label: "Volume" }, volume),
-    new Row(FlexProps { gap: 10.0 }, rowKids),
-]));
+fn main() : i32 {
+    let fonts : Shared<Fonts> = new shared Fonts();
+    let dark = new shared Model<bool>(true);
+    let volume = new shared Model<f64>(0.62);
+    let notes = new shared Notifier();
 
-let view = new View(Theme::dark(), fonts, dark, new Notifications(notes, card));
-App::run(AppDesc { title: "demo", width: 640, height: 400 }, view);
+    let save = new Button(
+        ButtonProps { label: "Save", kind: ButtonKind::Primary },
+        () => notes.toast("Saved", Tone::Ok)
+    );
+    let actions : dyn Widget[] = [save, new Switch("Dark mode", dark)];
+    let kids : dyn Widget[] = [
+        new Label("Preferences", TextRole::H3),
+        new Slider(SliderProps { label: "Volume" }, volume),
+        new Row(FlexProps { gap: 10.0 }, actions),
+    ];
+    let column = new Column(FlexProps { gap: 14.0 }, kids);
+    let card = new Panel(PanelProps { elevation: Elevation::Raised }, column);
+
+    let view = new View(Theme::dark(), fonts, dark, new Notifications(notes, card));
+    return App::run(AppDesc { title: "demo", width: 640, height: 400 }, view);
+}
 ```
 
-A widget tree is a nested expression of `new`; the values widgets show are `Model`s the program
-holds, so nothing is synchronised by hand; handlers are lambdas over `Shared` handles. Layout is
+A widget tree is built from `new`, children going in a `dyn Widget[]` a parent takes; the values
+widgets show are `Model`s the program holds, so nothing is synchronised by hand; handlers are lambdas
+over `Shared` handles. Layout is
 constraints going down and sizes coming up (`Flex`, `Panel`, `Scroll`, …); drawing goes through a
 `Painter` that a CPU backend implements today and a GPU backend could implement tomorrow.
 
@@ -63,7 +77,8 @@ constraints going down and sizes coming up (`Flex`, `Panel`, `Scroll`, …); dra
 ```bash
 git clone --recursive https://github.com/Axle-lang/zaffre
 cd zaffre
-axle run -p gallery          # or: axle build
+cd examples/gallery
+axle run                     # or: axle build; add -- --snap for a picture with no window
 ```
 
 `vendor/smalt` is a submodule pinned to smalt's `dev` branch, which carries what the shell uses and
@@ -71,18 +86,17 @@ axle run -p gallery          # or: axle build
 
 ## Verification
 
-There is no `axle` in the environment this was written in, so the code is held by tools, and they are
-the reason it mostly compiles first time:
+`axle check` (or `axle build`) is the compiler's word. Beside it:
 
 | Tool | What it holds |
 |---|---|
 | `tools/check.py` | imports resolve, layers never reach upward, no `extern`/`unsafe`, reserved words, names, mutability, member and arity checks (`axparse.py` + `axcheck.py`, calibrated on smalt's own sources) |
 | `tools/c_ref/` | C twins of the rasteriser and the kerning reader, checked against FreeType and HarfBuzz |
-| `tools/axpy/` | an Axle → Python translator that **runs the real sources**: `test_text.py` (glyphs, advances, coverage vs FreeType), `test_ui.py` (clicks, Tab, typing, drags, menus, dialogs…), `test_weather.py`, and `shot.py` (renders an example to a PNG) |
+| `tools/axpy/` | an Axle → Python translator that runs the real sources (`test_text.py`, `test_ui.py`, `test_weather.py`, `shot.py` for the pictures above); it checks logic, not syntax, and has fallen behind smalt's newer names |
 | `tools/gen_lib.py --check` | `src/lib.axle` names every module |
 
-It is a translator, not the compiler: it cannot say whether Axle accepts a construct, only whether
-the logic does what it should. `axle check` remains the last word.
+The gallery is also the integration test: `--snap` draws a frame with no window, and a program can
+feed `View::input` its own events to click, type and scroll in it.
 
 ## License
 
