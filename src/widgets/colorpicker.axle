@@ -1,0 +1,271 @@
+// colorpicker — a field that takes a colour typed as hex or chosen from a grid of swatches.
+//
+//     let accent : Shared<Model<i32>> = new shared Model<i32>(Colors::rgb(79, 70, 229));
+//     new ColorPicker(ColorProps { }, accent)
+//
+// The field shows the colour in a small square and its hex code, and is typed into ("#4f46e5",
+// "4F46E5", "#46e"). The button at its right edge, or the Down key, opens a grid of swatches — ten
+// hues in five shades, the greys among them — and a click on one sets the colour. Text that is not a
+// colour turns the field red once you leave it. Both ways write the same `Model<i32>` (0xRRGGBB, see
+// `Colors`).
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+use crate::widgets::field::{TextField, FieldProps};
+use crate::widgets::popover::PopoverSheet;
+use crate::widgets::colors::{Colors, ColorProps};
+
+/** Side of a swatch and the space between swatches. */
+const SWATCH : f64 = 26.0;
+const SWATCH_GAP : f64 = 6.0;
+
+/** Space around the grid. */
+const GRID_PAD : f64 = 14.0;
+
+/** Hues across, and shades down. */
+const HUES : i32 = 10;
+const SHADES : i32 = 5;
+
+/** The swatches: each hue's five shades, light to dark. */
+fn swatches() : i32[] {
+    return [
+        0xFCA5A5, 0xF87171, 0xEF4444, 0xDC2626, 0xB91C1C,
+        0xFDBA74, 0xFB923C, 0xF97316, 0xEA580C, 0xC2410C,
+        0xFCD34D, 0xFBBF24, 0xF59E0B, 0xD97706, 0xB45309,
+        0x86EFAC, 0x4ADE80, 0x22C55E, 0x16A34A, 0x15803D,
+        0x5EEAD4, 0x2DD4BF, 0x14B8A6, 0x0D9488, 0x0F766E,
+        0x93C5FD, 0x60A5FA, 0x3B82F6, 0x2563EB, 0x1D4ED8,
+        0xA5B4FC, 0x818CF8, 0x6366F1, 0x4F46E5, 0x4338CA,
+        0xD8B4FE, 0xC084FC, 0xA855F7, 0x9333EA, 0x7E22CE,
+        0xF9A8D4, 0xF472B6, 0xEC4899, 0xDB2777, 0xBE185D,
+        0xD1D5DB, 0x9CA3AF, 0x6B7280, 0x374151, 0x111827,
+    ];
+}
+
+/** The grid of swatches. */
+pub class SwatchGrid : Control, Widget {
+    chosen : Shared<Model<i32>>;
+    open : Shared<Model<bool>>;
+    colors : i32[];
+    hot : i32 = -1;
+
+    /** A grid setting `chosen`, and clearing `open` when a swatch is taken. */
+    constructor(chosen : Shared<Model<i32>>, open : Shared<Model<bool>>) {
+        super();
+        self.chosen = chosen;
+        self.open = open;
+        self.colors = swatches();
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let w : f64 = 2.0 * GRID_PAD + (HUES as f64) * SWATCH + ((HUES - 1) as f64) * SWATCH_GAP;
+        let h : f64 = 2.0 * GRID_PAD + (SHADES as f64) * SWATCH + ((SHADES - 1) as f64) * SWATCH_GAP;
+        return limits.constrain(Size { w: w, h: h });
+    }
+
+    /** The box of swatch `i`: hues run across, shades down. */
+    pub(file) fn box(self, i : i32) : Bounds {
+        let hue : f64 = (i / SHADES) as f64;
+        let shade : f64 = (i % SHADES) as f64;
+        return Bounds::make(self.area.x + GRID_PAD + hue * (SWATCH + SWATCH_GAP), self.area.y + GRID_PAD + shade * (SWATCH + SWATCH_GAP), SWATCH, SWATCH);
+    }
+
+    /** The swatch under (`x`, `y`), or -1. */
+    pub(file) fn at(self, x : f64, y : f64) : i32 {
+        for (i of 0..(HUES * SHADES)) {
+            if (self.box(i).grown(SWATCH_GAP * 0.5).contains(x, y)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = self.hovered ? self.at(e.x, e.y) : -1;
+            if (self.hot >= 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+            if (self.hot != before) {
+                ctx.invalidate();
+            }
+        }
+        if (g == Gesture::Click) {
+            let i : i32 = self.at(e.x, e.y);
+            if (i >= 0) {
+                self.chosen.set(self.colors[i as i64]);
+                self.open.set(false);
+                ctx.invalidate();
+                return true;
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let now : i32 = self.chosen.get();
+        for (i of 0..(HUES * SHADES)) {
+            let c : i32 = self.colors[i as i64];
+            let box : Bounds = self.box(i);
+            let lift : f64 = i == self.hot ? 1.5 : 0.0;
+            let grown : RRect = box.grown(lift).round(ctx.theme.metrics.radiusInline + lift);
+            p.fillRound(grown, Brush::solid(c, 255));
+            if (c == now) {
+                p.strokeRound(box.grown(3.0).round(ctx.theme.metrics.radiusInline + 3.0), 2.0, Brush::solid(c, 255));
+                Icons::draw(p, IconKind::Check, box.midX() - 7.0, box.midY() - 7.0, 14.0, Tint::hex(0xFFFFFF));
+            }
+        }
+    }
+}
+
+/** The grid a picker opens, as a plain widget. */
+fn pickerGrid(chosen : Shared<Model<i32>>, open : Shared<Model<bool>>) : dyn Widget {
+    return new SwatchGrid(chosen, open);
+}
+
+/** A field that takes a colour typed or chosen. */
+pub class ColorPicker : Base, Widget {
+    props : ColorProps;
+    chosen : Shared<Model<i32>>;
+    draft : Shared<Model<string>>;
+    open : Shared<Model<bool>>;
+    field : TextField;
+    seen : i32;
+    draftSeen : i64;
+    shown : bool = false;
+
+    /** A picker choosing into `chosen`. */
+    constructor(own props : ColorProps, chosen : Shared<Model<i32>>) {
+        let open : Shared<Model<bool>> = new shared Model<bool>(false);
+        let draft : Shared<Model<string>> = new shared Model<string>(Colors::text(chosen.get()));
+        let fieldProps : FieldProps = FieldProps {
+            placeholder: props.placeholder,
+            size: props.size,
+            width: props.width,
+            disabled: props.disabled,
+            icon: IconKind::Dot,
+            trailing: IconKind::ChevronDown,
+        };
+        self.field = new TextField(fieldProps, draft);
+        self.field.whenTrailing(() => open.set(true));
+        self.field.toEnd();
+        self.props = props;
+        self.chosen = chosen;
+        self.draft = draft;
+        self.open = open;
+        self.seen = chosen.get();
+        self.draftSeen = draft.changes();
+    }
+
+    /** Follow the text into the choice, the choice into the text, and judge the text once it is left. */
+    pub(file) fn refresh(mut self, ctx : Context) : void {
+        if (self.draft.changes() != self.draftSeen) {
+            self.draftSeen = self.draft.changes();
+            let typed : string = self.draft.get();
+            let c : i32 = Colors::parse(typed);
+            if (typed.byteLength == 0) {
+                self.chosen.set(Colors::NONE);
+            } else if (c != Colors::NONE && c != self.chosen.get()) {
+                self.chosen.set(c);
+            }
+            self.seen = self.chosen.get();
+        }
+        let now : i32 = self.chosen.get();
+        if (now != self.seen) {
+            self.seen = now;
+            self.draft.set(Colors::text(now));
+            self.draftSeen = self.draft.changes();
+            self.field.toEnd();
+            ctx.invalidate();
+        }
+        let editing : bool = self.field.isFocused(ctx);
+        let text : string = self.draft.get();
+        if (!editing && now != Colors::NONE && Colors::parse(text) == now && text != Colors::text(now)) {
+            self.draft.set(Colors::text(now));
+            self.draftSeen = self.draft.changes();
+        }
+        let bad : bool = text.byteLength > 0 && Colors::parse(text) == Colors::NONE;
+        self.field.markInvalid(bad && !editing);
+    }
+
+    /** Open the grid under the field when the flag says so, once. */
+    pub(file) fn syncSheet(mut self, ctx : Context) : void {
+        if (!self.open.get()) {
+            self.shown = false;
+            return;
+        }
+        if (self.shown) {
+            return;
+        }
+        self.shown = true;
+        let chosen : Shared<Model<i32>> = self.chosen;
+        let open : Shared<Model<bool>> = self.open;
+        let sheet : PopoverSheet = new PopoverSheet(self.area, () => pickerGrid(chosen, open), open, false);
+        sheet.padded(0.0);
+        if (!ctx.openOverlay(sheet)) {
+            self.open.set(false);
+            self.shown = false;
+        }
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return self.field.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.field.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let mut used : bool = self.field.event(ctx, e);
+        if (!used && e.kind == EventKind::KeyDown && e.key == Key::Down && self.field.isFocused(ctx) && !self.open.get()) {
+            self.open.set(true);
+            used = true;
+        }
+        self.refresh(ctx);
+        self.syncSheet(ctx);
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.refresh(ctx);
+        self.syncSheet(ctx);
+        return self.field.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.field.paint(ctx, p);
+        // The square over the field's leading picture: the colour, or an empty outline.
+        let pal = ctx.theme.palette;
+        let st = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        let side : f64 = 18.0;
+        let swatch : Bounds = Bounds::make(a.x + st.padX, a.midY() - side * 0.5, side, side);
+        let c : i32 = self.chosen.get();
+        let rr : RRect = swatch.round(5.0);
+        if (c == Colors::NONE) {
+            p.fillRound(rr, Brush::solid(pal.surface.rgb, pal.surface.a));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.fieldLine.rgb, pal.fieldLine.a));
+        } else {
+            p.fillRound(rr, Brush::solid(c, 255));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        }
+    }
+}

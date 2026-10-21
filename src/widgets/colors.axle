@@ -1,0 +1,92 @@
+// colors — a colour as one whole number, and what a colour picker is told.
+//
+//     let accent : Shared<Model<i32>> = new shared Model<i32>(Colors::rgb(79, 70, 229));
+//
+// A colour is 0xRRGGBB as an integer; `Colors::NONE` means "no colour chosen". `Colors::parse` reads
+// what a person types ("#4f46e5", "4F46E5", "#46e") and `Colors::text` writes the "#RRGGBB" form.
+
+use crate::text::strings::Strings;
+use crate::core::geometry::Length;
+use crate::style::variants::ControlSize;
+
+/** Colour arithmetic on 0xRRGGBB. */
+pub class Colors {
+    /** No colour: what a model holds before one is chosen. */
+    pub static NONE : i32 = -1;
+
+    /** The colour of red `r`, green `g` and blue `b`, each 0 to 255. */
+    pub static fn rgb(r : i32, g : i32, b : i32) : i32 {
+        return (r << 16) | (g << 8) | b;
+    }
+
+    /** One hexadecimal digit as a number, or -1 when `c` is not one. */
+    pub(file) static fn digit(c : i32) : i32 {
+        if (c >= 48 && c <= 57) {
+            return c - 48;
+        }
+        if (c >= 97 && c <= 102) {
+            return c - 87;
+        }
+        return -1;
+    }
+
+    /** `c` as "#RRGGBB" in capitals; empty for no colour. */
+    pub static fn text(c : i32) : string {
+        if (c == Colors::NONE) {
+            return "";
+        }
+        let digits : string[] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"];
+        let mut out : string = "#";
+        for (k of 0..6) {
+            out = out + digits[((c >> (20 - 4 * k)) & 15) as i64];
+        }
+        return out;
+    }
+
+    /** The colour a person wrote: three or six hexadecimal digits, with or without a leading "#"; NONE otherwise. */
+    pub static fn parse(text : string) : i32 {
+        let s : string = Strings::lower(text);
+        let len : i64 = s.byteLength;
+        let mut value : i32 = 0;
+        let mut n : i32 = 0;
+        let mut i : i64 = 0;
+        while (i < len) {
+            let c : i32 = s.byteAt(i);
+            i = i + 1;
+            if (c == 35 && n == 0) {
+                continue;
+            }
+            let d : i32 = Colors::digit(c);
+            if (d < 0 || n >= 6) {
+                return Colors::NONE;
+            }
+            value = value * 16 + d;
+            n = n + 1;
+        }
+        if (n == 6) {
+            return value;
+        }
+        if (n == 3) {
+            let r : i32 = (value >> 8) & 15;
+            let g : i32 = (value >> 4) & 15;
+            let b : i32 = value & 15;
+            return Colors::rgb(r * 17, g * 17, b * 17);
+        }
+        return Colors::NONE;
+    }
+}
+
+/** What a colour picker is told. */
+pub struct ColorProps {
+    /** What the picker says while no colour is chosen. */
+    pub placeholder : string = "#RRGGBB";
+
+    /** How large the picker's field is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** The picker's width. */
+    pub width : Length = Length::Auto;
+
+    /** Whether the picker is switched off. */
+    pub disabled : bool = false;
+}

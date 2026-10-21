@@ -126,5 +126,42 @@ check("Left on a leaf steps out to its branch", pick.get() == 0, pick.get())
 v.input(ev(z.EventKind.KeyDown, key=z.Key.Left))
 check("Left on an open branch closes it", tr.shownCount == 2, tr.shownCount)
 
+# --- Colours and the range slider ---------------------------------------------------------
+C = z.Colors
+for text, want in [("#4f46e5", 0x4F46E5), ("4F46E5", 0x4F46E5), ("#46e", 0x4466EE), ("fff", 0xFFFFFF)]:
+    check("parses colour %r" % text, C.parse(text) == want, hex(C.parse(text)) if C.parse(text) >= 0 else -1)
+for text in ["", "#12", "#12345", "#1234567", "#gg0000", "red"]:
+    check("rejects colour %r" % text, C.parse(text) == C.NONE, C.parse(text))
+check("colour text", C.text(0x4F46E5) == "#4F46E5" and C.text(C.NONE) == "")
+lo, hi = z.Model(20.0), z.Model(70.0)
+rs = z.RangeSlider(lit(z.SliderProps, min=0.0, max=100.0, step=5.0, width=z.Length.Px(300.0)), lo, hi)
+v = host(rs)
+b = rs.bounds()
+st = v.ctx.theme.slider(z.ControlSize.Md)
+def drag(x0, x1):
+    y = b.y + b.h - 10
+    at(v, z.EventKind.PointerMove, x0, y)
+    at(v, z.EventKind.PointerDown, x0, y, button=0)
+    at(v, z.EventKind.PointerMove, x1, y)
+    at(v, z.EventKind.PointerUp, x1, y, button=0)
+drag(rs.xOf(st, 70.0), rs.xOf(st, 90.0))
+check("dragging the high thumb moves it", hi.get() == 90.0 and lo.get() == 20.0, (lo.get(), hi.get()))
+drag(rs.xOf(st, 20.0), rs.xOf(st, 95.0))
+check("the low thumb stops one step under the high one", lo.get() == 85.0, lo.get())
+cm = z.Model(C.NONE)
+cp = z.ColorPicker(lit(z.ColorProps, width=z.Length.Px(240.0)), cm)
+v = host(cp)
+bb = cp.bounds()
+at(v, z.EventKind.PointerMove, bb.x + 60, bb.y + bb.h / 2)
+at(v, z.EventKind.PointerDown, bb.x + 60, bb.y + bb.h / 2, button=0)
+at(v, z.EventKind.PointerUp, bb.x + 60, bb.y + bb.h / 2, button=0)
+for ch in "#4f46e5":
+    v.input(ev(z.EventKind.Text, cp=ord(ch)))
+for i in range(1, 5):
+    v.update(3.0 + 0.016 * i)
+check("typing a hex code chooses the colour", cm.get() == 0x4F46E5, cm.get())
+grid = z.SwatchGrid(z.Model(C.NONE), z.Model(True))
+check("the grid has fifty swatches", len(grid.colors) == 50, len(grid.colors))
+
 print("all ok" if not fails else "FAILED: %s" % fails)
 sys.exit(1 if fails else 0)

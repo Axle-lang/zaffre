@@ -32,6 +32,8 @@ pub class Demo {
 
     /** Sliders. */
     pub volume : Shared<Model<f64>> = new shared Model<f64>(0.62);
+    pub priceLow : Shared<Model<f64>> = new shared Model<f64>(20.0);
+    pub priceHigh : Shared<Model<f64>> = new shared Model<f64>(70.0);
     pub brightness : Shared<Model<f64>> = new shared Model<f64>(40.0);
 
     /** Choices from a list. */
@@ -57,6 +59,7 @@ pub class Demo {
     pub birthday : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
     pub arrival : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
     pub departure : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+    pub accent : Shared<Model<i32>> = new shared Model<i32>(0x4F46E5);
     pub meeting : Shared<Model<i32>> = new shared Model<i32>(Times::NONE);
     pub file : Shared<Model<i32>> = new shared Model<i32>(1);
     pub country : Shared<Model<i32>> = new shared Model<i32>(-1);

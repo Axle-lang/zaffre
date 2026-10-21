@@ -3,7 +3,7 @@
 use zaffre::{
     Model, Dates, Times, TimePicker, TimeProps, DatePicker, DateRangePicker, DateProps, Calendar, Combobox, MultiSelect, ComboboxProps, TagsInput, TagsProps,
     InputOTP, OtpProps, TextField, FieldProps, Textarea, TextareaProps, Select, Checkbox, ToggleProps, Radio, Switch,
-    Slider, SliderProps, Segmented, Rating, RatingProps, QuantityInput, QuantityProps, ToggleGroup,
+    Slider, SliderProps, RangeSlider, ColorPicker, ColorProps, Segmented, Rating, RatingProps, QuantityInput, QuantityProps, ToggleGroup,
     FormField, FieldLabel, Column, Row, Widget, FlexProps,
     ControlSize, IconKind, Length, Align, Insets, Justify,
 };
@@ -134,7 +134,19 @@ fn dials(demo : Demo) : Column {
         },
         brightness
     );
-    let sliders : dyn Widget[] = [loudness, light];
+    let price = new RangeSlider(
+        SliderProps {
+            label: "Price",
+            min: 0.0,
+            max: 100.0,
+            step: 5.0,
+            decimals: 0,
+            width: Length::Fill,
+        },
+        demo.priceLow,
+        demo.priceHigh
+    );
+    let sliders : dyn Widget[] = [loudness, light, price];
     let styleNames : string[] = ["Bold", "Italic", "Underline"];
     let inputs : dyn Widget[] = [
         new Rating(RatingProps { size: 24.0 }, rating),
@@ -171,6 +183,10 @@ fn pickers(demo : Demo) : Column {
         FieldLabel { label: "Meeting time", hint: "Type 14:30 or 2:30 pm, or pick from the columns." },
         new TimePicker(TimeProps { width: Length::Fill }, demo.meeting)
     );
+    let colorField = new FormField(
+        FieldLabel { label: "Accent colour", hint: "Type a hex code, or open the swatches." },
+        new ColorPicker(ColorProps { width: Length::Fill }, demo.accent)
+    );
     let countryField = new FormField(
         FieldLabel { label: "Country", hint: "Type to search." },
         new Combobox(ComboboxProps { placeholder: "Pick a country", width: Length::Fill }, countries, country)
@@ -187,7 +203,7 @@ fn pickers(demo : Demo) : Column {
         FieldLabel { label: "Verification code" },
         new InputOTP(OtpProps { }, code)
     );
-    let kids : dyn Widget[] = [dateField, timeField, countryField, skillField, tagField, codeField];
+    let kids : dyn Widget[] = [dateField, timeField, colorField, countryField, skillField, tagField, codeField];
     return stacked(kids);
 }
 

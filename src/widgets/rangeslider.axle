@@ -1,0 +1,220 @@
+// rangeslider — two numbers between two others, set by dragging either end.
+//
+//     let low : Shared<Model<f64>> = new shared Model<f64>(20.0);
+//     let high : Shared<Model<f64>> = new shared Model<f64>(70.0);
+//     new RangeSlider(SliderProps { label: "Price", min: 0.0, max: 100.0, step: 5.0, decimals: 0 }, low, high)
+//
+// It takes the same `SliderProps` as `Slider`. A press moves the thumb nearest to it (the lower one
+// when they meet) and drags it; the two never cross, and the bar between them is filled. From the
+// keyboard the thumb that was last used moves with the arrows, Page Up and Down, Home and End, as in
+// a `Slider`; Shift with Up or Down hands over to the other thumb.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::fill::Fill;
+use crate::style::styles::SliderStyle;
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::Context;
+use crate::core::format::Format;
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::slider::SliderProps;
+
+/** A slider with two thumbs. */
+pub class RangeSlider : Control, Widget {
+    props : SliderProps;
+    low : Shared<Model<f64>>;
+    high : Shared<Model<f64>>;
+    active : i32 = 0;
+
+    /** A range slider set as `props` say, showing `low` and `high`. */
+    constructor(own props : SliderProps, low : Shared<Model<f64>>, high : Shared<Model<f64>>) {
+        super();
+        self.props = props;
+        self.low = low;
+        self.high = high;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** Height of the label row, 0 when there is neither label nor value. */
+    pub(file) fn headerH(self, ctx : Context, st : SliderStyle) : f64 {
+        if (self.props.label.byteLength == 0 && !self.props.showValue) {
+            return 0.0;
+        }
+        return ctx.lineHeight(FaceKind::Sans, st.px) + 6.0;
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : SliderStyle = ctx.theme.slider(self.props.size);
+        let h : f64 = self.headerH(ctx, st) + st.thumb + 4.0;
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 240.0), h: h });
+    }
+
+    /** The x of a thumb's centre at the lowest value and at the highest. */
+    pub(file) fn span(self, st : SliderStyle) : (x0: f64, x1: f64) {
+        return (self.area.x + st.thumb * 0.5, self.area.right() - st.thumb * 0.5);
+    }
+
+    /** The x of the thumb centre for value `v`. */
+    pub(file) fn xOf(self, st : SliderStyle, v : f64) : f64 {
+        let (x0, x1) = self.span(st);
+        let range : f64 = self.props.max - self.props.min;
+        let t : f64 = range > 0.0 ? Mathx::clamp01((v - self.props.min) / range) : 0.0;
+        return Mathx::lerp(x0, x1, t);
+    }
+
+    /** The value that has a thumb centred at `px`, snapped to the step and held to the ends. */
+    pub(file) fn valueAt(self, st : SliderStyle, px : f64) : f64 {
+        let (x0, x1) = self.span(st);
+        let t : f64 = x1 > x0 ? Mathx::clamp01((px - x0) / (x1 - x0)) : 0.0;
+        let lo : f64 = self.props.min;
+        let mut v : f64 = lo + t * (self.props.max - lo);
+        if (self.props.step > 0.0) {
+            let n : f64 = (((v - lo) / self.props.step) + 0.5).floorToInt() as f64;
+            v = lo + n * self.props.step;
+        }
+        return Mathx::clampF(v, lo, self.props.max);
+    }
+
+    /** The smallest gap kept between the thumbs: one step, or nothing. */
+    pub(file) fn gap(self) : f64 {
+        return self.props.step > 0.0 ? self.props.step : 0.0;
+    }
+
+    /** Move thumb `which` (0 low, 1 high) to `v`, held between the ends and the other thumb. */
+    pub(file) fn setThumb(mut self, ctx : Context, which : i32, v : f64) : void {
+        if (which == 0) {
+            let next : f64 = Mathx::clampF(v, self.props.min, self.high.get() - self.gap());
+            if (next != self.low.get()) {
+                self.low.set(next);
+                ctx.invalidate();
+            }
+        } else {
+            let next : f64 = Mathx::clampF(v, self.low.get() + self.gap(), self.props.max);
+            if (next != self.high.get()) {
+                self.high.set(next);
+                ctx.invalidate();
+            }
+        }
+    }
+
+    /** The thumb nearest to `px`: the lower one when they are on top of each other. */
+    pub(file) fn nearest(self, st : SliderStyle, px : f64) : i32 {
+        let dl : f64 = (px - self.xOf(st, self.low.get())).abs();
+        let dh : f64 = (px - self.xOf(st, self.high.get())).abs();
+        if (dl == dh) {
+            return px < self.xOf(st, self.low.get()) ? 0 : 1;
+        }
+        return dl < dh ? 0 : 1;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let st : SliderStyle = ctx.theme.slider(self.props.size);
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            self.wantHand(ctx);
+        }
+        if (g == Gesture::Press) {
+            self.active = self.nearest(st, e.x);
+            self.setThumb(ctx, self.active, self.valueAt(st, e.x));
+            return true;
+        }
+        if (self.pressed && e.kind == EventKind::PointerMove) {
+            self.setThumb(ctx, self.active, self.valueAt(st, e.x));
+            return true;
+        }
+        if (g == Gesture::Click || g == Gesture::Release) {
+            return true;
+        }
+        if (e.kind == EventKind::KeyDown && self.enabled && self.isFocused(ctx)) {
+            return self.onKey(ctx, e);
+        }
+        return false;
+    }
+
+    pub(file) fn onKey(mut self, ctx : Context, e : UiEvent) : bool {
+        let unit : f64 = self.props.step > 0.0 ? self.props.step : (self.props.max - self.props.min) / 100.0;
+        let now : f64 = self.active == 0 ? self.low.get() : self.high.get();
+        if ((e.key == Key::Up || e.key == Key::Down) && e.shift()) {
+            self.active = 1 - self.active;
+            ctx.invalidate();
+            return true;
+        }
+        let mut next : f64 = now;
+        if (e.key == Key::Left || e.key == Key::Down) {
+            next = now - unit;
+        } else if (e.key == Key::Right || e.key == Key::Up) {
+            next = now + unit;
+        } else if (e.key == Key::PageDown) {
+            next = now - unit * 10.0;
+        } else if (e.key == Key::PageUp) {
+            next = now + unit * 10.0;
+        } else if (e.key == Key::Home) {
+            next = self.props.min;
+        } else if (e.key == Key::End) {
+            next = self.props.max;
+        } else {
+            return false;
+        }
+        self.setThumb(ctx, self.active, next);
+        return true;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    /** One thumb at x `tx`, `lit` when it is the one in use. */
+    pub(file) fn paintThumb(self, ctx : Context, p : Painter, st : SliderStyle, tx : f64, cy : f64, lit : bool) : void {
+        let grow : f64 = 1.0 + (lit ? 0.12 * self.hoverT.value + 0.05 * self.pressT.value : 0.0);
+        let d : f64 = st.thumb * grow;
+        let knob : RRect = RRect::uniform(tx - d * 0.5, cy - d * 0.5, d, d, d * 0.5);
+        p.shadow(knob, 0.0, 1.0, 2.0, -1.0, ctx.theme.palette.shadow.withAlpha(ctx.theme.isDark ? 128 : 38));
+        p.fillRound(knob, Brush::solid(st.knob.rgb, st.knob.a));
+        let rim : Tint = self.props.disabled ? ctx.theme.palette.textOff : st.knobBorder;
+        p.strokeRound(knob, 2.0, Brush::solid(rim.rgb, rim.a));
+        if (lit && self.ringShown(ctx)) {
+            let ring : Tint = st.ring.faded(self.focusT.alpha());
+            let gap : f64 = ctx.theme.metrics.ringOffset + ctx.theme.metrics.ring;
+            p.strokeRound(knob.grown(gap), ctx.theme.metrics.ring, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let st : SliderStyle = ctx.theme.slider(self.props.size);
+        let a : Bounds = self.area;
+        let hh : f64 = self.headerH(ctx, st);
+        if (hh > 0.0) {
+            let base : f64 = ctx.baselineIn(FaceKind::Sans, st.px, a.y, hh - 6.0);
+            if (self.props.label.byteLength > 0) {
+                p.text(FaceKind::Sans, self.props.label, a.x, base, st.px, st.text);
+            }
+            if (self.props.showValue) {
+                let s : string = Format::fixed(self.low.get(), self.props.decimals) + " – " + Format::fixed(self.high.get(), self.props.decimals);
+                let w : f64 = ctx.textWidth(FaceKind::Sans, s, st.px);
+                p.text(FaceKind::Sans, s, a.right() - w, base, st.px, ctx.theme.palette.textFaint);
+            }
+        }
+        let (x0, x1) = self.span(st);
+        let cy : f64 = a.y + hh + (a.h - hh) * 0.5;
+        let track : RRect = RRect::uniform(x0 - st.thumb * 0.5, cy - st.trackH * 0.5, x1 - x0 + st.thumb, st.trackH, st.trackH * 0.5);
+        p.fillRound(track, Brush::solid(st.track.rgb, st.track.a));
+        let lx : f64 = self.xOf(st, self.low.get());
+        let hx : f64 = self.xOf(st, self.high.get());
+        if (hx - lx > 0.5) {
+            let bar : Fill = self.props.disabled ? st.fill.faded(110) : st.fill;
+            p.fillRound(RRect::uniform(lx, track.y, hx - lx, st.trackH, st.trackH * 0.5), bar.brush(track.y, st.trackH));
+        }
+        // The thumb in use is drawn last, so it stays on top where the two meet.
+        self.paintThumb(ctx, p, st, self.active == 0 ? hx : lx, cy, false);
+        self.paintThumb(ctx, p, st, self.active == 0 ? lx : hx, cy, true);
+    }
+}
