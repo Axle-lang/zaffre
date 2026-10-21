@@ -29,6 +29,6 @@ use crate::paint::{painter};
 
 use crate::core::{context, event, format, geometry, model, view, widget};
 
-use crate::widgets::{accordion, alert, badge, badgeover, band, breadcrumb, button, buttongroup, calendar, card, chartkit, chips, code, combobox, command, datepicker, dates, dialog, donut, dropdown, emptystate, field, flex, formfield, hovercard, icon, itemlist, label, navbar, notice, notify, otp, pagination, panel, panes, plot, popover, progress, quantity, rating, ring, scroll, segmented, select, sheet, shell, sidebar, signal, skeleton, slider, sortable, spacer, sparkline, stat, stepper, table, tabs, tagsinput, textarea, timeline, toast, toggle, togglegroup, toolbar, tooltip, transfer, usermenu};
+use crate::widgets::{accordion, alert, badge, badgeover, band, breadcrumb, button, buttongroup, calendar, card, chartkit, chips, code, combobox, command, datepicker, dates, dialog, donut, dropdown, emptystate, field, flex, formfield, hovercard, icon, itemlist, label, navbar, notice, notify, otp, pagination, panel, panes, plot, popover, progress, quantity, rating, ring, scroll, segmented, select, sheet, shell, sidebar, signal, skeleton, slider, sortable, spacer, sparkline, stat, stepper, table, tabs, tagsinput, textarea, timeline, timepicker, times, toast, toggle, togglegroup, toolbar, tooltip, transfer, tree, usermenu};
 
 use crate::shell::{app, keys};

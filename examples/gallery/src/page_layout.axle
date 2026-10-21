@@ -1,7 +1,7 @@
 // layout — panes you can drag, grids, sections that fold, toolbars, badges on things, and code.
 
 use zaffre::{
-    Model, Notifier, Split, SplitProps, Grid, GridProps, Collapsible, Card, CardProps, Toolbar, ToolbarItem,
+    Model, Notifier, TreeView, TreeProps, TreeNode, Split, SplitProps, Grid, GridProps, Collapsible, Card, CardProps, Toolbar, ToolbarItem,
     OverlayBadge, OverlayProps, HoverCard, Avatar, AvatarGroup, Button, ButtonProps, Label, CodeBlock, CodeProps,
     CodeWindow, CopyCommand, IconDisc, InlineCode, TextLink, Stat, StatProps, StatLook, Column, Row, Widget, FlexProps,
     LabelProps, Tone, TextRole, ButtonKind, ControlSize, IconKind, Elevation, Length, Align, Insets, Justify,
@@ -139,20 +139,40 @@ fn code() : Column {
     return stacked(kids);
 }
 
+/** A tree of files: branches open and close, a click picks a row. */
+fn files(demo : Demo) : Column {
+    let picked = demo.file;
+    let nodes : TreeNode[] = [
+        TreeNode { label: "src", depth: 0 },
+        TreeNode { label: "main.axle", depth: 1 },
+        TreeNode { label: "widgets", depth: 1 },
+        TreeNode { label: "button.axle", depth: 2 },
+        TreeNode { label: "field.axle", depth: 2 },
+        TreeNode { label: "style", depth: 1 },
+        TreeNode { label: "theme.axle", depth: 2 },
+        TreeNode { label: "examples", depth: 0 },
+        TreeNode { label: "gallery", depth: 1 },
+        TreeNode { label: "README.md", depth: 0 },
+    ];
+    let kids : dyn Widget[] = [new TreeView(TreeProps { expanded: true }, nodes, picked)];
+    return stacked(kids);
+}
+
 /** The page. */
 pub fn layoutPage(demo : Demo) : Column {
     let upper : dyn Widget[] = [
         half("Split panes", "A divider you drag; the cursor changes over it.", panes(demo)),
         half("Folding sections", "One accordion section on its own.", folds(demo)),
     ];
-    let lower : dyn Widget[] = [
+    let trees : dyn Widget[] = [
+        half("Tree", "Branches open and close; Up, Down, Left and Right move through it.", files(demo)),
         half("Toolbar and badges", "Icon buttons with toggles and tips; counts and dots on other widgets.", tools(demo)),
-        half("Hover cards and prose", "A card of detail that follows the pointer's rest.", prose()),
     ];
     let rows : dyn Widget[] = [
         side(upper),
+        side(trees),
         section("Grid of cards", "Equal columns; each card is pressable and lifts under the pointer.", tiles()),
-        side(lower),
+        section("Hover cards and prose", "A card of detail that follows the pointer's rest.", prose()),
         section("Code", "Highlighted, with line numbers and a copy button that appears under the pointer.", code()),
     ];
     return pageOf(rows);

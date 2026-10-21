@@ -58,13 +58,13 @@ Later still: `DatePicker` rebuilt as a typed field (`Dates::parse` reads "20 Oct
 "20/10/2026"; a calendar button, Down key, min/max, red once left with a bad date), `Calendar` with a
 month grid and a year grid (the title opens each), full-width day cells with rounded corners, a solid range band closed at the ends of each week, range preview, keyboard ring, Today/Clear footer and a `framed` look,
 `DateRangePicker` (presets column + calendar), `ButtonGroup`, `SplitButton`, `SortableList` (drag or
-Space + arrows, shared `Order`), `TransferList`, `LatencyIndicator`, `Eyebrow`. Toasts take a title and a
+Space + arrows, shared `Order`), `TransferList`, `LatencyIndicator`, `Eyebrow`, `TimePicker` (typed "14:30" / "2:30 pm", hour and minute columns, 12 or 24 hours; `Times` is minutes since midnight), `TreeView` (flat nodes with depths, keyboard navigation). Toasts take a title and a
 detail (`notes.notify`) and sit bottom-right with a dismiss cross. Dialog follows the web layout
 (header, body, footer band, close cross). Labels, buttons, tabs and badges use a Medium weight.
 
 ## Not yet written
 
-Virtual list, tree, file input, a GPU painter, right-to-left and shaped text.
+Virtual list, file input, a GPU painter, right-to-left and shaped text.
 
 ## In `examples/weather`
 

@@ -1,0 +1,428 @@
+// timepicker — a field that takes a time of day typed or chosen from columns.
+//
+//     let at : Shared<Model<i32>> = new shared Model<i32>(Times::NONE);
+//     new TimePicker(TimeProps { }, at)
+//
+// The field is typed into ("14:30", "1430", "2:30 pm") and has a clock button at its right edge; the
+// button, or the Down key, opens a panel of columns — hours, minutes and, on a 12-hour clock, AM and
+// PM — that scroll with the wheel and set the time with a click. Text that is not a time turns the
+// field red once you leave it. Like `DatePicker`, both ways write the same `Model<i32>` (minutes
+// since midnight, see `Times`).
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Base, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::IconKind;
+use crate::widgets::field::{TextField, FieldProps};
+use crate::widgets::popover::PopoverSheet;
+use crate::widgets::times::{Times, TimeProps};
+
+/** Height of a row in a column, and how many rows show. */
+const COL_ROW : f64 = 36.0;
+const COL_ROWS : i32 = 6;
+
+/** Width of a column and the space between columns. */
+const COL_WIDTH : f64 = 68.0;
+const COL_GAP : f64 = 4.0;
+
+/** Space around the columns. */
+const PANEL_PAD : f64 = 12.0;
+
+/** Height of the footer with Clear and Done. */
+const PANEL_FOOT : f64 = 48.0;
+
+/** Width of a footer button. */
+const PANEL_LINK : f64 = 64.0;
+
+/** The columns of a time panel: hours, minutes and, on a 12-hour clock, AM and PM. */
+pub class TimePanel : Control, Widget {
+    props : TimeProps;
+    chosen : Shared<Model<i32>>;
+    open : Shared<Model<bool>>;
+    top : f64[];
+    goal : f64[];
+    hotCol : i32 = -1;
+    hotRow : i32 = -1;
+    hotFoot : i32 = 0;
+
+    /** A panel setting `chosen`, and clearing `open` when it is done. */
+    constructor(own props : TimeProps, chosen : Shared<Model<i32>>, open : Shared<Model<bool>>) {
+        super();
+        self.props = props;
+        self.chosen = chosen;
+        self.open = open;
+        self.top = malloc<f64>(3 as i64);
+        self.goal = malloc<f64>(3 as i64);
+        for (c of 0..3) {
+            self.top[c as i64] = 0.0;
+            self.goal[c as i64] = 0.0;
+        }
+        self.follow(false);
+    }
+
+    /** How many columns the panel has. */
+    pub(file) fn columns(self) : i32 {
+        return self.props.h24 ? 2 : 3;
+    }
+
+    /** How many entries column `c` has. */
+    pub(file) fn countOf(self, c : i32) : i32 {
+        if (c == 0) {
+            return self.props.h24 ? 24 : 12;
+        }
+        if (c == 1) {
+            return 60 / Mathx::clampI(self.props.step, 1, 30);
+        }
+        return 2;
+    }
+
+    /** The text of entry `i` of column `c`. */
+    pub(file) fn labelOf(self, c : i32, i : i32) : string {
+        if (c == 0) {
+            return Times::two(self.props.h24 ? i : i + 1);
+        }
+        if (c == 1) {
+            return Times::two(i * Mathx::clampI(self.props.step, 1, 30));
+        }
+        return i == 0 ? "AM" : "PM";
+    }
+
+    /** The entry of column `c` the chosen time falls on, or -1. */
+    pub(file) fn selectedOf(self, c : i32) : i32 {
+        let t : i32 = self.chosen.get();
+        if (t == Times::NONE) {
+            return -1;
+        }
+        let h : i32 = Times::hour(t);
+        if (c == 0) {
+            return self.props.h24 ? h : (h + 11) % 12;
+        }
+        if (c == 1) {
+            let step : i32 = Mathx::clampI(self.props.step, 1, 30);
+            return Times::minute(t) % step == 0 ? Times::minute(t) / step : -1;
+        }
+        return h >= 12 ? 1 : 0;
+    }
+
+    /** Make entry `i` of column `c` the time, keeping the rest of what is chosen. */
+    pub(file) fn choose(mut self, ctx : Context, c : i32, i : i32) : void {
+        let t : i32 = self.chosen.get() == Times::NONE ? Times::at(9, 0) : self.chosen.get();
+        let h : i32 = Times::hour(t);
+        let m : i32 = Times::minute(t);
+        let mut next : i32 = t;
+        if (c == 0) {
+            let shown : i32 = self.props.h24 ? i : (i + 1) % 12;
+            next = self.props.h24 ? Times::at(shown, m) : Times::at(shown + (h >= 12 ? 12 : 0), m);
+        } else if (c == 1) {
+            next = Times::at(h, i * Mathx::clampI(self.props.step, 1, 30));
+        } else {
+            next = Times::at(h % 12 + (i == 1 ? 12 : 0), m);
+        }
+        self.chosen.set(next);
+        self.follow(true);
+        ctx.invalidate();
+    }
+
+    /** Scroll every column so its chosen entry sits in view; `eased` says whether it glides there. */
+    pub(file) fn follow(mut self, eased : bool) : void {
+        for (c of 0..self.columns()) {
+            self.goal[c as i64] = self.centred(c);
+            if (!eased) {
+                self.top[c as i64] = self.goal[c as i64];
+            }
+        }
+    }
+
+    /** The first row to show in column `c` so the chosen entry is near the middle. */
+    pub(file) fn centred(self, c : i32) : f64 {
+        let last : f64 = (self.countOf(c) - COL_ROWS) as f64;
+        let sel : i32 = self.selectedOf(c);
+        if (sel < 0 || last <= 0.0) {
+            return 0.0;
+        }
+        return Mathx::clampF((sel as f64) - (COL_ROWS as f64) * 0.5 + 0.5, 0.0, last);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let n : f64 = self.columns() as f64;
+        let w : f64 = 2.0 * PANEL_PAD + n * COL_WIDTH + (n - 1.0) * COL_GAP;
+        return limits.constrain(Size { w: w, h: 2.0 * PANEL_PAD + COL_ROW * (COL_ROWS as f64) + PANEL_FOOT - PANEL_PAD });
+    }
+
+    /** The box of column `c`. */
+    pub(file) fn colBox(self, c : i32) : Bounds {
+        let x : f64 = self.area.x + PANEL_PAD + (COL_WIDTH + COL_GAP) * (c as f64);
+        return Bounds::make(x, self.area.y + PANEL_PAD, COL_WIDTH, COL_ROW * (COL_ROWS as f64));
+    }
+
+    /** The box of footer button `which`: 0 for Clear, 1 for Done. */
+    pub(file) fn footBox(self, which : i32) : Bounds {
+        let a : Bounds = self.area;
+        let x : f64 = which == 0 ? a.x + PANEL_PAD : a.right() - PANEL_PAD - PANEL_LINK;
+        return Bounds::make(x, a.bottom() - PANEL_FOOT + 8.0, PANEL_LINK, 32.0);
+    }
+
+    /** The entry (column, index) under (`x`, `y`): sets `hotCol` and `hotRow`, which are -1 over nothing. */
+    pub(file) fn locate(mut self, x : f64, y : f64) : void {
+        self.hotCol = -1;
+        self.hotRow = -1;
+        for (c of 0..self.columns()) {
+            let box : Bounds = self.colBox(c);
+            if (box.contains(x, y)) {
+                let row : i32 = Mathx::floorI((y - box.y) / COL_ROW + self.top[c as i64]);
+                if (row >= 0 && row < self.countOf(c)) {
+                    self.hotCol = c;
+                    self.hotRow = row;
+                }
+            }
+        }
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            self.locate(e.x, e.y);
+            self.hotFoot = 0;
+            if (self.hovered && self.footBox(0).contains(e.x, e.y)) {
+                self.hotFoot = 1;
+            } else if (self.hovered && self.footBox(1).contains(e.x, e.y)) {
+                self.hotFoot = 2;
+            }
+            if (self.hotRow >= 0 || self.hotFoot > 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+            ctx.invalidate();
+        }
+        if (e.kind == EventKind::Wheel && self.hovered) {
+            self.locate(e.x, e.y);
+            if (self.hotCol >= 0) {
+                let last : f64 = (self.countOf(self.hotCol) - COL_ROWS) as f64;
+                if (last > 0.0) {
+                    let to : f64 = Mathx::clampF(self.goal[self.hotCol as i64] - e.wheel * 1.5, 0.0, last);
+                    self.goal[self.hotCol as i64] = to;
+                    ctx.invalidate();
+                }
+                return true;
+            }
+        }
+        if (g == Gesture::Click) {
+            if (self.footBox(0).contains(e.x, e.y)) {
+                self.chosen.set(Times::NONE);
+                self.open.set(false);
+                self.follow(false);
+                return true;
+            }
+            if (self.footBox(1).contains(e.x, e.y)) {
+                self.open.set(false);
+                return true;
+            }
+            self.locate(e.x, e.y);
+            if (self.hotRow >= 0) {
+                self.choose(ctx, self.hotCol, self.hotRow);
+                return true;
+            }
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        let mut moving : bool = self.animate(ctx, dt);
+        for (c of 0..self.columns()) {
+            let gap : f64 = self.goal[c as i64] - self.top[c as i64];
+            if (gap.abs() < 0.01) {
+                self.top[c as i64] = self.goal[c as i64];
+            } else {
+                self.top[c as i64] = self.top[c as i64] + gap * Mathx::fmin(1.0, dt * 14.0);
+                moving = true;
+            }
+        }
+        return moving;
+    }
+
+    /** One column: its entries, clipped to the column, the chosen one filled. */
+    pub(file) fn paintColumn(self, ctx : Context, p : Painter, c : i32) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusControl;
+        let box : Bounds = self.colBox(c);
+        let off : f64 = self.top[c as i64];
+        let sel : i32 = self.selectedOf(c);
+        p.pushClip(box.x, box.y, box.w, box.h);
+        for (i of 0..self.countOf(c)) {
+            let y : f64 = box.y + ((i as f64) - off) * COL_ROW;
+            if (y + COL_ROW < box.y || y > box.bottom()) {
+                continue;
+            }
+            let cell : Bounds = Bounds::make(box.x, y + 1.0, box.w, COL_ROW - 2.0);
+            let mut ink : Tint = pal.text;
+            let mut kind : FaceKind = FaceKind::Sans;
+            if (i == sel) {
+                p.fillRound(cell.round(radius), Brush::solid(pal.primary.s500.rgb, 255));
+                ink = Tint::hex(0xFFFFFF);
+                kind = FaceKind::Bold;
+            } else if (c == self.hotCol && i == self.hotRow) {
+                p.fillRound(cell.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+            }
+            let label : string = self.labelOf(c, i);
+            let lw : f64 = ctx.textWidth(kind, label, 14.0);
+            p.text(kind, label, cell.midX() - lw * 0.5, ctx.baselineIn(kind, 14.0, cell.y, cell.h), 14.0, ink);
+        }
+        p.popClip();
+    }
+
+    /** The footer: Clear, and Done. */
+    pub(file) fn paintFoot(self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusInline;
+        let a : Bounds = self.area;
+        let y : f64 = a.bottom() - PANEL_FOOT;
+        p.line(a.x, y, a.right(), y, 1.0, pal.line);
+        for (n of 0..2) {
+            let box : Bounds = self.footBox(n);
+            let label : string = n == 0 ? "Clear" : "Done";
+            let mut ink : Tint = n == 0 ? pal.textDim : pal.accentTop;
+            if (self.hotFoot == n + 1) {
+                p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+                ink = n == 0 ? pal.text : pal.accentTop;
+            }
+            let lw : f64 = ctx.textWidth(FaceKind::Medium, label, 13.0);
+            p.text(FaceKind::Medium, label, box.midX() - lw * 0.5, ctx.baselineIn(FaceKind::Medium, 13.0, box.y, box.h), 13.0, ink);
+        }
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        for (c of 0..self.columns()) {
+            self.paintColumn(ctx, p, c);
+        }
+        self.paintFoot(ctx, p);
+    }
+}
+
+/** The panel a picker opens, as a plain widget. */
+fn pickerPanel(h24 : bool, step : i32, chosen : Shared<Model<i32>>, open : Shared<Model<bool>>) : dyn Widget {
+    return new TimePanel(TimeProps { h24: h24, step: step }, chosen, open);
+}
+
+/** A field that takes a time typed or chosen. */
+pub class TimePicker : Base, Widget {
+    props : TimeProps;
+    chosen : Shared<Model<i32>>;
+    draft : Shared<Model<string>>;
+    open : Shared<Model<bool>>;
+    field : TextField;
+    seen : i32;
+    draftSeen : i64;
+    shown : bool = false;
+
+    /** A picker choosing into `chosen`. */
+    constructor(own props : TimeProps, chosen : Shared<Model<i32>>) {
+        let open : Shared<Model<bool>> = new shared Model<bool>(false);
+        let draft : Shared<Model<string>> = new shared Model<string>(Times::text(chosen.get(), props.h24));
+        let fieldProps : FieldProps = FieldProps {
+            placeholder: props.placeholder,
+            size: props.size,
+            width: props.width,
+            disabled: props.disabled,
+            trailing: IconKind::Clock,
+        };
+        self.field = new TextField(fieldProps, draft);
+        self.field.whenTrailing(() => open.set(true));
+        self.field.toEnd();
+        self.props = props;
+        self.chosen = chosen;
+        self.draft = draft;
+        self.open = open;
+        self.seen = chosen.get();
+        self.draftSeen = draft.changes();
+    }
+
+    /** Follow the text into the choice, the choice into the text, and judge the text once it is left. */
+    pub(file) fn refresh(mut self, ctx : Context) : void {
+        let h24 : bool = self.props.h24;
+        if (self.draft.changes() != self.draftSeen) {
+            self.draftSeen = self.draft.changes();
+            let typed : string = self.draft.get();
+            let t : i32 = Times::parse(typed);
+            if (typed.byteLength == 0) {
+                self.chosen.set(Times::NONE);
+            } else if (t != Times::NONE && t != self.chosen.get()) {
+                self.chosen.set(t);
+            }
+            self.seen = self.chosen.get();
+        }
+        let now : i32 = self.chosen.get();
+        if (now != self.seen) {
+            self.seen = now;
+            self.draft.set(Times::text(now, h24));
+            self.draftSeen = self.draft.changes();
+            self.field.toEnd();
+            ctx.invalidate();
+        }
+        let editing : bool = self.field.isFocused(ctx);
+        let text : string = self.draft.get();
+        if (!editing && now != Times::NONE && Times::parse(text) == now && text != Times::text(now, h24)) {
+            self.draft.set(Times::text(now, h24));
+            self.draftSeen = self.draft.changes();
+        }
+        let bad : bool = text.byteLength > 0 && Times::parse(text) == Times::NONE;
+        self.field.markInvalid(bad && !editing);
+    }
+
+    /** Open the panel under the field when the flag says so, once. */
+    pub(file) fn syncSheet(mut self, ctx : Context) : void {
+        if (!self.open.get()) {
+            self.shown = false;
+            return;
+        }
+        if (self.shown) {
+            return;
+        }
+        self.shown = true;
+        let h24 : bool = self.props.h24;
+        let step : i32 = self.props.step;
+        let chosen : Shared<Model<i32>> = self.chosen;
+        let open : Shared<Model<bool>> = self.open;
+        let sheet : PopoverSheet = new PopoverSheet(self.area, () => pickerPanel(h24, step, chosen, open), open, false);
+        sheet.padded(0.0);
+        if (!ctx.openOverlay(sheet)) {
+            self.open.set(false);
+            self.shown = false;
+        }
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        return self.field.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, ctx : Context, area : Bounds) : void {
+        self.area = area;
+        self.field.arrange(ctx, area);
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let mut used : bool = self.field.event(ctx, e);
+        if (!used && e.kind == EventKind::KeyDown && e.key == Key::Down && self.field.isFocused(ctx) && !self.open.get()) {
+            self.open.set(true);
+            used = true;
+        }
+        self.refresh(ctx);
+        self.syncSheet(ctx);
+        return used;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        self.refresh(ctx);
+        self.syncSheet(ctx);
+        return self.field.tick(ctx, dt);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        self.field.paint(ctx, p);
+    }
+}

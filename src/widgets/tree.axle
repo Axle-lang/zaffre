@@ -1,0 +1,295 @@
+// tree — nested rows that open and close.
+//
+//     let nodes : TreeNode[] = [
+//         TreeNode { label: "src", depth: 0 },
+//         TreeNode { label: "main.axle", depth: 1 },
+//         TreeNode { label: "widgets", depth: 1 },
+//         TreeNode { label: "button.axle", depth: 2 },
+//         TreeNode { label: "README.md", depth: 0 },
+//     ];
+//     new TreeView(TreeProps { }, nodes, picked)
+//
+// The tree is given flat, in reading order, each node with its depth: a node is a branch when the
+// next one is deeper. A click on a row picks it (its index goes into the model, -1 for none) and, on
+// a branch, opens or closes it; the chevron does only the latter. Keys: Up and Down move between the
+// visible rows, Right opens a branch (and then steps into it), Left closes it (or steps out), Enter
+// opens or closes.
+
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::text::fonts::FaceKind;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** Height of a row. */
+const TREE_ROW : f64 = 32.0;
+
+/** How far each level of depth is indented. */
+const TREE_INDENT : f64 = 20.0;
+
+/** Space around the rows. */
+const TREE_PAD : f64 = 6.0;
+
+/** One node of a tree. */
+pub struct TreeNode {
+    /** What it says. */
+    pub label : string = "";
+
+    /** How deep it sits: 0 for a root. */
+    pub depth : i32 = 0;
+
+    /** A picture before the label; by default a folder for a branch and a file for a leaf. */
+    pub icon : IconKind = IconKind::None;
+}
+
+/** How a tree looks. */
+pub struct TreeProps {
+    /** The tree's width: 280 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Fill;
+
+    /** Whether the tree sits in a bordered surface. */
+    pub framed : bool = true;
+
+    /** Whether branches start open. */
+    pub expanded : bool = false;
+}
+
+/** Nested rows that open and close. */
+pub class TreeView : Control, Widget {
+    props : TreeProps;
+    nodes : TreeNode[];
+    count : i32;
+    chosen : Shared<Model<i32>>;
+    open : bool[];
+    shown : i32[];
+    shownCount : i32 = 0;
+    hot : i32 = -1;
+
+    /** A tree of `nodes`, in reading order, putting the index of the picked one into `chosen`. */
+    constructor(own props : TreeProps, nodes : TreeNode[], chosen : Shared<Model<i32>>) {
+        super();
+        let start : bool = props.expanded;
+        self.props = props;
+        self.count = nodes.length as i32;
+        self.nodes = nodes;
+        self.chosen = chosen;
+        self.open = malloc<bool>(self.count as i64);
+        self.shown = malloc<i32>(self.count as i64);
+        for (i of 0..self.count) {
+            self.open[i as i64] = start;
+        }
+        self.reshow();
+    }
+
+    /** Whether node `i` has children: the next node is deeper. */
+    pub(file) fn isBranch(self, i : i32) : bool {
+        return i + 1 < self.count && self.nodes[(i + 1) as i64].depth > self.nodes[i as i64].depth;
+    }
+
+    /** List the nodes that are showing: those whose ancestors are all open. */
+    pub(file) fn reshow(mut self) : void {
+        self.shownCount = 0;
+        // Nodes deeper than `hideBelow` are inside a closed branch.
+        let mut hideBelow : i32 = 1000000;
+        for (i of 0..self.count) {
+            let d : i32 = self.nodes[i as i64].depth;
+            if (d > hideBelow) {
+                continue;
+            }
+            hideBelow = 1000000;
+            self.shown[self.shownCount as i64] = i;
+            self.shownCount = self.shownCount + 1;
+            if (self.isBranch(i) && !self.open[i as i64]) {
+                hideBelow = d;
+            }
+        }
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        self.reshow();
+        let h : f64 = 2.0 * TREE_PAD + TREE_ROW * (self.shownCount as f64);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 280.0), h: h });
+    }
+
+    /** The box of showing row `k`. */
+    pub(file) fn rowBox(self, k : i32) : Bounds {
+        return Bounds::make(self.area.x + TREE_PAD, self.area.y + TREE_PAD + TREE_ROW * (k as f64), self.area.w - 2.0 * TREE_PAD, TREE_ROW);
+    }
+
+    /** The showing row under (`x`, `y`), or -1. */
+    pub(file) fn rowAt(self, x : f64, y : f64) : i32 {
+        for (k of 0..self.shownCount) {
+            if (self.rowBox(k).contains(x, y)) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
+    /** The box of the chevron of showing row `k`. */
+    pub(file) fn chevronBox(self, k : i32) : Bounds {
+        let row : Bounds = self.rowBox(k);
+        let depth : f64 = self.nodes[self.shown[k as i64] as i64].depth as f64;
+        return Bounds::make(row.x + 4.0 + depth * TREE_INDENT, row.y, 24.0, row.h);
+    }
+
+    /** Open or close node `i`. */
+    pub(file) fn toggle(mut self, ctx : Context, i : i32) : void {
+        if (!self.isBranch(i)) {
+            return;
+        }
+        self.open[i as i64] = !self.open[i as i64];
+        self.reshow();
+        ctx.invalidate();
+    }
+
+    /** The showing row that holds node `i`, or -1. */
+    pub(file) fn rowOf(self, i : i32) : i32 {
+        for (k of 0..self.shownCount) {
+            if (self.shown[k as i64] == i) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
+    /** The node that holds node `i`, or -1 for a root. */
+    pub(file) fn parentOf(self, i : i32) : i32 {
+        let d : i32 = self.nodes[i as i64].depth;
+        let mut j : i32 = i - 1;
+        while (j >= 0) {
+            if (self.nodes[j as i64].depth < d) {
+                return j;
+            }
+            j = j - 1;
+        }
+        return -1;
+    }
+
+    pub(file) fn onKey(mut self, ctx : Context, e : UiEvent) : bool {
+        let now : i32 = self.chosen.get();
+        let k : i32 = now < 0 ? -1 : self.rowOf(now);
+        if (e.key == Key::Down || e.key == Key::Up) {
+            let next : i32 = Mathx::clampI(k + (e.key == Key::Down ? 1 : -1), 0, self.shownCount - 1);
+            self.chosen.set(self.shown[next as i64]);
+            ctx.invalidate();
+            return true;
+        }
+        if (now < 0) {
+            return false;
+        }
+        if (e.key == Key::Right) {
+            if (self.isBranch(now) && !self.open[now as i64]) {
+                self.toggle(ctx, now);
+            } else if (self.isBranch(now)) {
+                self.chosen.set(now + 1);
+            }
+            ctx.invalidate();
+            return true;
+        }
+        if (e.key == Key::Left) {
+            if (self.isBranch(now) && self.open[now as i64]) {
+                self.toggle(ctx, now);
+            } else if (self.parentOf(now) >= 0) {
+                self.chosen.set(self.parentOf(now));
+            }
+            ctx.invalidate();
+            return true;
+        }
+        if (e.key == Key::Enter || e.key == Key::Space) {
+            self.toggle(ctx, now);
+            return true;
+        }
+        return false;
+    }
+
+    pub fn event(mut self, ctx : Context, e : UiEvent) : bool {
+        let g : Gesture = self.pointer(ctx, e);
+        if (e.kind == EventKind::PointerMove) {
+            let before : i32 = self.hot;
+            self.hot = self.hovered ? self.rowAt(e.x, e.y) : -1;
+            if (self.hot >= 0) {
+                ctx.wantCursor(Cursor::Hand);
+            }
+            if (self.hot != before) {
+                ctx.invalidate();
+            }
+        }
+        if (g == Gesture::Click) {
+            let k : i32 = self.rowAt(e.x, e.y);
+            if (k >= 0) {
+                let i : i32 = self.shown[k as i64];
+                if (self.chevronBox(k).contains(e.x, e.y) && self.isBranch(i)) {
+                    self.toggle(ctx, i);
+                } else {
+                    self.chosen.set(i);
+                    self.toggle(ctx, i);
+                }
+                ctx.invalidate();
+                return true;
+            }
+        }
+        if (e.kind == EventKind::KeyDown && self.isFocused(ctx)) {
+            return self.onKey(ctx, e);
+        }
+        return g == Gesture::Press;
+    }
+
+    pub fn tick(mut self, ctx : Context, dt : f64) : bool {
+        return self.animate(ctx, dt);
+    }
+
+    /** One row: chevron, picture, label. */
+    pub(file) fn paintRow(self, ctx : Context, p : Painter, k : i32) : void {
+        let pal = ctx.theme.palette;
+        let radius : f64 = ctx.theme.metrics.radiusInline;
+        let i : i32 = self.shown[k as i64];
+        let node : TreeNode = self.nodes[i as i64];
+        let box : Bounds = self.rowBox(k);
+        let picked : bool = self.chosen.get() == i;
+        let mut ink : Tint = pal.textDim;
+        if (picked) {
+            p.fillRound(box.round(radius), Brush::solid(pal.softPrimary.fill.rgb, pal.softPrimary.fill.a));
+            ink = pal.softPrimary.fg;
+        } else if (k == self.hot) {
+            p.fillRound(box.round(radius), Brush::solid(pal.hover.rgb, pal.hover.a));
+            ink = pal.text;
+        }
+        let chev : Bounds = self.chevronBox(k);
+        let branch : bool = self.isBranch(i);
+        if (branch) {
+            let glyph : IconKind = self.open[i as i64] ? IconKind::ChevronDown : IconKind::ChevronRight;
+            Icons::draw(p, glyph, chev.midX() - 7.0, chev.midY() - 7.0, 14.0, pal.textFaint);
+        }
+        let mut icon : IconKind = node.icon;
+        if (icon == IconKind::None) {
+            icon = branch ? IconKind::Folder : IconKind::File;
+        }
+        let ix : f64 = chev.right() + 2.0;
+        Icons::draw(p, icon, ix, box.midY() - 8.0, 16.0, picked ? pal.softPrimary.fg : pal.textFaint);
+        p.textElided(FaceKind::Medium, node.label, ix + 24.0, ctx.baselineIn(FaceKind::Medium, 13.0, box.y, box.h), 13.0, box.right() - ix - 32.0, ink);
+    }
+
+    pub fn paint(mut self, ctx : Context, p : Painter) : void {
+        let pal = ctx.theme.palette;
+        let a : Bounds = self.area;
+        if (self.props.framed) {
+            let rr : RRect = a.round(ctx.theme.metrics.radiusSurface);
+            p.fillRound(rr, Brush::solid(pal.surface.rgb, pal.surface.a));
+            p.strokeRound(rr, 1.0, Brush::solid(pal.line.rgb, pal.line.a));
+        }
+        for (k of 0..self.shownCount) {
+            self.paintRow(ctx, p, k);
+        }
+        if (self.ringShown(ctx)) {
+            let ring : Tint = ctx.theme.ringTint().faded(self.focusT.alpha());
+            p.strokeRound(a.grown(3.0).round(ctx.theme.metrics.radiusSurface + 3.0), 2.0, Brush::solid(ring.rgb, ring.a));
+        }
+    }
+}

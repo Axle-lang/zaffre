@@ -6,7 +6,7 @@
 // A handler (a lambda) cannot capture the `Demo` itself, only handles, so pages copy the handle
 // they need into a local before they build a handler around it.
 
-use zaffre::{Model, Notifier, Dates, Order};
+use zaffre::{Model, Notifier, Dates, Times, Order};
 
 /** The values of the gallery. */
 pub class Demo {
@@ -57,6 +57,8 @@ pub class Demo {
     pub birthday : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
     pub arrival : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
     pub departure : Shared<Model<i32>> = new shared Model<i32>(Dates::NONE);
+    pub meeting : Shared<Model<i32>> = new shared Model<i32>(Times::NONE);
+    pub file : Shared<Model<i32>> = new shared Model<i32>(1);
     pub country : Shared<Model<i32>> = new shared Model<i32>(-1);
     pub skills : Shared<Model<i32>> = new shared Model<i32>(5);
     pub tags : Shared<Model<string>> = new shared Model<string>("design,ui,axle");

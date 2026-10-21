@@ -84,5 +84,47 @@ for i in range(1, 30):
     v.update(1.0 + 0.016 * i)
 check("the caret asks for a menu", sp.isOpen.get() is True)
 
+# --- Times and the time picker ---------------------------------------------------------------
+T = z.Times
+for text, want in [("14:30", T.at(14, 30)), ("1430", T.at(14, 30)), ("2:30 pm", T.at(14, 30)), ("9", T.at(9, 0)), ("12 am", 0), ("12:05 PM", T.at(12, 5)), ("9.05", T.at(9, 5))]:
+    check("parses time %r" % text, T.parse(text) == want, T.parse(text))
+for text in ["", "25:00", "12:60", "13 pm", "x", "1:2:3"]:
+    check("rejects time %r" % text, T.parse(text) == T.NONE, T.parse(text))
+check("24-hour text", T.text(T.at(7, 5), True) == "07:05")
+check("12-hour text", T.text(T.at(0, 5), False) == "12:05 AM" and T.text(T.at(15, 0), False) == "3:00 PM")
+at_ = z.Model(T.NONE)
+tp = z.TimePicker(lit(z.TimeProps, width=z.Length.Px(240.0)), at_)
+v = host(tp)
+bb = tp.bounds()
+at(v, z.EventKind.PointerMove, bb.x + 30, bb.y + bb.h / 2)
+at(v, z.EventKind.PointerDown, bb.x + 30, bb.y + bb.h / 2, button=0)
+at(v, z.EventKind.PointerUp, bb.x + 30, bb.y + bb.h / 2, button=0)
+for c in "2:45 pm":
+    v.input(ev(z.EventKind.Text, cp=ord(c)))
+for i in range(1, 6):
+    v.update(2.0 + 0.016 * i)
+check("typing a time chooses it", at_.get() == T.at(14, 45), at_.get())
+panel = z.TimePanel(lit(z.TimeProps, h24=False), z.Model(T.at(14, 45)), z.Model(True))
+check("a 12-hour panel has three columns", panel.columns() == 3)
+check("and selects the matching entries", [panel.selectedOf(c) for c in range(3)] == [1, 9, 1], [panel.selectedOf(c) for c in range(3)])
+
+# --- Tree ----------------------------------------------------------------------------------
+nodes = [lit(z.TreeNode, label="a", depth=0), lit(z.TreeNode, label="a1", depth=1), lit(z.TreeNode, label="a2", depth=1), lit(z.TreeNode, label="b", depth=0)]
+pick = z.Model(-1)
+tr = z.TreeView(lit(z.TreeProps), nodes, pick)
+v = host(tr)
+check("a closed tree shows its roots", tr.shownCount == 2, tr.shownCount)
+r = tr.rowBox(0)
+at(v, z.EventKind.PointerMove, r.x + 100, r.y + 10)
+at(v, z.EventKind.PointerDown, r.x + 100, r.y + 10, button=0)
+at(v, z.EventKind.PointerUp, r.x + 100, r.y + 10, button=0)
+check("clicking a branch picks and opens it", pick.get() == 0 and tr.shownCount == 4, (pick.get(), tr.shownCount))
+v.input(ev(z.EventKind.KeyDown, key=z.Key.Down)); 
+check("Down moves to the next visible row", pick.get() == 1, pick.get())
+v.input(ev(z.EventKind.KeyDown, key=z.Key.Left))
+check("Left on a leaf steps out to its branch", pick.get() == 0, pick.get())
+v.input(ev(z.EventKind.KeyDown, key=z.Key.Left))
+check("Left on an open branch closes it", tr.shownCount == 2, tr.shownCount)
+
 print("all ok" if not fails else "FAILED: %s" % fails)
 sys.exit(1 if fails else 0)

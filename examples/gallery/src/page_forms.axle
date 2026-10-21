@@ -1,7 +1,7 @@
 // forms — text fields, choices, sliders, and the small inputs.
 
 use zaffre::{
-    Model, Dates, DatePicker, DateRangePicker, DateProps, Calendar, Combobox, MultiSelect, ComboboxProps, TagsInput, TagsProps,
+    Model, Dates, Times, TimePicker, TimeProps, DatePicker, DateRangePicker, DateProps, Calendar, Combobox, MultiSelect, ComboboxProps, TagsInput, TagsProps,
     InputOTP, OtpProps, TextField, FieldProps, Textarea, TextareaProps, Select, Checkbox, ToggleProps, Radio, Switch,
     Slider, SliderProps, Segmented, Rating, RatingProps, QuantityInput, QuantityProps, ToggleGroup,
     FormField, FieldLabel, Column, Row, Widget, FlexProps,
@@ -167,6 +167,10 @@ fn pickers(demo : Demo) : Column {
             birthday
         )
     );
+    let timeField = new FormField(
+        FieldLabel { label: "Meeting time", hint: "Type 14:30 or 2:30 pm, or pick from the columns." },
+        new TimePicker(TimeProps { width: Length::Fill }, demo.meeting)
+    );
     let countryField = new FormField(
         FieldLabel { label: "Country", hint: "Type to search." },
         new Combobox(ComboboxProps { placeholder: "Pick a country", width: Length::Fill }, countries, country)
@@ -183,7 +187,7 @@ fn pickers(demo : Demo) : Column {
         FieldLabel { label: "Verification code" },
         new InputOTP(OtpProps { }, code)
     );
-    let kids : dyn Widget[] = [dateField, countryField, skillField, tagField, codeField];
+    let kids : dyn Widget[] = [dateField, timeField, countryField, skillField, tagField, codeField];
     return stacked(kids);
 }
 
