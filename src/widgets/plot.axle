@@ -114,6 +114,9 @@ pub class Plot : Control {
 
     /** The point under `x`. */
     pub(derived) fn pointAt(self, pl : Bounds, x : f64) : i32 {
+        if (pl.w <= 0.0) {
+            return 0;
+        }
         return Mathx::clampI(Mathx::floorI((x - pl.x) / pl.w * (self.n as f64)), 0, self.n - 1);
     }
 

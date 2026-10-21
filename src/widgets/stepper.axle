@@ -47,18 +47,23 @@ pub class Stepper : Control, Widget {
         return limits.constrain(Size { w: w, h: STEP_DISC + 8.0 + ctx.lineHeight(FaceKind::Medium, STEP_PX) });
     }
 
+    /** The width of one stage's column; the whole width when there is no stage. */
+    pub(file) fn column(self) : f64 {
+        return self.area.w / (Mathx::fmax(1.0, self.count as f64));
+    }
+
     /** The x of the middle of stage `i`. */
     pub(file) fn centre(self, i : i32) : f64 {
-        let col : f64 = self.area.w / (self.count as f64);
+        let col : f64 = self.column();
         return self.area.x + col * ((i as f64) + 0.5);
     }
 
     /** The stage whose circle or label is under (`x`, `y`), or -1. */
     pub(file) fn stageAt(self, x : f64, y : f64) : i32 {
-        let col : f64 = self.area.w / (self.count as f64);
-        if (!self.area.contains(x, y)) {
+        if (self.count == 0 || !self.area.contains(x, y)) {
             return -1;
         }
+        let col : f64 = self.column();
         return Mathx::clampI(Mathx::floorI((x - self.area.x) / col), 0, self.count - 1);
     }
 

@@ -107,7 +107,9 @@ pub class Split : Control, Widget {
             if (self.dragging) {
                 let total : f64 = self.props.horizontal ? self.area.w : self.area.h;
                 let at : f64 = self.props.horizontal ? e.x - self.area.x : e.y - self.area.y;
-                self.share.set(Mathx::clampF(at / total, self.props.least, 1.0 - self.props.least));
+                if (total > 0.0) {
+                    self.share.set(Mathx::clampF(at / total, self.props.least, 1.0 - self.props.least));
+                }
                 ctx.wantCursor(self.props.horizontal ? Cursor::ResizeH : Cursor::ResizeV);
                 ctx.invalidate();
                 return true;
