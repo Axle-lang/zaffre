@@ -118,6 +118,11 @@ class Connections : DataSource {
         return self.shownCount;
     }
 
+    /** A cell is made from its row's own data and nothing else, so one built once stays good: filtering and folding only change which rows show. */
+    pub fn revision(self) : i64 {
+        return 0;
+    }
+
     pub fn key(self, row : i32) : i64 {
         return self.shown[row as i64] as i64;
     }

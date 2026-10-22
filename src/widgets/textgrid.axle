@@ -252,6 +252,11 @@ pub class TextGrid : DataSource {
         return 44.0;
     }
 
+    /** A cell is its row's text and nothing else, and the rows never change: the cells can be kept. */
+    pub fn revision(self) : i64 {
+        return 0;
+    }
+
     pub fn cell(mut self, row : i32, col : i32) : dyn Widget {
         let at : i32 = self.shown[row as i64];
         let group : bool = col == 0 && self.isGroup(at);

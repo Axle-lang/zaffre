@@ -22,8 +22,11 @@
 //     still while someone is reaching for a row.
 //
 // Rows at depth 0 that can fold are drawn as groups; a click on a row's chevron folds it, the rest of
-// the row picks it. The header stays put while the rows scroll under it. Cells are built again at
-// each layout, so a program's own state belongs in the program, not in a cell. Keys: Up and Down,
+// the row picks it. The header stays put while the rows scroll under it. A cell is built when its row
+// comes into view and kept while the source's `revision` holds (a source that answers -1, the default,
+// has its cells built again at each layout), so a program's own state belongs in the program, not in a
+// cell. Keep `revision` honest: a layout follows every hover and wheel notch, and until Axle releases
+// a `dyn Widget` that is dropped (ledger §363) every cell built is memory not given back. Keys: Up and Down,
 // Page Up and Down, Home and End move the pick; Right opens and Left folds a group (Left on a row
 // inside one picks the group); Enter opens or folds, and counts as an activation.
 
@@ -71,6 +74,16 @@ pub trait DataSource {
     /** The height of row `row`, in pixels. */
     fn height(self, row : i32) : f64 {
         return 44.0;
+    }
+
+    /**
+     * A number that changes whenever what `cell` would answer for some row changes. While it holds
+     * still, the grid keeps the cells it has built and only lays them out again, instead of asking
+     * for the same widgets at every layout (and a layout follows every hover, click and wheel notch).
+     * -1, the default, says the source cannot tell: the cells are then built again each time.
+     */
+    fn revision(self) : i64 {
+        return -1;
     }
 }
 
@@ -223,6 +236,11 @@ pub class DataGrid : Control, Widget {
     cells : dyn Widget[];
     cellsCap : i32 = 0;
     cellCount : i32 = 0;
+    spare : dyn Widget[];
+    ids : i64[];
+    idsSpare : i64[];
+    revs : i64[];
+    revsSpare : i64[];
     first : i32 = 0;
     last : i32 = -1;
     hotRow : i32 = -1;
@@ -246,6 +264,11 @@ pub class DataGrid : Control, Widget {
         self.lefts = malloc<f64>(self.cols as i64);
         self.tops = malloc<f64>(1 as i64);
         self.cells = malloc<dyn Widget>(1 as i64);
+        self.spare = malloc<dyn Widget>(1 as i64);
+        self.ids = malloc<i64>(1 as i64);
+        self.idsSpare = malloc<i64>(1 as i64);
+        self.revs = malloc<i64>(1 as i64);
+        self.revsSpare = malloc<i64>(1 as i64);
     }
 
     pub fn flex(self) : f64 {
@@ -344,12 +367,25 @@ pub class DataGrid : Control, Widget {
     /** Make the arrays that depend on the number of rows big enough. */
     pub(file) fn fit(mut self, rows : i32, visible : i32) : void {
         if (rows + 1 > self.topsCap) {
+            free(self.tops);
             self.topsCap = rows + 64;
             self.tops = malloc<f64>(self.topsCap as i64);
         }
         if (visible * self.cols > self.cellsCap) {
+            free(self.cells);
+            free(self.spare);
+            free(self.ids);
+            free(self.idsSpare);
+            free(self.revs);
+            free(self.revsSpare);
             self.cellsCap = visible * self.cols + 16;
             self.cells = malloc<dyn Widget>(self.cellsCap as i64);
+            self.spare = malloc<dyn Widget>(self.cellsCap as i64);
+            self.ids = malloc<i64>(self.cellsCap as i64);
+            self.idsSpare = malloc<i64>(self.cellsCap as i64);
+            self.revs = malloc<i64>(self.cellsCap as i64);
+            self.revsSpare = malloc<i64>(self.cellsCap as i64);
+            self.cellCount = 0;
         }
     }
 
@@ -417,17 +453,44 @@ pub class DataGrid : Control, Widget {
         }
     }
 
+    /** The cell kept from the last layout for `id` at `rev`, or -1. A cell is taken once. */
+    pub(file) fn kept(mut self, id : i64, rev : i64, before : i32) : i32 {
+        if (rev < 0) {
+            return -1;
+        }
+        for (j of 0..before) {
+            if (self.ids[j as i64] == id && self.revs[j as i64] == rev) {
+                self.ids[j as i64] = -1;
+                return j;
+            }
+        }
+        return -1;
+    }
+
+    /** The widget for column `col` of row `row`: the one built before if the source says nothing changed, else a new one. */
+    pub(file) fn fetch(mut self, s : dyn DataSource, row : i32, col : i32, id : i64, rev : i64, before : i32) : dyn Widget {
+        let j : i32 = self.kept(id, rev, before);
+        if (j >= 0) {
+            return self.cells[j as i64];
+        }
+        return s.cell(row, col);
+    }
+
     /** Ask the source for the cells of the rows in view and lay them out. */
     pub(file) fn build(mut self, ctx : Context) : void {
         let s : dyn DataSource = self.src[0];
-        self.cellCount = 0;
+        let rev : i64 = s.revision();
+        let before : i32 = self.cellCount;
+        let mut n : i32 = 0;
         for (r of self.first..(self.last + 1)) {
             let rb : Bounds = self.rowBox(r);
+            let rowKey : i64 = s.key(r);
             for (c of 0..self.cols) {
-                if (self.cellCount >= self.cellsCap) {
-                    return;
+                if (n >= self.cellsCap) {
+                    break;
                 }
-                let w : dyn Widget = s.cell(r, c);
+                let id : i64 = rowKey * (DG_MAX_COLUMNS as i64) + (c as i64);
+                let w : dyn Widget = self.fetch(s, r, c, id, rev, before);
                 let mut left : f64 = self.area.x + self.lefts[c as i64] + DG_PAD;
                 let mut room : f64 = self.widths[c as i64] - 2.0 * DG_PAD;
                 if (c == 0) {
@@ -444,10 +507,18 @@ pub class DataGrid : Control, Widget {
                     x = left + (room - size.w) * 0.5;
                 }
                 w.arrange(ctx, Bounds::make(x, rb.y + (rb.h - size.h) * 0.5, size.w, size.h));
-                self.cells[self.cellCount as i64] = w;
-                self.cellCount = self.cellCount + 1;
+                self.spare[n as i64] = w;
+                self.idsSpare[n as i64] = id;
+                self.revsSpare[n as i64] = rev;
+                n = n + 1;
             }
         }
+        for (i of 0..n) {
+            self.cells[i as i64] = self.spare[i as i64];
+            self.ids[i as i64] = self.idsSpare[i as i64];
+            self.revs[i as i64] = self.revsSpare[i as i64];
+        }
+        self.cellCount = n;
     }
 
     // ─── Doing things ────────────────────────────────────────────
