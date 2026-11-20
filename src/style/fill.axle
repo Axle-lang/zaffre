@@ -1,0 +1,56 @@
+// fill — a surface's colour: flat, or a vertical gradient from top to bottom.
+//
+// A button that is one flat colour looks like a rectangle; one that is a hair lighter at the top
+// than at the bottom looks like a surface the light falls on. Every fill in the theme is a `Fill`
+// so that a theme can choose either without the widget knowing, and so a hover can be a
+// `mixed` of two of them rather than a second set of colours.
+
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::Brush;
+
+/** A fill: the colour at the top edge and at the bottom edge of the box it fills. */
+pub struct Fill {
+    /** Colour (with opacity) at the top. */
+    pub top : Tint;
+
+    /** Colour (with opacity) at the bottom. */
+    pub bottom : Tint;
+
+    /** One colour all over. */
+    pub static fn flat(t : Tint) : Fill {
+        return Fill { top: t, bottom: t };
+    }
+
+    /** A gradient from `top` to `bottom`. */
+    pub static fn vertical(top : Tint, bottom : Tint) : Fill {
+        return Fill { top: top, bottom: bottom };
+    }
+
+    /** Nothing at all. */
+    pub static fn none() : Fill {
+        return Fill { top: Tint::hexA(0, 0), bottom: Tint::hexA(0, 0) };
+    }
+
+    /** Whether it paints nothing. */
+    pub fn isNone(self) : bool {
+        return self.top.a <= 0 && self.bottom.a <= 0;
+    }
+
+    /** This fill `t` (0..255) of the way to `o`. */
+    pub fn mixed(self, o : Fill, t : i32) : Fill {
+        return Fill { top: self.top.mixed(o.top, t), bottom: self.bottom.mixed(o.bottom, t) };
+    }
+
+    /** This fill with its opacity scaled by `a` / 255. */
+    pub fn faded(self, a : i32) : Fill {
+        return Fill { top: self.top.faded(a), bottom: self.bottom.faded(a) };
+    }
+
+    /** The brush that paints it over the box whose top is `y` and height `h`. */
+    pub fn brush(self, y : f64, h : f64) : Brush {
+        if (self.top.rgb == self.bottom.rgb && self.top.a == self.bottom.a) {
+            return Brush::solid(self.top.rgb, self.top.a);
+        }
+        return Brush::linear(self.top.rgb, self.top.a, self.bottom.rgb, self.bottom.a, 0.0, y, 0.0, y + h);
+    }
+}

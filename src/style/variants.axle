@@ -1,0 +1,154 @@
+// variants — the closed sets a widget is asked for by name.
+//
+// A button is not "a button with these twelve colours", it is a *primary* button, a *ghost* one,
+// a *danger* one, at a size. The theme turns the name into the colours (see `theme`), which is
+// what lets one change of palette restyle every button in the program, and what lets a program
+// ask for the thing it means. An `enum` rather than a string so a typo is a compile error, and so
+// a `match` over it is checked for the case somebody adds next year.
+
+/** How loudly a button asks to be pressed. */
+pub enum ButtonKind : i32 {
+    /** The one action the page is for: solid brand colour. */
+    Primary = 0,
+
+    /** A friendly action: the brand colour as a soft wash. */
+    Secondary = 1,
+
+    /** A quiet action: a grey wash. */
+    Tertiary = 2,
+
+    /** An ordinary action: a clear outline, no fill. */
+    Outline = 3,
+
+    /** The quietest action: text, a wash only under the pointer. */
+    Ghost = 4,
+
+    /** A destructive action: solid red. */
+    Danger = 5,
+
+    /** A confirming action: solid green. */
+    Success = 6,
+
+    /** An action to notice first: yellow with dark text. */
+    Important = 7,
+
+    /** Text that acts: link colour, underlined under the pointer. */
+    Link = 8,
+}
+
+/** How large a control is; the heights are the theme's (`Metrics::controlXs` …). */
+pub enum ControlSize : i32 {
+    /** Extra small: 32 px controls, 12 px text. */
+    Xs = 0,
+
+    /** Small: 36 px controls, 13 px text. */
+    Sm = 1,
+
+    /** The default: 40 px controls, 14 px text. */
+    Md = 2,
+
+    /** Large: 48 px controls, 15 px text. */
+    Lg = 3,
+
+    /** Extra large: 56 px controls, 16 px text. */
+    Xl = 4,
+}
+
+/** What a badge, alert or toast is saying. */
+pub enum Tone : i32 {
+    /** Nothing in particular. */
+    Neutral = 0,
+
+    /** Something to look at: the brand colour. */
+    Accent = 1,
+
+    /** Good news. */
+    Ok = 2,
+
+    /** Caution. */
+    Warn = 3,
+
+    /** Trouble. */
+    Danger = 4,
+
+    /** Information. */
+    Info = 5,
+}
+
+/** A badge either tints its tone (subtle) or fills with it (solid). */
+pub enum BadgeLook : i32 {
+    /** A soft wash with dark ink. */
+    Subtle = 0,
+
+    /** A solid fill with white ink. */
+    Solid = 1,
+}
+
+/** How large a badge is. */
+pub enum BadgeSize : i32 {
+    /** 20 px high, 11 px text. */
+    Sm = 0,
+
+    /** 24 px high, 12 px text. */
+    Md = 1,
+
+    /** 28 px high, 14 px text. */
+    Lg = 2,
+}
+
+/** The roles text plays; the theme sets each in its own size, weight and colour. */
+pub enum TextRole : i32 {
+    /** Running text and control labels. */
+    Body = 0,
+
+    /** Secondary text. */
+    Dim = 1,
+
+    /** Tertiary text: hints, units. */
+    Faint = 2,
+
+    /** Small print under a control. */
+    Caption = 3,
+
+    /** A form field's label. */
+    Label = 4,
+
+    /** A third-level heading. */
+    H3 = 5,
+
+    /** A second-level heading. */
+    H2 = 6,
+
+    /** A first-level heading. */
+    H1 = 7,
+
+    /** Code and figures. */
+    Mono = 8,
+
+    /** Body text in bold: the title of an alert, a name in a list. */
+    Strong = 9,
+
+    /** The title of a dialog or a sheet: 16 px, bold. */
+    Title = 10,
+
+    /** Supporting text under a title: 13 px, the secondary colour. */
+    Note = 11,
+}
+
+/** How much a surface stands out from the page. */
+pub enum Elevation : i32 {
+    /** On the page: a hairline, no shadow. */
+    Flat = 0,
+
+    /** A card: a hairline and a soft shadow. */
+    Raised = 1,
+
+    /** A menu, a popover: a deep shadow, anchored to a trigger. */
+    Overlay = 2,
+
+    /** A card under the pointer or being dragged. */
+    Lifted = 3,
+
+    /** A dialog, a drawer, a toast: detached from the page. */
+    Floating = 4,
+}
