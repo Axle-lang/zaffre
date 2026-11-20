@@ -1,0 +1,233 @@
+name: CI
+
+# Every push to `dev` or `main`, and every pull request aimed at either.
+#
+# Zaffre has no port of its own: it draws through smalt, and smalt promises three backends (Win32, X11,
+# Wayland). Each is proved here by building zaffre's two examples on the machine it is for:
+#
+#   layers    the two architectural sentences, held by a script: a module never imports from a layer above
+#             its own (gfx < text < style < paint < core < widgets < shell), and nothing in zaffre is
+#             `extern` or `unsafe` — everything that touches the machine is smalt's;
+#   windows   the Win32 port: both examples built, and each draws one frame with `--snap`;
+#   linux     the X11 port: the same;
+#   wayland   the Wayland port, selected by naming smalt with `features = ["wayland"]` on each example's
+#             dependency edge: the ports table shows which backend is active. The port passes
+#             `axle check --deep` with 0.22.0 but has never been linked against libwayland, so its build
+#             reports without failing the run until it does.
+#
+# `--snap` draws one frame into a file and needs no display, so it runs on a runner. The gallery writes its
+# frame and then ends in heap corruption while it releases what it built (LIMITATIONS.md, "Gallery
+# teardown"), so its run reports without failing; the weather's run must pass.
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The compiler these sources need. The installers serve whatever is current, so the jobs check instead of
+  # assuming: an older `axle` fails with one clear line rather than a hundred confusing ones.
+  AXLE_MIN: '0.22.0'
+
+jobs:
+  layers:
+    name: Layers (no reach upward, no extern)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every import points down, and nothing is extern or unsafe
+        run: |
+          layers="gfx text style paint core widgets shell"
+          rank() { i=0; for l in $layers; do [ "$l" = "$1" ] && { echo $i; return; }; i=$((i+1)); done; echo 99; }
+          bad=0
+          for l in $layers; do
+            r=$(rank $l)
+            for f in $(find src/$l -name '*.axle'); do
+              for u in $(grep -o '^\s*\(pub \)\?use crate::[a-z_]*' "$f" | sed 's/.*crate:://' | sort -u); do
+                if [ "$(rank $u)" -gt "$r" ]; then echo "$f: $l reaches up into $u"; bad=1; fi
+              done
+            done
+          done
+          if grep -rnE '\bextern\b|\bunsafe\b' --include=*.axle src examples | grep -vE '^[^:]+:[0-9]+:\s*(//|\*|/\*)'; then
+            echo 'extern or unsafe outside smalt'; bad=1
+          fi
+          [ $bad = 0 ] && echo 'layers hold; no extern or unsafe outside smalt'
+          exit $bad
+
+  windows:
+    name: Build (Windows x86_64, Win32)
+    runs-on: windows-latest
+    steps:
+      - name: Install Axle
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'axle.msi'
+          Invoke-WebRequest -UseBasicParsing `
+            -Uri 'https://dl.axle-lang.dev/latest/axle-windows-x86_64.msi' -OutFile $msi
+          $p = Start-Process msiexec.exe -Wait -PassThru `
+            -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart'
+          if ($p.ExitCode -ne 0) { throw "msiexec failed with exit code $($p.ExitCode)" }
+          $dir = $null
+          foreach ($k in 'HKLM:\SOFTWARE\WOW6432Node\Axle', 'HKLM:\SOFTWARE\Axle') {
+            if (-not $dir -and (Test-Path $k)) {
+              $dir = (Get-ItemProperty $k -Name InstallDir -ErrorAction SilentlyContinue).InstallDir
+            }
+          }
+          foreach ($c in 'C:\Program Files (x86)\Axle', 'C:\Program Files\Axle') {
+            if (-not $dir -and (Test-Path (Join-Path $c 'axle.exe'))) { $dir = $c }
+          }
+          if (-not $dir) { throw 'the MSI installed, but axle.exe was not found' }
+          Add-Content -Path $env:GITHUB_PATH -Value $dir.TrimEnd('\')
+          if (-not (Get-Command lld-link.exe -ErrorAction SilentlyContinue)) {
+            throw 'lld-link.exe is not on PATH; axle cannot link a Windows binary without it (install LLVM)'
+          }
+
+      - name: Check the compiler is new enough
+        shell: pwsh
+        run: |
+          $got = (((& axle --version) -split ' ')[1] -split '-')[0]
+          if ([version]$got -lt [version]$env:AXLE_MIN) { throw "axle $got is older than the required $env:AXLE_MIN" }
+          "axle $got satisfies >= $env:AXLE_MIN"
+
+      # smalt is a submodule: without it there is nothing to draw with.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The table of seams per port, with a tick for each: the answer to "what did it resolve".
+      - name: The ports this build resolves
+        working-directory: examples/gallery
+        run: axle ports
+
+      - name: Build both examples
+        shell: pwsh
+        run: |
+          foreach ($d in Get-ChildItem examples -Directory) {
+            "── $($d.Name)"
+            Push-Location $d.FullName
+            axle build
+            $code = $LASTEXITCODE
+            Pop-Location
+            if ($code -ne 0) { throw "$($d.Name) failed to build" }
+          }
+
+      - name: The weather draws a frame
+        working-directory: examples/weather
+        run: .\target\weather.exe --snap
+
+      # Writes the frame, then ends in heap corruption on release (LIMITATIONS.md).
+      - name: The gallery draws a frame
+        continue-on-error: true
+        working-directory: examples/gallery
+        run: .\target\gallery.exe --snap
+
+  linux:
+    name: Build (Linux x86_64, X11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Axle and the link dependencies
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://apt.axle-lang.dev/key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/axle.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/axle.gpg arch=amd64] https://apt.axle-lang.dev stable main" \
+            | sudo tee /etc/apt/sources.list.d/axle.list
+          sudo apt-get update
+          # The `-dev` packages are for the linker's sake: the binary runs against the libX11 and libasound
+          # any desktop already has.
+          sudo apt-get install -y axle libx11-dev libasound2-dev
+
+      - name: Check the compiler is new enough
+        run: |
+          got=$(axle --version | awk '{print $2}' | cut -d- -f1)
+          if [ "$(printf '%s\n%s\n' "$AXLE_MIN" "$got" | sort -V | head -n1)" != "$AXLE_MIN" ]; then
+            echo "axle $got is older than the required $AXLE_MIN"; exit 1
+          fi
+          echo "axle $got satisfies >= $AXLE_MIN"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: The ports this build resolves
+        working-directory: examples/gallery
+        run: axle ports
+
+      # `set -e` explicitly, rather than leaning on the runner's `bash -e`: a failed example in the middle
+      # of the loop must fail the step, not be hidden by the one after it.
+      - name: Build both examples
+        run: |
+          set -e
+          for d in examples/*/; do
+            echo "── $d"
+            (cd "$d" && axle build)
+          done
+
+      - name: The weather draws a frame
+        working-directory: examples/weather
+        run: ./target/weather --snap
+
+      - name: The gallery draws a frame
+        continue-on-error: true
+        working-directory: examples/gallery
+        run: ./target/gallery --snap
+
+  wayland:
+    name: Build (Linux x86_64, Wayland)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Axle and the link dependencies
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://apt.axle-lang.dev/key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/axle.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/axle.gpg arch=amd64] https://apt.axle-lang.dev stable main" \
+            | sudo tee /etc/apt/sources.list.d/axle.list
+          sudo apt-get update
+          sudo apt-get install -y axle libwayland-dev libasound2-dev
+
+      - name: Check the compiler is new enough
+        run: |
+          got=$(axle --version | awk '{print $2}' | cut -d- -f1)
+          if [ "$(printf '%s\n%s\n' "$AXLE_MIN" "$got" | sort -V | head -n1)" != "$AXLE_MIN" ]; then
+            echo "axle $got is older than the required $AXLE_MIN"; exit 1
+          fi
+          echo "axle $got satisfies >= $AXLE_MIN"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # A dependency's feature is asked for on the edge that names it, and `--features` stops at the root
+      # crate, so each example names smalt itself, with the feature, beside its edge to zaffre. Both edges
+      # reach the one smalt, and a request only ever enables.
+      - name: Ask smalt for its Wayland port
+        run: |
+          for d in examples/*/; do
+            printf 'smalt = { path = "../../vendor/smalt", features = ["wayland"] }\n' >> "$d/axle.toml"
+          done
+
+      # This assertion is what makes the job about Wayland rather than about a feature that never arrived.
+      - name: The Wayland port is the one selected
+        run: |
+          set -e
+          for d in examples/*/; do
+            echo "── $d"
+            (cd "$d" && axle ports | tee ports.txt && grep -q 'wayland.*active' ports.txt)
+          done
+
+      # The port passes `axle check --deep` with 0.22.0 but has never been linked against libwayland, so
+      # this step reports without failing the run until it is green; that is the day to flip
+      # `continue-on-error` to false.
+      - name: Build both examples
+        continue-on-error: true
+        run: |
+          set -e
+          for d in examples/*/; do
+            echo "── $d"
+            (cd "$d" && axle build)
+          done
