@@ -1,0 +1,105 @@
+// mathx — the scalar helpers the 2-D code needs and `f64` does not carry as methods.
+//
+// `f64` has `sqrt`, `abs`, `floorToInt` and friends, and no `min`, `max`, `clamp` or `lerp`.
+// They are written once here so a pixel loop reads the same everywhere, and so the rounding
+// rule — half up, like the C twin's `floor(x + 0.5)` — is one definition rather than a habit.
+
+/** Scalar helpers over `f64` and `i32`. */
+pub class Mathx {
+    /** The smaller of two reals. */
+    pub static fn fmin(a : f64, b : f64) : f64 {
+        if (a < b) {
+            return a;
+        }
+        return b;
+    }
+
+    /** The larger of two reals. */
+    pub static fn fmax(a : f64, b : f64) : f64 {
+        if (a > b) {
+            return a;
+        }
+        return b;
+    }
+
+    /** `v` held to [`lo`, `hi`]. */
+    pub static fn clampF(v : f64, lo : f64, hi : f64) : f64 {
+        if (v < lo) {
+            return lo;
+        }
+        if (v > hi) {
+            return hi;
+        }
+        return v;
+    }
+
+    /** `v` held to [0, 1]. */
+    pub static fn clamp01(v : f64) : f64 {
+        return Mathx::clampF(v, 0.0, 1.0);
+    }
+
+    /** `v` held to [`lo`, `hi`]. */
+    pub static fn clampI(v : i32, lo : i32, hi : i32) : i32 {
+        if (v < lo) {
+            return lo;
+        }
+        if (v > hi) {
+            return hi;
+        }
+        return v;
+    }
+
+    /** `a` at `t` of the way to `b`. */
+    pub static fn lerp(a : f64, b : f64, t : f64) : f64 {
+        return a + (b - a) * t;
+    }
+
+    /** The largest integer not above `v`. */
+    pub static fn floorI(v : f64) : i32 {
+        return v.floorToInt() as i32;
+    }
+
+    /** The smallest integer not below `v`. */
+    pub static fn ceilI(v : f64) : i32 {
+        return v.ceilToInt() as i32;
+    }
+
+    /** `v` rounded half up. */
+    pub static fn roundI(v : f64) : i32 {
+        return (v + 0.5).floorToInt() as i32;
+    }
+
+    /** The fractional part of `v`: `v` less the largest integer not above it, in [0, 1). */
+    pub static fn fract(v : f64) : f64 {
+        return v - (v.floorToInt() as f64);
+    }
+
+    /** The smoothstep curve of `t` in [0, 1]. */
+    pub static fn smooth(t : f64) : f64 {
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    /** The angle in radians of the point (`x`, `y`) from the positive x axis, in (-pi, pi]; no standard library needed. */
+    pub static fn atan2(y : f64, x : f64) : f64 {
+        let ax : f64 = x.abs();
+        let ay : f64 = y.abs();
+        if (ax == 0.0 && ay == 0.0) {
+            return 0.0;
+        }
+        // The arctangent of a ratio in [0, 1], by a polynomial good to about 1e-5.
+        let swap : bool = ay > ax;
+        let z : f64 = swap ? ax / ay : ay / ax;
+        let z2 : f64 = z * z;
+        let mut a : f64 = z * (0.9998660 + z2 * (-0.3302995 + z2 * (0.1801410 + z2 * (-0.0851330 + z2 * 0.0208351))));
+        if (swap) {
+            a = 1.5707963267948966 - a;
+        }
+        if (x < 0.0) {
+            a = 3.141592653589793 - a;
+        }
+        if (y < 0.0) {
+            a = 0.0 - a;
+        }
+        return a;
+    }
+}
