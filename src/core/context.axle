@@ -1,0 +1,308 @@
+// context — what every widget is handed besides itself: the theme, the fonts, the clock, the focus.
+//
+// One `Context` lives for the life of the interface and is lent to each call (`measure`, `arrange`,
+// `paint`, `event`, `tick`), never stored: a widget that kept one would own a second handle on the
+// root. It holds the things that are the *interface's*, not any widget's — which widget has the
+// keyboard, whether anything needs another frame, what the pointer is doing — so widgets stay
+// independent of one another and of how they are composed.
+//
+// Focus is a token. A widget that can take the keyboard mints a token the first time it is
+// arranged and announces it every layout; the order of announcements is the Tab order. The
+// context stores which token holds the focus and nothing about the widget, so no widget holds a
+// reference to another.
+
+use crate::style::theme::Theme;
+use crate::core::widget::Widget;
+use crate::text::fonts::{Fonts, FaceKind};
+
+/** Overlays that can be waiting to be opened. */
+const CONTEXT_PENDING : i32 = 4;
+
+/** Focus tokens one layout can announce. */
+const CONTEXT_FOCUSABLE : i32 = 512;
+
+/** The pointer shapes a widget may ask for. */
+pub enum Cursor : i32 {
+    /** The ordinary arrow. */
+    Arrow = 0,
+
+    /** A hand: this answers a click. */
+    Hand = 1,
+
+    /** An I-beam: this takes text. */
+    Beam = 2,
+
+    /** A horizontal resize arrow. */
+    ResizeH = 3,
+
+    /** A vertical resize arrow. */
+    ResizeV = 4,
+
+    /** Busy: the thing under the pointer is working on it. */
+    Wait = 5,
+
+    /** Refused: the thing under the pointer is switched off. */
+    NotAllowed = 6,
+
+    /** Four arrows: this can be dragged anywhere. */
+    Move = 7,
+}
+
+/** What the interface knows about itself. */
+pub class Context {
+    /** The look every widget draws with. */
+    pub theme : Theme;
+
+    /** The faces text is set in. */
+    pub fonts : Shared<Fonts>;
+
+    /** Width of the interface, in logical pixels. */
+    pub width : f64 = 0.0;
+
+    /** Height of the interface, in logical pixels. */
+    pub height : f64 = 0.0;
+
+    /** Seconds since the interface started. */
+    pub now : f64 = 0.0;
+
+    /** Pointer x, or -1 before it has been seen. */
+    pub pointerX : f64 = -1.0;
+
+    /** Pointer y, or -1 before it has been seen. */
+    pub pointerY : f64 = -1.0;
+
+    /** True while an overlay is under the pointer: widgets beneath it must not light up. */
+    pub blocked : bool = false;
+
+    /** The token of the widget that has the keyboard, or 0. */
+    pub focus : i64 = 0;
+
+    /** Whether the focus ring should show: after a key press yes, after a click no. */
+    pub focusVisible : bool = false;
+
+    /** True while a form field in error paints its control: bordered controls draw in the danger colour. */
+    pub invalid : bool = false;
+
+    /** Whether something changed that needs a new frame. */
+    pub dirty : bool = true;
+
+    /** The pointer shape the widget under the pointer asked for this frame. */
+    pub cursor : Cursor = Cursor::Arrow;
+
+    /** Text copied inside the program; the shell mirrors it to the system clipboard where there is one. */
+    pub clip : string = "";
+
+    /**
+     * Seconds from `now` until something needs a frame that no event will cause — a caret to blink,
+     * a tooltip's delay running out. The shell sleeps no longer than this. A very large number
+     * when nothing is waiting.
+     */
+    pub wake : f64 = 1000000000.0;
+
+    /** The toasts showing, oldest first, by id; a toast's place on screen is its place in this list. */
+    toasts : i64[] = new i64[8 as i64];
+    toastTall : f64[] = new f64[8 as i64];
+    toastCount : i32 = 0;
+    toastNext : i64 = 1;
+
+    pending : dyn Widget[] = new dyn Widget[CONTEXT_PENDING as i64];
+    pendingCount : i32 = 0;
+    minted : i64 = 0;
+    order : i64[] = new i64[CONTEXT_FOCUSABLE as i64];
+    orderCount : i32 = 0;
+
+    /** A context drawing with `theme` and `fonts`. */
+    constructor(own theme : Theme, fonts : Shared<Fonts>) {
+        self.theme = theme;
+        self.fonts = fonts;
+    }
+
+    /** Ask for another frame. */
+    pub fn invalidate(mut self) : void {
+        self.dirty = true;
+    }
+
+    /** Ask for a frame in `seconds` even if nothing happens before then. */
+    pub fn wakeIn(mut self, seconds : f64) : void {
+        if (seconds < self.wake) {
+            self.wake = seconds;
+        }
+    }
+
+    /** A new focus token, never 0 and never given twice. */
+    pub fn mint(mut self) : i64 {
+        self.minted = self.minted + 1;
+        return self.minted;
+    }
+
+    // ─── Overlays ────────────────────────────────────────────────
+
+    /**
+     * Ask for `overlay` to be shown above everything: a menu, a tooltip, a dialog. It is adopted
+     * after the event or tick that asked. An overlay arranges itself over the whole interface and
+     * answers `covers` for the part of it that is solid; it answers `done` when it should go.
+     */
+    pub fn openOverlay(mut self, own overlay : dyn Widget) : bool {
+        if (self.pendingCount >= CONTEXT_PENDING) {
+            return false;
+        }
+        self.pending[self.pendingCount as i64] = overlay;
+        self.pendingCount = self.pendingCount + 1;
+        self.dirty = true;
+        return true;
+    }
+
+    /** How many overlays are waiting to be adopted. */
+    pub fn waiting(self) : i32 {
+        return self.pendingCount;
+    }
+
+    /** The overlay waiting at `i`, handed to the caller that adopts it. */
+    pub fn takeOverlay(mut self, i : i32) : dyn Widget {
+        return self.pending[i as i64];
+    }
+
+    /** Forget the overlays that were waiting, once they have been adopted. */
+    pub fn clearWaiting(mut self) : void {
+        self.pendingCount = 0;
+    }
+
+    // ─── Toasts ──────────────────────────────────────────────────
+
+    /** Register a toast `height` tall that has begun to show; answers its id, or 0 when eight are already up. */
+    pub fn toastJoin(mut self, height : f64) : i64 {
+        if (self.toastCount >= 8) {
+            return 0;
+        }
+        let id : i64 = self.toastNext;
+        self.toastNext = self.toastNext + 1;
+        self.toasts[self.toastCount as i64] = id;
+        self.toastTall[self.toastCount as i64] = height;
+        self.toastCount = self.toastCount + 1;
+        return id;
+    }
+
+    /** How far above the bottom margin toast `id` sits: the heights and gaps of the toasts before it. */
+    pub fn toastRise(self, id : i64) : f64 {
+        let mut rise : f64 = 0.0;
+        for (i of 0..self.toastCount) {
+            if (self.toasts[i as i64] == id) {
+                return rise;
+            }
+            rise = rise + self.toastTall[i as i64] + 10.0;
+        }
+        return rise;
+    }
+
+    /** Where toast `id` sits among the ones showing: 0 for the oldest. */
+    pub fn toastSlot(self, id : i64) : i32 {
+        for (i of 0..self.toastCount) {
+            if (self.toasts[i as i64] == id) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    /** A toast has gone: those after it move up. */
+    pub fn toastLeave(mut self, id : i64) : void {
+        let mut at : i32 = -1;
+        for (i of 0..self.toastCount) {
+            if (self.toasts[i as i64] == id) {
+                at = i;
+            }
+        }
+        if (at < 0) {
+            return;
+        }
+        for (i of at..(self.toastCount - 1)) {
+            self.toasts[i as i64] = self.toasts[(i + 1) as i64];
+            self.toastTall[i as i64] = self.toastTall[(i + 1) as i64];
+        }
+        self.toastCount = self.toastCount - 1;
+    }
+
+    // ─── Focus ───────────────────────────────────────────────────
+
+    /** Forget last layout's focus order; the layout about to run announces it afresh. */
+    pub fn beginLayout(mut self) : void {
+        self.orderCount = 0;
+    }
+
+    /** Add `token` to the Tab order. */
+    pub fn announce(mut self, token : i64) : void {
+        if (self.orderCount >= CONTEXT_FOCUSABLE) {
+            return;
+        }
+        self.order[self.orderCount as i64] = token;
+        self.orderCount = self.orderCount + 1;
+    }
+
+    /** Whether `token` holds the focus. */
+    pub fn hasFocus(self, token : i64) : bool {
+        return token != 0 && self.focus == token;
+    }
+
+    /** Give the keyboard to `token`. `byKey` says whether the ring should show. */
+    pub fn setFocus(mut self, token : i64, byKey : bool) : void {
+        if (self.focus != token || self.focusVisible != byKey) {
+            self.focus = token;
+            self.focusVisible = byKey;
+            self.dirty = true;
+        }
+    }
+
+    /** Take the keyboard away from whoever has it. */
+    pub fn clearFocus(mut self) : void {
+        self.setFocus(0, false);
+    }
+
+    /** Move the focus to the next widget in Tab order (the previous one when `back`), wrapping round. */
+    pub fn focusNext(mut self, back : bool) : void {
+        if (self.orderCount == 0) {
+            return;
+        }
+        let mut at : i32 = -1;
+        for (i of 0..self.orderCount) {
+            if (self.order[i as i64] == self.focus) {
+                at = i;
+            }
+        }
+        let mut next : i32 = 0;
+        if (back) {
+            next = self.orderCount - 1;
+            if (at > 0) {
+                next = at - 1;
+            }
+        } else if (at >= 0 && at + 1 < self.orderCount) {
+            next = at + 1;
+        }
+        self.setFocus(self.order[next as i64], true);
+    }
+
+    // ─── Text ────────────────────────────────────────────────────
+
+    /** The width of `s` set in `kind` at `px`. */
+    pub fn textWidth(mut self, kind : FaceKind, s : string, px : f64) : f64 {
+        return self.fonts.width(kind, s, px);
+    }
+
+    /** The distance between baselines of `kind` at `px`. */
+    pub fn lineHeight(self, kind : FaceKind, px : f64) : f64 {
+        return self.fonts.lineHeight(kind, px);
+    }
+
+    /** The baseline that centres a line of `kind` at `px` in a box of height `h` whose top is `y`. */
+    pub fn baselineIn(self, kind : FaceKind, px : f64, y : f64, h : f64) : f64 {
+        let asc : f64 = self.fonts.ascent(kind, px);
+        let desc : f64 = self.fonts.descent(kind, px);
+        return y + (h - (asc + desc)) * 0.5 + asc;
+    }
+
+    // ─── Pointer ─────────────────────────────────────────────────
+
+    /** Ask for a pointer shape; the last widget to ask this frame wins. */
+    pub fn wantCursor(mut self, c : Cursor) : void {
+        self.cursor = c;
+    }
+}
