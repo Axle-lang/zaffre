@@ -1,0 +1,251 @@
+// dates — calendar arithmetic, and what the calendar and the pickers are told.
+//
+//     let day : Shared<Model<i32>> = share new Model<i32>(Dates::ymd(2026, 10, 20));
+//
+// A date is a whole number of days since 1 January 1970 (`Dates::ymd` makes one, `Dates::year`,
+// `month` and `day` take one apart), so it compares, sorts and subtracts like any integer and needs
+// no calendar library. `Dates::NONE` means "no date chosen". The library has no clock of its own,
+// so the program says which day is today.
+//
+// `Dates::parse` reads what a person types ("20 Oct 2026", "2026-10-20", "20/10/2026", "Oct 20 2026")
+// and `Dates::text` writes the form the pickers show. The widgets are `Calendar` (calendar.axle) and
+// `DatePicker` / `DateRangePicker` (datepicker.axle).
+
+use crate::gfx::mathx::Mathx;
+use crate::text::strings::Strings;
+use crate::core::format::Format;
+use crate::core::geometry::Length;
+use crate::style::variants::ControlSize;
+
+/** Calendar arithmetic on days since 1970-01-01. */
+pub class Dates {
+    /** No date: what a model holds before one is chosen. */
+    pub static NONE : i32 = -2000000000;
+
+    /** The day number of year `y`, month `m` (1..12), day `d`. */
+    pub static fn ymd(y : i32, m : i32, d : i32) : i32 {
+        let yy : i32 = m <= 2 ? y - 1 : y;
+        let era : i32 = (yy >= 0 ? yy : yy - 399) / 400;
+        let yoe : i32 = yy - era * 400;
+        let mp : i32 = m > 2 ? m - 3 : m + 9;
+        let doy : i32 = (153 * mp + 2) / 5 + d - 1;
+        let doe : i32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return era * 146097 + doe - 719468;
+    }
+
+    /** The civil date of `days`, as (year, month, day). */
+    pub static fn civil(days : i32) : (y: i32, m: i32, d: i32) {
+        let z : i32 = days + 719468;
+        let era : i32 = (z >= 0 ? z : z - 146096) / 146097;
+        let doe : i32 = z - era * 146097;
+        let yoe : i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let doy : i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp : i32 = (5 * doy + 2) / 153;
+        let d : i32 = doy - (153 * mp + 2) / 5 + 1;
+        let m : i32 = mp < 10 ? mp + 3 : mp - 9;
+        let y : i32 = yoe + era * 400 + (m <= 2 ? 1 : 0);
+        return (y, m, d);
+    }
+
+    /** The year of `days`. */
+    pub static fn year(days : i32) : i32 {
+        let (y, m, d) = Dates::civil(days);
+        return y;
+    }
+
+    /** The month of `days`, 1 to 12. */
+    pub static fn month(days : i32) : i32 {
+        let (y, m, d) = Dates::civil(days);
+        return m;
+    }
+
+    /** The day of the month of `days`, 1 to 31. */
+    pub static fn day(days : i32) : i32 {
+        let (y, m, d) = Dates::civil(days);
+        return d;
+    }
+
+    /** The day of the week of `days`: 0 for Monday … 6 for Sunday. */
+    pub static fn weekday(days : i32) : i32 {
+        return (((days % 7) + 7) + 3) % 7;
+    }
+
+    /** Whether `y` is a leap year. */
+    pub static fn leap(y : i32) : bool {
+        return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    }
+
+    /** The days in month `m` of year `y`. */
+    pub static fn daysIn(y : i32, m : i32) : i32 {
+        if (m == 2) {
+            return Dates::leap(y) ? 29 : 28;
+        }
+        if (m == 4 || m == 6 || m == 9 || m == 11) {
+            return 30;
+        }
+        return 31;
+    }
+
+    /** The name of month `m` (1..12). */
+    pub static fn monthName(m : i32) : string {
+        let names : string[] = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December",
+        ];
+        return names[(Mathx::clampI(m, 1, 12) - 1) as i64];
+    }
+
+    /** `days` written as "20 Oct 2026". */
+    pub static fn text(days : i32) : string {
+        if (days == Dates::NONE) {
+            return "";
+        }
+        let (y, m, d) = Dates::civil(days);
+        let short : string = Strings::slice(Dates::monthName(m), 0, 3);
+        return Format::whole(d as f64) + " " + short + " " + Format::whole(y as f64);
+    }
+
+    /** `days` moved by `step` months, keeping the day of the month where the month is long enough. */
+    pub static fn addMonths(days : i32, step : i32) : i32 {
+        let (y, m, d) = Dates::civil(days);
+        let index : i32 = y * 12 + (m - 1) + step;
+        let ny : i32 = index / 12;
+        let nm : i32 = index % 12 + 1;
+        return Dates::ymd(ny, nm, Mathx::clampI(d, 1, Dates::daysIn(ny, nm)));
+    }
+
+    /** Whether `days` is a day a picker with these limits lets through. */
+    pub static fn within(days : i32, lo : i32, hi : i32) : bool {
+        if (days == Dates::NONE) {
+            return false;
+        }
+        return (lo == Dates::NONE || days >= lo) && (hi == Dates::NONE || days <= hi);
+    }
+
+    /** The first three letters of month `m`: "Jan" … "Dec". */
+    pub static fn monthShort(m : i32) : string {
+        return Strings::slice(Dates::monthName(m), 0, 3);
+    }
+
+    /** The month a word names ("oct", "October"), 1 to 12, or 0 when it names none. */
+    pub static fn monthOf(word : string) : i32 {
+        let w : string = Strings::lower(word);
+        if (w.byteLength < 3) {
+            return 0;
+        }
+        for (m of 1..13) {
+            let name : string = Strings::lower(Dates::monthName(m));
+            if (name.byteLength >= w.byteLength && Strings::slice(name, 0, w.byteLength) == w) {
+                return m;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * The date a person wrote, or NONE when the text is not one. Three parts, split by anything that
+     * is not a letter or a digit: year first when the first number has four digits ("2026-10-20"),
+     * otherwise day first ("20/10/2026", "20 Oct 2026"); a month name may stand for the month and,
+     * written first, makes it month-day-year ("Oct 20 2026"). A two-digit year means 20xx.
+     */
+    pub static fn parse(text : string) : i32 {
+        let s : string = Strings::lower(text);
+        let len : i64 = s.byteLength;
+        let mut nums : i32[] = [0, 0, 0];
+        let mut digits : i32[] = [0, 0, 0];
+        let mut count : i32 = 0;
+        let mut named : i32 = -1;
+        let mut i : i64 = 0;
+        while (i < len) {
+            let c : i32 = s.byteAt(i);
+            if (c >= 48 && c <= 57) {
+                let mut value : i32 = 0;
+                let mut n : i32 = 0;
+                while (i < len && s.byteAt(i) >= 48 && s.byteAt(i) <= 57) {
+                    value = value * 10 + (s.byteAt(i) - 48);
+                    n = n + 1;
+                    i = i + 1;
+                }
+                if (count >= 3 || n > 6) {
+                    return Dates::NONE;
+                }
+                nums[count as i64] = value;
+                digits[count as i64] = n;
+                count = count + 1;
+            } else if (c >= 97 && c <= 122) {
+                let begin : i64 = i;
+                while (i < len && s.byteAt(i) >= 97 && s.byteAt(i) <= 122) {
+                    i = i + 1;
+                }
+                if (named >= 0 || count >= 3) {
+                    return Dates::NONE;
+                }
+                nums[count as i64] = Dates::monthOf(Strings::slice(s, begin, i));
+                named = count;
+                count = count + 1;
+            } else {
+                i = i + 1;
+            }
+        }
+        if (count != 3) {
+            return Dates::NONE;
+        }
+        return Dates::assemble(nums[0 as i64], nums[1 as i64], nums[2 as i64], digits[0 as i64], digits[2 as i64], named);
+    }
+
+    /** Order three parsed numbers into a date; `named` says which of them was a month name (-1: none). */
+    pub(file) static fn assemble(a : i32, b : i32, c : i32, digitsA : i32, digitsC : i32, named : i32) : i32 {
+        let mut y : i32 = c;
+        let mut m : i32 = b;
+        let mut d : i32 = a;
+        if (named == 0) {
+            m = a;
+            d = b;
+        } else if (named == 2) {
+            return Dates::NONE;
+        } else if (named < 0 && digitsA >= 3) {
+            y = a;
+            m = b;
+            d = c;
+        } else if (digitsC <= 2 && named < 0) {
+            y = c + 2000;
+        }
+        if (named == 1 && digitsC <= 2) {
+            y = c + 2000;
+        }
+        if (named == 0 && digitsC <= 2) {
+            y = c + 2000;
+        }
+        if (y < 1 || m < 1 || m > 12 || d < 1 || d > Dates::daysIn(y, m)) {
+            return Dates::NONE;
+        }
+        return Dates::ymd(y, m, d);
+    }
+}
+
+/** What a calendar and a date picker are told. */
+pub struct DateProps {
+    /** Which day is today (outlined); `Dates::NONE` for none. */
+    pub today : i32 = -2000000000;
+
+    /** The earliest day that can be chosen; `Dates::NONE` for no limit. */
+    pub min : i32 = -2000000000;
+
+    /** The latest day that can be chosen; `Dates::NONE` for no limit. */
+    pub max : i32 = -2000000000;
+
+    /** What a picker says while no date is chosen. */
+    pub placeholder : string = "Pick or type a date";
+
+    /** How large the picker's field is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** The picker's width. */
+    pub width : Length = Length::Auto;
+
+    /** Whether the picker is switched off. */
+    pub disabled : bool = false;
+
+    /** Whether a calendar on its own is drawn on a bordered surface (the one a picker opens has the panel's). */
+    pub framed : bool = false;
+}

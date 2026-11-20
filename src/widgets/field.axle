@@ -1,0 +1,509 @@
+// field — a line of editable text.
+//
+// A field shows a `Model<string>` and writes it as the user types. It has a caret and a selection,
+// moves them with the keys a text field is expected to answer to (arrows, Home and End, Ctrl for a
+// word at a time, Shift to extend the selection), edits (Backspace, Delete, typing, Ctrl+X, Ctrl+V),
+// copies (Ctrl+C) and selects everything (Ctrl+A); a click places the caret and a drag selects.
+//
+//     let name : Shared<Model<string>> = share new Model<string>("");
+//     new TextField(FieldProps { placeholder: "Your name" }, name)
+//
+// Positions are byte offsets into the string and always fall on a codepoint boundary. The text
+// scrolls sideways to keep the caret in view; it is clipped to the field.
+//
+// Not here, and said so: composition for input methods (what a Japanese keyboard types before it
+// commits a character), right-to-left text, and double-click to select a word.
+
+use std::text::StringBuilder;
+use crate::gfx::mathx::Mathx;
+use crate::gfx::tint::Tint;
+use crate::gfx::shapes::{RRect, Brush};
+use crate::style::ease::{Eased, Rate};
+use crate::style::fill::Fill;
+use crate::style::styles::FieldStyle;
+use crate::style::variants::ControlSize;
+use crate::text::fonts::FaceKind;
+use crate::text::strings::Strings;
+use crate::core::geometry::{Size, Bounds, Limits, Length};
+use crate::core::event::{UiEvent, EventKind, Key};
+use crate::core::context::{Context, Cursor};
+use crate::core::model::Model;
+use crate::core::widget::{Widget, Control, Gesture};
+use crate::paint::painter::Painter;
+use crate::widgets::icon::{IconKind, Icons};
+
+/** How a field looks and behaves. */
+pub struct FieldProps {
+    /** Grey text shown while the field is empty. */
+    pub placeholder : string = "";
+
+    /** How large it is. */
+    pub size : ControlSize = ControlSize::Md;
+
+    /** Whether it ignores input and draws dimmed. */
+    pub disabled : bool = false;
+
+    /** The field's width: by default 220 px, a fixed number, or as much as it is offered. */
+    pub width : Length = Length::Auto;
+
+    /** The most characters the field accepts; 0 for no limit. */
+    pub maxChars : i32 = 0;
+
+    /** A picture at the left edge. */
+    pub icon : IconKind = IconKind::None;
+
+    /** The share of a parent's spare room it asks for. */
+    pub grow : f64 = 0.0;
+
+    /** Whether the value is wrong: a red outline and halo. */
+    pub invalid : bool = false;
+
+    /** Whether a cross at the right end clears the text, while there is some. */
+    pub clearable : bool = false;
+
+    /** A picture at the right edge that works as a button (see `whenTrailing`). */
+    pub trailing : IconKind = IconKind::None;
+}
+
+/** Width of the button at a field's right edge. */
+const TRAILING_WIDTH : f64 = 36.0;
+
+/** The handler a field without one runs. */
+fn ignoreText(v : string) : void {
+}
+
+/** What the right-edge button does until the program says otherwise. */
+fn trailingNoop() : void {
+}
+
+/** A single-line text field. */
+pub class TextField : Control, Widget {
+    props : FieldProps;
+    model : Shared<Model<string>>;
+    onChange : (string) => void;
+    onSubmit : (string) => void;
+    onTrailing : () => void;
+    wrong : bool = false;
+    caret : i64 = 0;
+    anchor : i64 = 0;
+    scroll : f64 = 0.0;
+    blink : f64 = 0.0;
+    activeT : Eased = Eased::at(0.0);
+
+    /** A field set as `props` say showing `model`. */
+    constructor(own props : FieldProps, model : Shared<Model<string>>) {
+        super();
+        self.props = props;
+        self.model = model;
+        self.onChange = ignoreText;
+        self.onSubmit = ignoreText;
+        self.onTrailing = trailingNoop;
+    }
+
+    /** A field showing `model`, calling `onChange` with the new text after every edit. */
+    constructor(own props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void) {
+        super();
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+        self.onSubmit = ignoreText;
+        self.onTrailing = trailingNoop;
+    }
+
+    /** A field showing `model`, calling `onChange` after every edit and `onSubmit` when Enter is pressed. */
+    constructor(own props : FieldProps, model : Shared<Model<string>>, onChange : (string) => void, onSubmit : (string) => void) {
+        super();
+        self.props = props;
+        self.model = model;
+        self.onChange = onChange;
+        self.onSubmit = onSubmit;
+        self.onTrailing = trailingNoop;
+    }
+
+    pub fn flex(self) : f64 {
+        return self.props.grow;
+    }
+
+    /** Run `handler` when the picture at the right edge is pressed. */
+    pub fn whenTrailing(mut self, handler : () => void) : void {
+        self.onTrailing = handler;
+    }
+
+    /** Put the caret at the end of the text, after the program has replaced it. */
+    pub fn toEnd(mut self) : void {
+        self.caret = self.model.get().byteLength;
+        self.anchor = self.caret;
+    }
+
+    /** Draw the field as wrong (or not), on top of what its props say. */
+    pub fn markInvalid(mut self, wrong : bool) : void {
+        self.wrong = wrong;
+    }
+
+    // ─── Geometry ────────────────────────────────────────────────
+
+    /** The box the text lives in: the field less its padding (and the icon, when there is one). */
+    pub(file) fn inner(self, st : FieldStyle) : Bounds {
+        let mut left : f64 = st.padX;
+        if (self.props.icon != IconKind::None) {
+            left = left + st.px * 1.3 + 6.0;
+        }
+        let mut right : f64 = st.padX;
+        if (self.showsClear()) {
+            right = right + 22.0;
+        }
+        if (self.props.trailing != IconKind::None) {
+            right = right + TRAILING_WIDTH - st.padX + 4.0;
+        }
+        return Bounds { x: self.area.x + left, y: self.area.y, w: Mathx::fmax(0.0, self.area.w - left - right), h: self.area.h };
+    }
+
+    /** Whether the clear cross is showing: asked for, and there is text to clear. */
+    pub(file) fn showsClear(self) : bool {
+        return self.props.clearable && self.model.get().byteLength > 0 && !self.props.disabled;
+    }
+
+    /** The box of the clear cross. */
+    pub(file) fn clearBox(self) : Bounds {
+        let mut shift : f64 = 0.0;
+        if (self.props.trailing != IconKind::None) {
+            shift = TRAILING_WIDTH;
+        }
+        return Bounds::make(self.area.right() - 34.0 - shift, self.area.y, 34.0, self.area.h);
+    }
+
+    /** The box of the right-edge button. */
+    pub(file) fn trailingBox(self) : Bounds {
+        return Bounds::make(self.area.right() - TRAILING_WIDTH, self.area.y, TRAILING_WIDTH, self.area.h);
+    }
+
+    /** Whether the pointer is over the right-edge button. */
+    pub(file) fn overTrailing(self, x : f64, y : f64) : bool {
+        return self.props.trailing != IconKind::None && !self.props.disabled && self.trailingBox().contains(x, y);
+    }
+
+    pub fn measure(mut self, ctx : Context, limits : Limits) : Size {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        return limits.constrain(Size { w: self.props.width.resolve(limits.maxW, 220.0), h: st.height });
+    }
+
+    // ─── Editing ─────────────────────────────────────────────────
+
+    /** The lower end of the selection. */
+    pub(file) fn selLo(self) : i64 {
+        if (self.caret < self.anchor) {
+            return self.caret;
+        }
+        return self.anchor;
+    }
+
+    /** The upper end of the selection. */
+    pub(file) fn selHi(self) : i64 {
+        if (self.caret > self.anchor) {
+            return self.caret;
+        }
+        return self.anchor;
+    }
+
+    /** Whether any text is selected. */
+    pub(file) fn hasSelection(self) : bool {
+        return self.caret != self.anchor;
+    }
+
+    /** Replace the text, tell the handler, ask for a frame. */
+    pub(file) fn commit(mut self, mut ctx : Context, text : string) : void {
+        self.model.set(text);
+        let h : (string) => void = self.onChange;
+        h(text);
+        self.blink = ctx.now;
+        ctx.invalidate();
+    }
+
+    /** Replace the selection (or insert at the caret) with `text`. */
+    pub(file) fn replaceSelection(mut self, mut ctx : Context, text : string) : void {
+        let cur : string = self.model.get();
+        let lo : i64 = self.selLo();
+        let hi : i64 = self.selHi();
+        let mut add : string = text;
+        if (self.props.maxChars > 0) {
+            let room : i32 = self.props.maxChars - (cur.length - ((hi - lo) as i32));
+            if (room <= 0) {
+                return;
+            }
+        }
+        let next : string = Strings::insert(Strings::remove(cur, lo, hi), lo, add);
+        let at : i64 = lo + add.byteLength;
+        self.commit(ctx, next);
+        self.caret = at;
+        self.anchor = at;
+    }
+
+    /** Move the caret to `to`, extending the selection when `extend`. */
+    pub(file) fn moveTo(mut self, mut ctx : Context, to : i64, extend : bool) : void {
+        self.caret = to;
+        if (!extend) {
+            self.anchor = to;
+        }
+        self.blink = ctx.now;
+        ctx.invalidate();
+    }
+
+    /** The text of the selection. */
+    pub(file) fn selected(self) : string {
+        return Strings::slice(self.model.get(), self.selLo(), self.selHi());
+    }
+
+    pub(file) fn onKey(mut self, mut ctx : Context, e : UiEvent) : bool {
+        let s : string = self.model.get();
+        let len : i64 = s.byteLength;
+        let word : bool = e.ctrl();
+        if (e.ctrl()) {
+            if (e.key == Key::A) {
+                self.anchor = 0;
+                self.moveTo(ctx, len, true);
+                return true;
+            }
+            if (e.key == Key::C && self.hasSelection()) {
+                ctx.clip = self.selected();
+                return true;
+            }
+            if (e.key == Key::X && self.hasSelection()) {
+                ctx.clip = self.selected();
+                self.replaceSelection(ctx, "");
+                return true;
+            }
+            if (e.key == Key::V) {
+                self.replaceSelection(ctx, Strings::singleLine(ctx.clip));
+                return true;
+            }
+        }
+        if (e.key == Key::Left) {
+            if (self.hasSelection() && !e.shift()) {
+                self.moveTo(ctx, self.selLo(), false);
+            } else if (word) {
+                self.moveTo(ctx, Strings::wordLeft(s, self.caret), e.shift());
+            } else {
+                self.moveTo(ctx, Strings::left(s, self.caret), e.shift());
+            }
+            return true;
+        }
+        if (e.key == Key::Right) {
+            if (self.hasSelection() && !e.shift()) {
+                self.moveTo(ctx, self.selHi(), false);
+            } else if (word) {
+                self.moveTo(ctx, Strings::wordRight(s, self.caret), e.shift());
+            } else {
+                self.moveTo(ctx, Strings::right(s, self.caret), e.shift());
+            }
+            return true;
+        }
+        if (e.key == Key::Home) {
+            self.moveTo(ctx, 0, e.shift());
+            return true;
+        }
+        if (e.key == Key::End) {
+            self.moveTo(ctx, len, e.shift());
+            return true;
+        }
+        if (e.key == Key::Backspace) {
+            if (self.hasSelection()) {
+                self.replaceSelection(ctx, "");
+            } else if (self.caret > 0) {
+                let start : i64 = word ? Strings::wordLeft(s, self.caret) : Strings::left(s, self.caret);
+                self.anchor = start;
+                self.replaceSelection(ctx, "");
+            }
+            return true;
+        }
+        if (e.key == Key::Delete) {
+            if (self.hasSelection()) {
+                self.replaceSelection(ctx, "");
+            } else if (self.caret < len) {
+                let stop : i64 = word ? Strings::wordRight(s, self.caret) : Strings::right(s, self.caret);
+                self.anchor = stop;
+                self.replaceSelection(ctx, "");
+            }
+            return true;
+        }
+        if (e.key == Key::Enter) {
+            let h : (string) => void = self.onSubmit;
+            h(s);
+            ctx.invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn event(mut self, mut ctx : Context, e : UiEvent) : bool {
+        self.enabled = !self.props.disabled;
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let kind : FaceKind = FaceKind::Sans;
+        let g : Gesture = self.pointer(ctx, e);
+        let overClear : bool = self.showsClear() && self.clearBox().contains(e.x, e.y);
+        let overTrail : bool = self.overTrailing(e.x, e.y);
+        if (e.kind == EventKind::PointerMove && self.hovered) {
+            if (overClear || overTrail) {
+                ctx.wantCursor(Cursor::Hand);
+            } else {
+                ctx.wantCursor(Cursor::Beam);
+            }
+        }
+        let fieldBox : Bounds = self.inner(st);
+        if (g == Gesture::Press && overTrail) {
+            let go : () => void = self.onTrailing;
+            go();
+            ctx.invalidate();
+            return true;
+        }
+        if (g == Gesture::Press && overClear) {
+            self.anchor = 0;
+            self.caret = 0;
+            self.commit(ctx, "");
+            return true;
+        }
+        if (g == Gesture::Press) {
+            let at : i64 = ctx.fonts.indexAt(kind, self.model.get(), st.px, e.x - fieldBox.x + self.scroll) as i64;
+            let s : string = self.model.get();
+            if (e.clicks >= 3) {
+                // A triple click takes the whole line.
+                self.anchor = 0;
+                self.caret = s.byteLength;
+                self.blink = ctx.now;
+                ctx.invalidate();
+            } else if (e.clicks == 2) {
+                // A double click takes the word under the pointer.
+                let hi : i64 = Strings::wordRight(s, at);
+                self.anchor = Strings::wordLeft(s, hi);
+                self.caret = hi;
+                self.blink = ctx.now;
+                ctx.invalidate();
+            } else {
+                self.moveTo(ctx, at, e.shift());
+            }
+            return true;
+        }
+        if (self.pressed && e.kind == EventKind::PointerMove) {
+            let at : i64 = ctx.fonts.indexAt(kind, self.model.get(), st.px, e.x - fieldBox.x + self.scroll) as i64;
+            self.moveTo(ctx, at, true);
+            return true;
+        }
+        if (g == Gesture::Click || g == Gesture::Release) {
+            return true;
+        }
+        if (!self.isFocused(ctx) || !self.enabled) {
+            return false;
+        }
+        if (e.kind == EventKind::KeyDown) {
+            return self.onKey(ctx, e);
+        }
+        if (e.kind == EventKind::Text && e.cp >= 32 && e.cp != 127 && !e.ctrl()) {
+            self.replaceSelection(ctx, Strings::ofCp(e.cp));
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tick(mut self, mut ctx : Context, dt : f64) : bool {
+        let mut t : f64 = 0.0;
+        if (self.isFocused(ctx)) {
+            t = 1.0;
+        }
+        self.activeT = self.activeT.toward(t).step(dt, Rate::HOVER);
+        let moving : bool = self.animate(ctx, dt);
+        if (self.isFocused(ctx)) {
+            ctx.wakeIn(0.5);
+        }
+        return moving || !self.activeT.settled();
+    }
+
+    // ─── Painting ────────────────────────────────────────────────
+
+    pub fn paint(mut self, mut ctx : Context, mut p : Painter) : void {
+        let st : FieldStyle = ctx.theme.field(self.props.size);
+        let a : Bounds = self.area;
+        let rr : RRect = a.round(st.radius);
+        let act : i32 = self.activeT.alpha();
+        let hv : i32 = self.hoverT.alpha();
+        let off : bool = self.props.disabled;
+        let mut fill : Fill = st.fill.mixed(st.fillFocus, act);
+        if (off) {
+            fill = st.fillOff;
+        }
+        p.fillRound(rr, fill.brush(a.y, a.h));
+        let mut focusEdge : Tint = st.borderFocus;
+        let mut halo : Tint = st.ring;
+        let mut rest : Tint = st.border.mixed(st.borderHover, hv);
+        if (self.props.invalid || self.wrong || ctx.invalid) {
+            focusEdge = st.borderInvalid;
+            halo = st.ringInvalid;
+            rest = st.borderInvalid;
+        }
+        let edge : Tint = rest.mixed(focusEdge, act);
+        p.strokeRound(rr, 1.0, Brush::solid(edge.rgb, edge.a));
+        if (act > 0) {
+            let ring : Tint = halo.faded(act);
+            p.strokeRound(a.grown(3.0).round(st.radius + 3.0), 3.0, Brush::solid(ring.rgb, ring.a));
+        }
+        let kind : FaceKind = FaceKind::Sans;
+        if (self.showsClear()) {
+            let cb : Bounds = self.clearBox();
+            let mut cross : Tint = ctx.theme.palette.textFaint;
+            if (cb.contains(ctx.pointerX, ctx.pointerY)) {
+                cross = ctx.theme.palette.text;
+            }
+            Icons::draw(p, IconKind::Close, cb.midX() - 7.0, cb.midY() - 7.0, 14.0, cross);
+        }
+        if (self.props.trailing != IconKind::None) {
+            let tb : Bounds = self.trailingBox();
+            let mut glyph : Tint = ctx.theme.palette.textFaint;
+            if (tb.contains(ctx.pointerX, ctx.pointerY) && !off) {
+                glyph = ctx.theme.palette.text;
+            }
+            Icons::draw(p, self.props.trailing, tb.midX() - 9.0, tb.midY() - 9.0, 18.0, glyph);
+        }
+        if (self.props.icon != IconKind::None) {
+            let isz : f64 = st.px * 1.3;
+            Icons::draw(p, self.props.icon, a.x + st.padX, a.midY() - isz * 0.5, isz, ctx.theme.palette.textFaint);
+        }
+        let fieldBox : Bounds = self.inner(st);
+        let s : string = self.model.get();
+        let base : f64 = ctx.baselineIn(kind, st.px, a.y, a.h);
+        p.pushClip(fieldBox.x, a.y, fieldBox.w, a.h);
+        if (s.byteLength == 0 && self.props.placeholder.byteLength > 0 && !self.isFocused(ctx)) {
+            p.text(kind, self.props.placeholder, fieldBox.x, base, st.px, st.placeholder);
+        } else {
+            // Keep the caret in view.
+            let cx : f64 = ctx.fonts.span(kind, s, st.px, 0, self.caret as i32);
+            if (cx - self.scroll > fieldBox.w - 2.0) {
+                self.scroll = cx - fieldBox.w + 2.0;
+            }
+            if (cx - self.scroll < 0.0) {
+                self.scroll = cx;
+            }
+            let total : f64 = ctx.textWidth(kind, s, st.px);
+            if (total - self.scroll < fieldBox.w - 2.0) {
+                self.scroll = Mathx::fmax(0.0, total - fieldBox.w + 2.0);
+            }
+            let ox : f64 = fieldBox.x - self.scroll;
+            let lineH : f64 = st.px * 1.3;
+            if (self.hasSelection() && self.isFocused(ctx)) {
+                let x0 : f64 = ctx.fonts.span(kind, s, st.px, 0, self.selLo() as i32);
+                let x1 : f64 = ctx.fonts.span(kind, s, st.px, 0, self.selHi() as i32);
+                let sel : RRect = RRect::uniform(ox + x0, a.midY() - lineH * 0.5, x1 - x0, lineH, 3.0);
+                p.fillRound(sel, Brush::solid(st.selection.rgb, st.selection.a));
+            }
+            let mut ink : Tint = st.text;
+            if (off) {
+                ink = ctx.theme.palette.textOff;
+            }
+            p.text(kind, s, ox, base, st.px, ink);
+            if (self.isFocused(ctx) && !self.hasSelection()) {
+                let phase : i64 = ((ctx.now - self.blink) * 2.0).floorToInt();
+                if (phase % 2 == 0) {
+                    p.fillRound(RRect::uniform(ox + cx - 0.5, a.midY() - lineH * 0.5, 1.5, lineH, 0.75), Brush::solid(st.caret.rgb, st.caret.a));
+                }
+            }
+        }
+        p.popClip();
+    }
+}

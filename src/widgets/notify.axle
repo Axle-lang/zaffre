@@ -1,0 +1,225 @@
+// notify — opening toasts and dialogs from a handler, which has no `Context`.
+//
+// A handler is a lambda that captures a few `Shared` handles and nothing else, so it cannot reach
+// the `Context` an overlay is opened through. What it can hold is a `Shared<Notifier>`: a queue of
+// requests. The `Notifications` widget — which wraps the page's root, changing nothing about it —
+// holds the same queue, and on every tick turns the requests into overlays.
+//
+//     let notes = share new Notifier();
+//     new Notifications(notes, page)
+//     …
+//     new Button("Save", () => notes.toast("Saved", Tone::Ok))
+//     new Button("Delete", () => notes.ask(DialogProps { title: "Delete?", danger: true }, () => remove(), () => keep()))
+//
+// A request that finds the queue full (eight deep) is dropped: a program that asks for nine dialogs
+// in one frame has a bug, and a queue that grew would hide it.
+
+use crate::style::variants::Tone;
+use crate::core::geometry::{Size, Bounds, Limits};
+use crate::core::event::UiEvent;
+use crate::core::context::Context;
+use crate::core::widget::{Widget, Base};
+use crate::paint::painter::Painter;
+use crate::widgets::dialog::{Dialog, DialogProps};
+use crate::widgets::sheet::{Sheet, SheetProps};
+use crate::widgets::command::CommandPalette;
+use crate::widgets::dropdown::MenuEntry;
+use crate::widgets::toast::Toast;
+
+/** Requests the queue holds. */
+const NOTIFY_SLOTS : i32 = 8;
+
+/** One toast waiting to be shown. */
+pub class ToastRequest {
+    pub text : string;
+    pub detail : string;
+    pub tone : Tone;
+
+    constructor(text : string, detail : string, tone : Tone) {
+        self.text = text;
+        self.detail = detail;
+        self.tone = tone;
+    }
+}
+
+/** One dialog waiting to be shown. */
+pub class DialogRequest {
+    pub props : DialogProps;
+    pub onConfirm : () => void;
+    pub onCancel : () => void;
+
+    constructor(own props : DialogProps, onConfirm : () => void, onCancel : () => void) {
+        self.props = props;
+        self.onConfirm = onConfirm;
+        self.onCancel = onCancel;
+    }
+}
+
+/** One sheet (a modal or a drawer) waiting to be shown. */
+pub class SheetRequest {
+    pub props : SheetProps;
+    pub content : () => dyn Widget;
+
+    constructor(own props : SheetProps, content : () => dyn Widget) {
+        self.props = props;
+        self.content = content;
+    }
+}
+
+/** One command palette waiting to be shown. */
+pub class CommandRequest {
+    pub entries : MenuEntry[];
+    pub onPick : (i32) => void;
+
+    constructor(entries : MenuEntry[], onPick : (i32) => void) {
+        self.entries = entries;
+        self.onPick = onPick;
+    }
+}
+
+/** The handle a handler holds to ask for a toast, a dialog, a sheet or a command palette. */
+pub class Notifier {
+    pub toasts : ToastRequest[] = new ToastRequest[8 as i64];
+    pub toastCount : i32 = 0;
+    pub dialogs : DialogRequest[] = new DialogRequest[8 as i64];
+    pub dialogCount : i32 = 0;
+    pub sheets : SheetRequest[] = new SheetRequest[8 as i64];
+    pub sheetCount : i32 = 0;
+    pub commands : CommandRequest[] = new CommandRequest[8 as i64];
+    pub commandCount : i32 = 0;
+
+    /** Show `text` as a toast in `tone`. */
+    pub fn toast(mut self, text : string, tone : Tone) : void {
+        self.notify(text, "", tone);
+    }
+
+    /** Show a toast with a title and a line of detail under it. */
+    pub fn notify(mut self, title : string, detail : string, tone : Tone) : void {
+        if (self.toastCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.toasts[self.toastCount as i64] = new ToastRequest(title, detail, tone);
+        self.toastCount = self.toastCount + 1;
+    }
+
+    /** Ask a question as `props` say, running `onConfirm` or `onCancel` when it is answered. */
+    pub fn ask(mut self, own props : DialogProps, onConfirm : () => void, onCancel : () => void) : void {
+        if (self.dialogCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.dialogs[self.dialogCount as i64] = new DialogRequest(props, onConfirm, onCancel);
+        self.dialogCount = self.dialogCount + 1;
+    }
+
+    /** Open a modal or a drawer as `props` say, holding what `content` builds. */
+    pub fn openSheet(mut self, own props : SheetProps, content : () => dyn Widget) : void {
+        if (self.sheetCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.sheets[self.sheetCount as i64] = new SheetRequest(props, content);
+        self.sheetCount = self.sheetCount + 1;
+    }
+
+    /** Open a command palette of `entries`, telling `onPick` the index of the one chosen. */
+    pub fn openCommands(mut self, entries : MenuEntry[], onPick : (i32) => void) : void {
+        if (self.commandCount >= NOTIFY_SLOTS) {
+            return;
+        }
+        self.commands[self.commandCount as i64] = new CommandRequest(entries, onPick);
+        self.commandCount = self.commandCount + 1;
+    }
+
+    /** Forget the palettes, once they have been shown. */
+    pub fn clearCommands(mut self) : void {
+        self.commandCount = 0;
+    }
+
+    /** Forget the sheets, once they have been shown. */
+    pub fn clearSheets(mut self) : void {
+        self.sheetCount = 0;
+    }
+
+    /** Forget the toasts, once they have been shown. */
+    pub fn clearToasts(mut self) : void {
+        self.toastCount = 0;
+    }
+
+    /** Forget the dialogs, once they have been shown. */
+    pub fn clearDialogs(mut self) : void {
+        self.dialogCount = 0;
+    }
+
+    /** Whether anything is waiting. */
+    pub fn pending(self) : bool {
+        return self.toastCount > 0 || self.dialogCount > 0 || self.sheetCount > 0 || self.commandCount > 0;
+    }
+}
+
+/** Wraps the page's root and opens what the program asked the `Notifier` for. */
+pub class Notifications : Base, Widget {
+    notes : Shared<Notifier>;
+    kid : dyn Widget[];
+
+    /** `root`, which it takes, watched for requests on `notes`. */
+    constructor(notes : Shared<Notifier>, own root : dyn Widget) {
+        self.notes = notes;
+        self.kid = new dyn Widget[1 as i64];
+        self.kid[0] = root;
+    }
+
+    pub fn flex(self) : f64 {
+        let c : dyn Widget = self.kid[0];
+        return c.flex();
+    }
+
+    pub fn measure(mut self, mut ctx : Context, limits : Limits) : Size {
+        let c : dyn Widget = self.kid[0];
+        return c.measure(ctx, limits);
+    }
+
+    pub fn arrange(mut self, mut ctx : Context, area : Bounds) : void {
+        self.area = area;
+        let c : dyn Widget = self.kid[0];
+        c.arrange(ctx, area);
+    }
+
+    pub fn paint(mut self, mut ctx : Context, mut p : Painter) : void {
+        let c : dyn Widget = self.kid[0];
+        c.paint(ctx, p);
+    }
+
+    pub fn event(mut self, mut ctx : Context, e : UiEvent) : bool {
+        let c : dyn Widget = self.kid[0];
+        return c.event(ctx, e);
+    }
+
+    pub fn tick(mut self, mut ctx : Context, dt : f64) : bool {
+        let c : dyn Widget = self.kid[0];
+        let moving : bool = c.tick(ctx, dt);
+        let n : Shared<Notifier> = self.notes;
+        for (i of 0..n.toastCount) {
+            let r : ToastRequest = n.toasts[i as i64];
+            ctx.openOverlay(new Toast(r.text, r.detail, r.tone));
+        }
+        n.clearToasts();
+        for (i of 0..n.dialogCount) {
+            let r : DialogRequest = n.dialogs[i as i64];
+            // A value of its own: the request still releases the one it holds.
+            let mine : DialogProps = DialogProps { ..r.props };
+            ctx.openOverlay(new Dialog(mine, r.onConfirm, r.onCancel));
+        }
+        n.clearDialogs();
+        for (i of 0..n.sheetCount) {
+            let r : SheetRequest = n.sheets[i as i64];
+            let mine : SheetProps = SheetProps { ..r.props };
+            ctx.openOverlay(new Sheet(mine, r.content));
+        }
+        n.clearSheets();
+        for (i of 0..n.commandCount) {
+            let r : CommandRequest = n.commands[i as i64];
+            ctx.openOverlay(new CommandPalette(r.entries, r.onPick));
+        }
+        n.clearCommands();
+        return moving;
+    }
+}
