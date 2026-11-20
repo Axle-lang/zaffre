@@ -1,0 +1,88 @@
+// kit — the few helpers every page of the gallery is built from.
+//
+// A page is a column of cards, a card is a titled section, a section holds a row or a stack of
+// widgets. Writing those three shapes once, here, keeps each page to what is specific to it.
+
+use zaffre::{
+    Card, CardProps, Column, Row, Label, Widget, FlexProps, LabelProps,
+    TextRole, Elevation, Align, Insets, Justify, Length,
+};
+
+/** A card titled `title`, with a line of explanation under it, around `body`. */
+pub fn section(title : string, subtitle : string, own body : dyn Widget) : Card {
+    return new Card(
+        CardProps {
+            title: title,
+            subtitle: subtitle,
+            width: Length::Fill,
+        },
+        body
+    );
+}
+
+/** Widgets side by side, centred on a line, 12 px apart. */
+pub fn lineup(own kids : dyn Widget[]) : Row {
+    return new Row(
+        FlexProps {
+            gap: 12.0,
+            align: Align::Center,
+        },
+        kids
+    );
+}
+
+/** Widgets one under another, stretched to the width, 16 px apart. */
+pub fn stacked(own kids : dyn Widget[]) : Column {
+    return new Column(
+        FlexProps {
+            gap: 16.0,
+            align: Align::Stretch,
+        },
+        kids
+    );
+}
+
+/** Sections side by side, each taking an equal share of the width and the height of the tallest. */
+pub fn side(own kids : dyn Widget[]) : Row {
+    return new Row(
+        FlexProps {
+            gap: 20.0,
+            align: Align::Stretch,
+        },
+        kids
+    );
+}
+
+/** The column a page is: its sections, stretched, 20 px apart. */
+pub fn pageOf(own kids : dyn Widget[]) : Column {
+    return new Column(
+        FlexProps {
+            gap: 20.0,
+            align: Align::Stretch,
+        },
+        kids
+    );
+}
+
+/** A paragraph of quiet text that wraps. */
+pub fn note(text : string) : Label {
+    return new Label(
+        LabelProps {
+            role: TextRole::Dim,
+            wrap: true,
+        },
+        text
+    );
+}
+
+/** A card for a row of cards: it takes an equal share of the room the row has. */
+pub fn half(title : string, subtitle : string, own body : dyn Widget) : Card {
+    return new Card(
+        CardProps {
+            title: title,
+            subtitle: subtitle,
+            grow: 1.0,
+        },
+        body
+    );
+}

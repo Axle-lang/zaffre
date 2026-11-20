@@ -1,0 +1,163 @@
+// gallery — every component, in an application of its own.
+//
+// A sidebar lists the sections (buttons, forms, feedback, navigation, data, overlays); the page of
+// the chosen one fills the rest, under a top bar with the dark-mode switch. The program is also the
+// test of the whole stack: `--snap` draws one frame to `gallery.bmp` with no window, which is what
+// the README's pictures are made from.
+//
+// What to read: `demo` holds every model, `kit` the helpers each page is built from, and one
+// `page_*` module per section, each a function from the `Demo` to a column of cards.
+
+use zaffre::{
+    View, Theme, Fonts, App, AppDesc, Notifier, Notifications, AppShell, Sidebar, SidebarItem, SidebarProps,
+    TopBar, PageStack, Switch, Spacer, Widget, Row, FlexProps, UserMenu, UserProps, MenuEntry, OverlayBadge,
+    OverlayProps, Button, ButtonProps, Model, IconKind, ButtonKind, ControlSize, Tone, Align, Insets, Justify,
+    Length,
+};
+use demo::Demo;
+use page_overview::overviewPage;
+use page_buttons::buttonsPage;
+use page_forms::formsPage;
+use page_feedback::feedbackPage;
+use page_navigation::navigationPage;
+use page_data::dataPage;
+use page_layout::layoutPage;
+use page_overlays::overlaysPage;
+use page_audit::auditPage;
+use std::sys::process::{argc, argAt};
+use std::lang::IndexOutOfBoundsException;
+
+/** The size of the window, and of the snapshot. */
+const WIDTH : i32 = 1360;
+
+/** The height of the window, and of the snapshot. */
+const HEIGHT : i32 = 900;
+
+/** The entries of the sidebar: a heading, then one item per page. */
+fn entries() : SidebarItem[] {
+    let items : SidebarItem[] = [
+        SidebarItem { label: "Components", heading: true },
+        SidebarItem { label: "Overview", icon: IconKind::Home },
+        SidebarItem { label: "Buttons", icon: IconKind::Plus },
+        SidebarItem { label: "Forms", icon: IconKind::Edit },
+        SidebarItem { label: "Feedback", icon: IconKind::Bell },
+        SidebarItem { label: "Navigation", icon: IconKind::Menu },
+        SidebarItem { label: "Data", icon: IconKind::Chart },
+        SidebarItem { label: "Layout", icon: IconKind::Grid },
+        SidebarItem { label: "Overlays", icon: IconKind::Copy },
+        SidebarItem { label: "Audit", icon: IconKind::Search },
+    ];
+    return items;
+}
+
+/** The title of each entry, for the top bar. */
+fn names() : string[] {
+    let titles : string[] = ["Components", "Overview", "Buttons", "Forms", "Feedback", "Navigation", "Data", "Layout", "Overlays", "Audit"];
+    return titles;
+}
+
+/** The widgets at the right end of the top bar: the bell, the person, the theme switch. */
+fn topActions(notes : Shared<Notifier>, dark : Shared<Model<bool>>) : Row {
+    let entries : MenuEntry[] = [
+        MenuEntry { label: "Profile", icon: IconKind::User },
+        MenuEntry { label: "Settings", icon: IconKind::Settings },
+        MenuEntry { separator: true },
+        MenuEntry { label: "Sign out", icon: IconKind::ArrowRight, danger: true },
+    ];
+    let bell = new OverlayBadge(
+        OverlayProps { count: 3 },
+        new Button(
+            ButtonProps {
+                icon: IconKind::Bell,
+                kind: ButtonKind::Ghost,
+                size: ControlSize::Sm,
+            },
+            () => notes.toast("You have 3 notifications", Tone::Info)
+        )
+    );
+    let person = new UserMenu(
+        UserProps {
+            name: "Ada Lovelace",
+            email: "ada@analytical.org",
+        },
+        entries,
+        (i : i32) => notes.toast("Chose an entry of the user menu", Tone::Info)
+    );
+    let kids : dyn Widget[] = [bell, new Switch("Dark mode", dark), person];
+    return new Row(
+        FlexProps {
+            gap: 16.0,
+            align: Align::Center,
+        },
+        kids
+    );
+}
+
+/** The whole application, opened on page `start`. */
+fn buildOn(start : i32) : View {
+    let fonts : Shared<Fonts> = share new Fonts();
+    // The monospace face is optional and read from a file; without it `Mono` text uses the sans.
+    fonts.withMono("assets/fonts/JetBrainsMono-Regular.ttf", "assets/fonts/JetBrainsMono-Bold.ttf");
+    let demo = new Demo();
+    let page = demo.page;
+    page.set(start);
+    let dark = demo.dark;
+    let notes = demo.notes;
+
+    let stack : dyn Widget[] = [
+        new Spacer(0.0, 0.0),
+        overviewPage(demo),
+        buttonsPage(notes),
+        formsPage(demo),
+        feedbackPage(demo),
+        navigationPage(demo),
+        dataPage(demo),
+        layoutPage(demo),
+        overlaysPage(demo),
+        auditPage(demo),
+    ];
+    let side = new Sidebar(SidebarProps { title: "Zaffre" }, entries(), page);
+    let top = new TopBar(names(), page, topActions(notes, dark));
+    let shell = new AppShell(side, top, new PageStack(page, stack));
+    return new View(Theme::dark(), fonts, dark, new Notifications(notes, shell));
+}
+
+/** The application as it opens. */
+fn build() : View {
+    return buildOn(1);
+}
+
+fn main() : i32 {
+    let view = build();
+
+    if (wantsSnap()) {
+        if (App::snapshot(view, WIDTH, HEIGHT, "gallery.bmp")) {
+            println("wrote gallery.bmp");
+            return 0;
+        }
+        println("could not write gallery.bmp");
+        return 1;
+    }
+    let desc = AppDesc {
+        title: "zaffre — gallery",
+        width: WIDTH,
+        height: HEIGHT,
+    };
+    return App::run(desc, view);
+}
+
+/** Whether `--snap` was given: draw one frame to a file and leave. */
+fn wantsSnap() : bool {
+    let mut i : i32 = 1;
+    while (i < argc()) {
+        try {
+            if (argAt(i) == "--snap") {
+                return true;
+            }
+        } catch e : IndexOutOfBoundsException {
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
